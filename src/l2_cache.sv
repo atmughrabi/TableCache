@@ -1166,9 +1166,9 @@ module l2_cache
     arlen_assertion:
         assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (req_ar.arlen < LINE_W)) else $error("Read length greater than cache line");
     awline_assertion:
-        assert property (@(posedge clk) disable iff (rst) req_aw.awvalid |-> (~(req_aw.awburst == 2'b01 & (req_aw.awaddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W] + req_aw.awlen < LINE_W))) else $error("Write reaches multiple cache lines");
+        assert property (@(posedge clk) disable iff (rst) req_aw.awvalid |-> (~(req_aw.awburst == 2'b01 & (req_aw.awaddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W] + req_aw.awlen < LINE_W)))) else $error("Write reaches multiple cache lines");
     arline_assertion:
-        assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (~(req_ar.arburst == 2'b01 & (req_ar.araddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W] + req_ar.arlen < LINE_W))) else $error("Read reaches multiple cache lines");
+        assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (~(req_ar.arburst == 2'b01 & (req_ar.araddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W] + req_ar.arlen < LINE_W)))) else $error("Read reaches multiple cache lines");
     awsize_assertion:
         assert property (@(posedge clk) disable iff (rst) req_aw.awvalid |-> (req_aw.awsize == 3'(LOG2_BLOCK_BYTES))) else $error("No narrow writes");
     arsize_assertion:
