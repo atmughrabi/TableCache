@@ -148,6 +148,7 @@ module l2_cache
         logic fill; //Write only, distinguishes between writes and fills
     } databank_request_t;
 
+    //Tagbank output
     cache_id_t tb_out_id;
     tag_t tb_out_tag;
     line_t tb_out_line;
@@ -156,6 +157,14 @@ module l2_cache
     logic tb_out_inval;
     logic tb_out_clean;
     logic tb_out_full_write;
+
+    //Input request
+    ar_t chosen_ar;
+    logic chosen_arready;
+    logic[READ_ID_WIDTH-1:0] chosen_arid;
+    aw_t chosen_aw;
+    logic chosen_awready;
+    logic[WRITE_ID_WIDTH-1:0] chosen_awid;
 
     ////////////////////////////////////////////////////
     //Implementation
@@ -283,7 +292,7 @@ module l2_cache
     cache_id_t rdata_raddr;
     logic rdata_clear;
     assign rdata_set = tb_pushing_write ? ~tb_hit & ~tb_out_full_write : req_arready & req_ar.arvalid;
-    assign rdata_set_addr = tb_pushing_write ? tb_out_id : {1'b1, req_arid};
+    assign rdata_set_addr = tb_pushing_write ? tb_out_id : {1'b1, chosen_arid};
     assign rdata_raddr = bvalid_invalid ? finish_output.wid : finish_output.bid;
     assign rdata_clear = finish_valid & bvalid_invalid & ~rvalid_invalid;
     set_clear_memory #(.DEPTH(2**ID_W)) needs_rdata_table (
@@ -305,9 +314,9 @@ module l2_cache
     logic wdata_rdata;
     logic ext_needs_rdata;
 
-    assign wdata_table_toggle[0] = req_awready & req_aw.awvalid;
+    assign wdata_table_toggle[0] = chosen_awready & chosen_aw.awvalid;
     assign wdata_table_toggle[1] = finish_valid & bvalid_invalid & rvalid_invalid;
-    assign wdata_table_toggle_addr[0] = req_awid;
+    assign wdata_table_toggle_addr[0] = chosen_awid;
     assign wdata_table_toggle_addr[1] = finish_output.wid[WRITE_ID_WIDTH-1:0];
 
     assign wdata_table_raddr[0] = bvalid_invalid ? finish_output.rid[WRITE_ID_WIDTH-1:0] : finish_output.bid[WRITE_ID_WIDTH-1:0];
@@ -391,17 +400,18 @@ module l2_cache
     block_t in_len;
     logic cbom_fifo_full;
 
-    assign try_read = req_ar.arvalid & ~tb_pushing_write & ~cbom_fifo_full & (prefer_read | ~req_aw.awvalid);
-    assign {in_tag, in_line, in_block} = try_read ? req_ar.araddr[31-OMITTED_ADDR_W:LOG2_BLOCK_BYTES] : req_aw.awaddr[31-OMITTED_ADDR_W:LOG2_BLOCK_BYTES];
-    assign in_len = try_read ? req_ar.arlen[BLOCK_ADDR_W-1:0] : req_aw.awlen[BLOCK_ADDR_W-1:0];
+    assign try_read = chosen_ar.arvalid & ~tb_pushing_write & ~cbom_fifo_full & (prefer_read | ~chosen_aw.awvalid);
+    
+    assign {in_tag, in_line, in_block} = try_read ? chosen_ar.araddr[31-OMITTED_ADDR_W:LOG2_BLOCK_BYTES] : chosen_aw.awaddr[31-OMITTED_ADDR_W:LOG2_BLOCK_BYTES];
+    assign in_len = try_read ? chosen_ar.arlen[BLOCK_ADDR_W-1:0] : chosen_aw.awlen[BLOCK_ADDR_W-1:0];
 
     always_comb begin
         in_id.rnw = try_read;
         in_id.id = '0;
         if (try_read)
-            in_id[READ_ID_WIDTH-1:0] = req_arid;
+            in_id[READ_ID_WIDTH-1:0] = chosen_arid;
         else
-            in_id[WRITE_ID_WIDTH-1:0] = req_awid;
+            in_id[WRITE_ID_WIDTH-1:0] = chosen_awid;
     end
 
     always_ff @(posedge clk) begin
@@ -409,6 +419,54 @@ module l2_cache
             prefer_read <= 0;
         else
             prefer_read <= ~prefer_read;
+    end
+
+    //Ready signals must be registered as an AXI requirement, so we buffer up to one request internally and mux it
+    logic saved_arvalid;
+    ar_t saved_ar;
+    logic[READ_ID_WIDTH-1:0] saved_arid;
+    logic saved_awvalid;
+    aw_t saved_aw;
+    logic[WRITE_ID_WIDTH-1:0] saved_awid;
+
+    always_ff @(posedge clk) begin
+        if (req_arready) begin
+            saved_ar <= req_ar;
+            saved_arid <= req_arid;
+        end
+        if (req_awready) begin
+            saved_aw <= req_aw;
+            saved_awid <= req_awid;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            saved_arvalid <= 0;
+            saved_awvalid <= 0;
+        end
+        else begin
+            saved_arvalid <= saved_arvalid ? ~chosen_arready : req_ar.arvalid & ~chosen_arready;
+            saved_awvalid <= saved_awvalid ? ~chosen_awready : req_ar.arvalid & ~chosen_awready;
+        end
+    end
+
+    always_comb begin
+        chosen_ar = req_ar;
+        chosen_arid = req_arid;
+        if (saved_arvalid) begin
+            chosen_ar = saved_ar;
+            chosen_ar.arvalid = 1;
+            chosen_arid = saved_arid;
+        end
+        
+        chosen_aw = req_aw;
+        chosen_awid = req_awid;
+        if (saved_awvalid) begin
+            chosen_aw = saved_aw;
+            chosen_aw.awvalid = 1;
+            chosen_awid = saved_awid;
+        end
     end
 
     logic inuse_stall; //If the attempted request is denied by virtue of ID or line
@@ -419,17 +477,19 @@ module l2_cache
     assign inuse_stall = inuse_id_rdata | inuse_line_rdata;
     assign fifo_stall = req_fifo_full | ar_fifo_full;
 
-    assign req_awready = ~try_read & ~inuse_stall & ~fifo_stall & ~awid_fifo_full;
-    assign req_arready = try_read & ~inuse_stall & ~fifo_stall;
+    assign chosen_awready = ~try_read & ~inuse_stall & ~fifo_stall & ~awid_fifo_full;
+    assign chosen_arready = try_read & ~inuse_stall & ~fifo_stall;
+    assign req_awready = ~saved_awvalid;
+    assign req_arready = ~saved_arvalid;
 
-    assign tb_advance = (req_awready & req_aw.awvalid) | (req_arready & req_ar.arvalid);
+    assign tb_advance = (chosen_awready & chosen_aw.awvalid) | (chosen_arready & chosen_ar.arvalid);
 
     logic in_full_write;
     logic in_inval;
     logic in_clean;
-    assign in_full_write = req_aw.awsnoop == 3'b101; //WriteEvict
-    assign in_inval = INCLUDE_CBOM & try_read & (req_ar.arsnoop == 4'b1001 | req_ar.arsnoop == 4'b1101); //CleanInvalid, MakeInvalid
-    assign in_clean = INCLUDE_CBOM & try_read & (req_ar.arsnoop == 4'b1001 | req_ar.arsnoop ==  4'b1000); //CleanInvalid, CleanShared
+    assign in_full_write = chosen_aw.awsnoop == 3'b101; //WriteEvict
+    assign in_inval = INCLUDE_CBOM & try_read & (chosen_ar.arsnoop == 4'b1001 | chosen_ar.arsnoop == 4'b1101); //CleanInvalid, MakeInvalid
+    assign in_clean = INCLUDE_CBOM & try_read & (chosen_ar.arsnoop == 4'b1001 | chosen_ar.arsnoop ==  4'b1000); //CleanInvalid, CleanShared
 
 
     ////////////////////////////////////////////////////
@@ -511,9 +571,9 @@ module l2_cache
 
     //Pending write ID storage
     fifo #(.WIDTH($bits(wid_t)), .FIFO_DEPTH(AWID_FIFO_DEPTH)) awid_fifo_inst (
-        .fifo_push(req_awready & req_aw.awvalid),
+        .fifo_push(chosen_awready & chosen_aw.awvalid),
         .fifo_pop(req_b.bvalid & req_bready),
-        .fifo_data_in(req_awid),
+        .fifo_data_in(chosen_awid),
         .fifo_data_out(req_bid),
         .fifo_valid(),
         .fifo_full(awid_fifo_full),
@@ -598,23 +658,23 @@ module l2_cache
     always_comb begin
         padded_arid.rnw = 1;
         padded_arid.id = '0;
-        padded_arid.id[READ_ID_WIDTH-1:0] = req_arid;
+        padded_arid.id[READ_ID_WIDTH-1:0] = chosen_arid;
     end
 
     assign req_fifo_pop = req_fifo_valid & ((~fill_request_valid & db_ready) | premature_discard);
     assign req_fifo_data_in = '{
         rnw : ~tb_pushing_write | (~tb_hit & tb_dirty),
         evict : tb_pushing_write ? ~tb_hit & tb_dirty : 0,
-        line : tb_pushing_write ? tb_out_line : req_ar.araddr[LOG2_BLOCK_BYTES+BLOCK_ADDR_W+:LINE_ADDR_W],
-        block : tb_pushing_write ? tb_out_block : req_ar.araddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W],
+        line : tb_pushing_write ? tb_out_line : chosen_ar.araddr[LOG2_BLOCK_BYTES+BLOCK_ADDR_W+:LINE_ADDR_W],
+        block : tb_pushing_write ? tb_out_block : chosen_ar.araddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W],
         id : tb_pushing_write ? tb_out_id : padded_arid,
-        len : tb_pushing_write ? tb_out_len : req_ar.arlen[BLOCK_ADDR_W-1:0],
+        len : tb_pushing_write ? tb_out_len : chosen_ar.arlen[BLOCK_ADDR_W-1:0],
         way : tb_way,
         fill : 0
     };
 
     fifo #(.WIDTH($bits(databank_request_t)), .FIFO_DEPTH(REQ_FIFO_DEPTH)) req_fifo_inst (
-        .fifo_push((req_ar.arvalid & req_arready) | tb_pushing_write),
+        .fifo_push((chosen_ar.arvalid & chosen_arready) | tb_pushing_write),//
         .fifo_pop(req_fifo_pop),
         .fifo_data_in(req_fifo_data_in),
         .fifo_data_out(req_fifo_data_out),
@@ -1050,7 +1110,7 @@ module l2_cache
         logic cbom_increment;
 
         assign cbom_fifo_full = cbom_fifo_count[$clog2(CBOM_FIFO_DEPTH)];
-        assign cbom_increment = req_ar.arvalid & req_arready & (in_inval | in_clean);
+        assign cbom_increment = chosen_ar.arvalid & chosen_arready & (in_inval | in_clean);
 
         always_ff @(posedge clk) begin
             if (rst)
