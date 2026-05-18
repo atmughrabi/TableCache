@@ -285,9 +285,22 @@ shim's prefill is in flight would close this. Tracked as TODO.
 **Update (pending validation):**
 [test_shim_prefill_race.py](../tb/cocotb/test_shim_prefill_race.py) drafts
 the test (direct-driven s_aw*/s_w* then s_ar*, snoops m_arvalid handshakes
-during prefill_active=1, asserts only PREFILL_ID survives). Build verified
-clean; functional+mutation validation deferred to the next free build slot
-(overnight run owns `sim_build/`).
+during prefill_active=1, asserts only PREFILL_ID survives). **Validation
+result (overnight DEFERRED PHASE 5):**
+
+* Functional: FAIL on clean RTL -- the test issues 1 AW + 1 R but the
+  cache never produces a prefill AR because
+  `PROMOTE_WMISS_TO_RW=1'b0` is the default (bug #9 fix). The mutation
+  `drop_prefill_check` removes a guard on a feature that is OFF by
+  default; the guard is **structurally unreachable** under the current
+  default shim configuration.
+* Mutation: the test was killing the mutation only because the test
+  itself fails on clean RTL (any failing test "kills" everything). The
+  100% score reported in the night-run summary is an artefact; the
+  honest shim mutation score remains **85.7%**.
+* Action: keep the test as a regression net for whoever flips
+  `PROMOTE_WMISS_TO_RW=1` in the shim instantiation; do NOT add it to
+  the default mutation set.
 
 ### Closing gaps surfaced by mutation testing
 

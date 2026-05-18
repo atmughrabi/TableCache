@@ -242,6 +242,16 @@ correct WRAP implementation.
 
 ### Whole-cache flush controller ([`src/tc_flush_controller.sv`](../src/tc_flush_controller.sv))
 
+> **Status: DRAFT.** RTL + integration wrapper + test scaffolding are in
+> place. Validation hangs on the first CBOM AR -- the cache appears to
+> not respond to `CleanInvalid` snoops on absent (never-allocated) lines
+> with an R beat, so the controller's `WAIT_R` state never advances.
+> The cache's existing CBOM tests only exercise present lines; the flush
+> use-case (iterate **every** line, present or not) is new behaviour
+> that needs either (a) a small change to the cache's CBOM path to
+> synthesise a NOP R beat on absent lines, or (b) a flush controller
+> that first probes for tag-present before issuing the CBOM. Tracked.
+
 Optional drop-in sequencer that issues an ACE-CBOM (default
 `CleanInvalid` = `4'b1001`) on every line. Use when the accelerator
 needs an atomic "drain everything to memory" handshake rather than per-
