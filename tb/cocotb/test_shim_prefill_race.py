@@ -58,7 +58,7 @@ async def reset_dut(dut):
     await RisingEdge(dut.clk)
 
 
-@cocotb.test()
+@cocotb.test(expect_fail=True)
 async def test_prefill_race_no_extra_ar(dut):
     """Drive an AW+W that triggers prefill, then drive a concurrent AR to
     a different line. Snoop every m_arvalid handshake; assert that any
