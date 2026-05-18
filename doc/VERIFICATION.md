@@ -282,6 +282,13 @@ W followed by an R complete sequentially and the race never triggers. A
 hand-driven test that pipelines an AR for a different line while the
 shim's prefill is in flight would close this. Tracked as TODO.
 
+**Update (pending validation):**
+[test_shim_prefill_race.py](../tb/cocotb/test_shim_prefill_race.py) drafts
+the test (direct-driven s_aw*/s_w* then s_ar*, snoops m_arvalid handshakes
+during prefill_active=1, asserts only PREFILL_ID survives). Build verified
+clean; functional+mutation validation deferred to the next free build slot
+(overnight run owns `sim_build/`).
+
 ### Closing gaps surfaced by mutation testing
 
 **l2_cache.sv: `drop_rst_gate_bvalid`** -- first mutation run flagged this
