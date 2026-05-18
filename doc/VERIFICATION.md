@@ -254,6 +254,9 @@ mutations are coverage gaps.
 | `lfsr.sv` | **100%** | 1 | 0 | `drop_lfsr_advance`. Other mutations excluded as equivalent (both feedback polarities walk all values; rst-clear covered by toggle_memory) |
 | `sdp_ram.sv` | **100%** | 2 | 0 | `drop_a_en_write`, `swap_a_b_addr` |
 | `victim_cache.sv` | 50% | 2 | 2 | `negate_hit` + `drop_buffer_tag_uncacheable` killed; `drop_invalidate_clear` + `swap_write_hit_check` survive even with directed `test_victim` scenarios -- need deeper investigation of the L1↔victim interaction protocol. VICTIM=1 path now reaches the file (was zero coverage before this iteration). Also covered in 3 matrix combos: LRU/4, LRU/8, SRRIP/4 |
+| `LRU.sv` | **100%** | 2 | 0 | `gen4_flip_case0_evict` + `gen4_flip_case0_miss` killed by `test_lru_sanity`. Only gen_4 branch instrumented (default WAYS=4); other generates implicitly exercised by matrix |
+| `l2_tagbank.sv` | **100%** | 2 | 0 | `negate_hit` + `swap_way_select` killed. `drop_tb_wen_gate` excluded as equivalent (CBOM-miss writes invalid over already-invalid entry) |
+| `l2_hash.sv` | n/a | 0 | 0 | No effective mutations: hash quality affects performance, not correctness. `add_drop_plus1` (drop `+1` in bit sum) and `xor_fold_skip` (unreachable gen_full_hash branch) both equivalent under any functional check |
 | `LRU.sv` | deferred | 0 | 0 | per-WAYS generate branches make portable mutations hard; matrix sweep already exercises WAYS=2,4,8 |
 
 ## Formal proofs (yosys + z3 SMTBMC)

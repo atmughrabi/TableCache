@@ -71,15 +71,6 @@ case "$FILE" in
             "negate_out_fifo_push|0,/assign out_fifo_push\[i\] = valid_pipeline/{s/valid_pipeline\[i\]\[LATENCY\]/~valid_pipeline[i][LATENCY]/}"
         )
         ;;
-    src/LRU.sv)
-        # LRU.sv has a generate block per WAYS value (gen_2/gen_3/gen_4/gen_n);
-        # writing per-line mutations that work across the default WAYS=4
-        # without touching unsynthesised branches is brittle. The matrix
-        # sweep already exercises LRU at WAYS=2,4,8; mutation testing on
-        # LRU is deferred until a config-aware harness is in place.
-        DEFAULT_TESTS="test_smoke test_lru_sanity"
-        MUTATIONS=()
-        ;;
     src/tc_flush_controller.sv)
         DEFAULT_TESTS="test_flush"
         MUTATIONS=(
@@ -161,6 +152,47 @@ case "$FILE" in
         MUTATIONS=(
             "drop_a_en_write|s/if (a_en & a_wbe\[i\])/if (a_wbe[i])/"
             "swap_a_b_addr|s/b_ram_output <= mem\[b_addr\];/b_ram_output <= mem[a_addr];/"
+        )
+        ;;
+    src/LRU.sv)
+        # LRU has per-WAYS generate branches. Default config is WAYS=4
+        # which uses gen_4's case table. test_lru_sanity stress-tests
+        # eviction patterns specifically against the LRU policy.
+        DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
+        MUTATIONS=(
+            # Flip case 0's evict (was: evict=3 miss=9). Self-evict
+            # corrupts the WAYS=4 LRU state and the thrash sequence
+            # in test_lru_sanity catches the divergence.
+            "gen4_flip_case0_evict|s/0: begin evict = 3; miss = 9; end/0: begin evict = 0; miss = 9; end/"
+            # Flip case 0's miss-state to an unrelated value.
+            "gen4_flip_case0_miss|s/0: begin evict = 3; miss = 9; end/0: begin evict = 3; miss = 0; end/"
+        )
+        ;;
+    src/l2_hash.sv)
+        # Hash function. Default IN_WIDTH=log2(LINES)=6 uses the
+        # gen_add_hash branch. The other branches (identity / full XOR)
+        # are unreachable in default config.
+        #
+        # No effective mutations: hash quality affects performance, not
+        # correctness, so add_drop_plus1 (drop the +1 in the bit sum)
+        # and xor_fold_skip (gen_full_hash branch, unreachable) are both
+        # equivalent under any functional-correctness check. Killing
+        # them would require a directed test that observed bucket-
+        # distribution properties, which is outside the standard set.
+        DEFAULT_TESTS="test_smoke test_random test_workload"
+        MUTATIONS=()
+        ;;
+    src/l2_tagbank.sv)
+        # Tagbank: hit detection, dirty calc, write enable.
+        DEFAULT_TESTS="test_smoke test_random test_cbom test_workload"
+        MUTATIONS=(
+            "negate_hit|s/assign hit = |hit_one_hot_r;/assign hit = ~|hit_one_hot_r;/"
+            "swap_way_select|s/assign out_way = hit ? hit_index : policy_replacement_way_int;/assign out_way = hit ? policy_replacement_way_int : hit_index;/"
+            # drop_tb_wen_gate excluded: equivalent. Without the gate,
+            # tb_wen fires on CBOM-miss too, writing an entry whose
+            # 'valid' bit is computed from ~stage2.inval -- which for
+            # CleanInvalid/MakeInvalid on a miss line writes valid=0
+            # over an already-invalid entry. No observable difference.
         )
         ;;
     src/victim_cache.sv)
