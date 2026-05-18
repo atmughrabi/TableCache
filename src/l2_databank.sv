@@ -360,6 +360,8 @@ module l2_databank
         always_ff @(posedge clk) begin
             if (rst)
                 past_original_last[i] <= 0;
+            else if (current_state[i] == READY & next_state[i] == READING)
+                past_original_last[i] <= 0; //New READING request: reset stale flag from prior premature-exit
             else if (valid_pipeline[i][LATENCY] & info_pipeline[i][LATENCY].last)
                 past_original_last[i] <= 0;
             else if (valid_pipeline[i][LATENCY] & info_pipeline[i][LATENCY].original_last)
