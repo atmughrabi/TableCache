@@ -32,7 +32,7 @@ RATIO_FULL ?= 70
 # override silently does nothing for the RTL while the Python harness still
 # expects 4-byte beats. Force-error instead of letting the test fail with a
 # confusing data-mismatch message.
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_cache),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 ifneq ($(BLOCK_W),32)
 $(error BLOCK_W=$(BLOCK_W) is not supported on the bare-cocotb path (MODULE=$(MODULE)); only BLOCK_W=32 is wired end-to-end. Use MODULE=test_shim_cache to exercise wider buses (BLOCK_W=512).)
 endif
@@ -43,7 +43,7 @@ SRC_DIR    := $(REPO_ROOT)/src
 TB_DIR     := $(REPO_ROOT)/tb/cocotb
 
 # Shim-only target uses a different top + a single RTL source.
-ifneq (,$(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput))
+ifneq (,$(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race))
 NARROW_W   ?= 32
 WIDE_W     ?= 512
 export TC_NARROW_W := $(NARROW_W)
@@ -104,7 +104,7 @@ EXTRA_ARGS += --stats --stats-vars
 # only when explicitly requested (TRACE=1) or for the small-bus builds.
 ifeq ($(TRACE),1)
 EXTRA_ARGS += --trace --trace-structs
-else ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_cache),)
+else ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 EXTRA_ARGS += --trace --trace-structs
 endif
 EXTRA_ARGS += -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINCONNECTEMPTY \
@@ -115,7 +115,7 @@ EXTRA_ARGS += -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINCONNE
 EXTRA_ARGS += +define+TC_POLICY=$(POLICY) +define+TC_LINES=$(LINES) +define+TC_LINE_W=$(LINE_W) \
               +define+TC_WAYS=$(WAYS) \
               +define+TC_DB_LATENCY=$(DB_LATENCY) +define+TC_VICTIM=$(VICTIM) +define+TC_CBOM=$(CBOM)
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_cache),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
 endif
 # DIAG knobs: pass DIAG=1 (DB-level) or DIAG=2 (DB + stall) to enable per-cycle dumps.
@@ -134,7 +134,7 @@ export TC_RATIO_FULL := $(RATIO_FULL)
 export TC_LINES    := $(LINES)
 export TC_LINE_W   := $(LINE_W)
 export TC_WAYS     := $(WAYS)
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_cache),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 export TC_BLOCK_W  := $(BLOCK_W)
 endif
 # workload knobs (test_workload.py); leave default if unset
