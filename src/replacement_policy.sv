@@ -55,7 +55,12 @@ module replacement_policy
         POLICY == SECOND_CHANCE ? $clog2(WAYS)+WAYS :
         RRIP_WIDTH*WAYS; //RRIP
 
-    typedef logic[POLICY_W-1:0] policy_t;
+    //When POLICY=RANDOM the policy_t-typed signals (cache_original_status,
+    //cache_new_status, INIT_POLICY) are declared but unused (gen_policy_storage
+    //is gated by POLICY_W>0 and random_replacement does not consume them).
+    //Collapse policy_t to a 1-bit dummy in that case so the typedef does not
+    //become logic[-1:0], which Verilator 5.x rejects as an ASCRANGE error.
+    typedef logic[(POLICY_W == 0 ? 0 : POLICY_W-1) : 0] policy_t;
 
     ////////////////////////////////////////////////////
     //Implementation
