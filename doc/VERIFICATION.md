@@ -273,6 +273,7 @@ Location: `tb/formal/`. Run with `make -C tb/formal all` (deps: `yosys`, `z3`, `
 |---|---|---:|---|---|
 | `fifo.sv` (FIFO_DEPTH=1, register path) | `tb/formal/fifo_formal.sv` | 32 | **k=14 PASS** | `count <= DEPTH`, `valid == (count != 0)`, `full == (count == DEPTH)` under well-formed (no-overflow, no-underflow) environment |
 | `fifo.sv` (FIFO_DEPTH=4, `gen_width_3_plus`: lfsr + lutram) | `tb/formal/fifo_formal_deep.sv` (lowered via sv2v) | 32 | **k=24 PASS** | same invariants on the LFSR-pointer + LUTRAM implementation |
+| `set_clear_memory.sv` (DEPTH=4) | `tb/formal/scm_formal.sv` (lowered via sv2v) | 16 | **k=16 PASS** | `in_use[read_addr] == shadow_bits[read_addr]` under env that forbids concurrent set+clear on the same address |
 
 ### l2_cache.sv mutation set (11 mutations)
 
