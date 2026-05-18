@@ -1,0 +1,55 @@
+# ---- Python / cocotb -------------------------------------------------------
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+*.py[cod]
+*$py.class
+
+# ---- Simulator build outputs ----------------------------------------------
+**/sim_build/
+**/sim_build_shim/
+**/shim_build_dir/
+**/obj_dir*/
+
+# ---- Simulator artifacts ---------------------------------------------------
+*.vcd
+*.fst
+*.wlf
+*.shm
+results.xml
+test.log
+test_output.log
+sim_run.log
+**/dump.vcd
+
+# ---- Vivado / xsim (Xilinx flow) ------------------------------------------
+**/.Xil/
+**/.cache/
+**/.runs/
+**/.jobs/
+**/.hbs/
+**/.tmp/
+*.jou
+*.log
+*.str
+*.pb
+*.wdb
+*.dir/
+*.backup.*
+vivado*.zip
+xsim.dir/
+webtalk*.jou
+webtalk*.log
+
+# ---- Editor / OS ----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ---- Local research / reference papers ------------------------------------
+# Not redistributed in this fork; see References section in README.md for
+# canonical links to the SFU thesis and FPT 2024 paper.
+research/
