@@ -22,8 +22,10 @@ that pins it at:
 - **19 cocotb modules / 60 tests** all PASS, AXI4 protocol-checker clean
 - **88% Verilator** line+toggle coverage (98.7% on `l2_cache.sv`)
 - **100% of reachable** functional coverage (covergroups + crosses)
-- **100%** mutation score on **all 11** mutation-instrumented RTL files
-  (3 equivalent / dead-branch mutations documented and excluded)
+- **100%** mutation score on **all 17** mutation-instrumented RTL files
+  (4 documented no-op/equivalent sets for files where mutations are
+  unreachable, equivalent, or out-of-scope: l2_hash, sdp_ram_rst,
+  l2_top, plus one equivalent in SRRIP/l2_tagbank/lutram/lfsr/victim)
 - **k-induction formal proof** of the FIFO invariants (DEPTH=1 and =4)
 - 500-seed nightly stress sweep, **26-config** matrix sweep, X-prop sweep,
   all clean (matrix now includes 3 `VICTIM=1` combos covering LRU/4, LRU/8, SRRIP/4).
@@ -210,6 +212,7 @@ mutation. Current per-file scores:
 | `second_chance.sv` | **100%** | 1/1 killed under POLICY=SECOND_CHANCE |
 | `random_replacement.sv` | **100%** | 1/1 killed under POLICY=RANDOM |
 | `tdp_ram.sv` | **100%** | 2/2 killed (contains bug #7 fix) |
+| `one_hot_to_integer.sv` | **100%** | 1/1 killed |
 ## Formal proofs
 
 ```bash

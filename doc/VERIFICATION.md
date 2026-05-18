@@ -262,6 +262,8 @@ mutations are coverage gaps.
 | `second_chance.sv` | **100%** | 1 | 0 | `swap_hit_bit_clear` killed (POLICY=SECOND_CHANCE) |
 | `random_replacement.sv` | **100%** | 1 | 0 | `drop_rotate` killed (POLICY=RANDOM) |
 | `tdp_ram.sv` | **100%** | 2 | 0 | `negate_a_wmask`, `drop_b_write_gate`. Contains bug #7 fix |
+| `one_hot_to_integer.sv` | **100%** | 1 | 0 | `drop_or_combine` killed by every test that uses replacement_policy |
+| `l2_top.sv` | n/a | 0 | 0 | Pure AXI-port adapter not instantiated by any cocotb test; documented out-of-test-scope |
 | `sdp_ram_rst.sv` | n/a | 0 | 0 | No effective mutations under default Verilator (init-to-zero masks the reset-init routine). XPROP regression sweep separately covers the un-init path |
 | `LRU.sv` | deferred | 0 | 0 | per-WAYS generate branches make portable mutations hard; matrix sweep already exercises WAYS=2,4,8 |
 

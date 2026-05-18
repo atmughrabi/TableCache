@@ -238,6 +238,22 @@ case "$FILE" in
         DEFAULT_TESTS="test_smoke test_random test_reset_recovery"
         MUTATIONS=()
         ;;
+    src/one_hot_to_integer.sv)
+        # Bit-OR encoder. Used by replacement_policy. Exercised by
+        # every cache test.
+        DEFAULT_TESTS="test_smoke test_random test_lru_sanity"
+        MUTATIONS=(
+            "drop_or_combine|s/int_out |= one_hot\[i\] ? \$clog2(WIDTH)'(i) : 0;/int_out = one_hot[i] ? \$clog2(WIDTH)'(i) : int_out;/"
+        )
+        ;;
+    src/l2_top.sv)
+        # Pure AXI-port adapter wrapping l2_cache. Not instantiated by
+        # any cocotb test (the test harnesses talk to l2_cache or its
+        # dut_*.sv wrappers directly). Documented as out-of-test-scope;
+        # no-op mutation set.
+        DEFAULT_TESTS="test_smoke"
+        MUTATIONS=()
+        ;;
     src/l2_tagbank.sv)
         # Tagbank: hit detection, dirty calc, write enable.
         DEFAULT_TESTS="test_smoke test_random test_cbom test_workload"
