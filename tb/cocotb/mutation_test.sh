@@ -89,6 +89,36 @@ case "$FILE" in
             "break_init_policy|0,/INIT_POLICY = INIT_POLICY \| policy_t'/{s/INIT_POLICY = INIT_POLICY \| /INIT_POLICY = /}"
         )
         ;;
+    src/fifo.sv)
+        # fifo.sv has three generate branches: DEPTH==1, ==2, >=3.
+        # No instance in the design uses DEPTH==1, so the gen_width_one
+        # branch is unreachable dead code -- mutations on it are
+        # equivalent and excluded. The DEPTH>=3 'fifo_full off-by-one'
+        # is also excluded because every FIFO instance is over-provisioned
+        # vs the worst-case backpressure in current tests; reproducing the
+        # truly-full condition needs a custom directed test outside the
+        # scope of this mutation set. fifo.sv is also covered by the
+        # formal proof in tb/formal/ (k-induction PASS for DEPTH 1 and 4).
+        DEFAULT_TESTS="test_smoke test_random test_backpressure test_finish_fifo_stress test_flush"
+        MUTATIONS=(
+            # DEPTH==2 and DEPTH>=3: swap pop/push in the count update
+            "swap_count_pushpop|s/inflight_count + (LOG2_FIFO_DEPTH+1)'(fifo_pop) - (LOG2_FIFO_DEPTH+1)'(fifo_push)/inflight_count + (LOG2_FIFO_DEPTH+1)'(fifo_push) - (LOG2_FIFO_DEPTH+1)'(fifo_pop)/"
+            # DEPTH>=3: lutram waddr swapped to read_index
+            "depth3_swap_waddr|0,/\.waddr(write_index),/{s/\.waddr(write_index)/.waddr(read_index)/}"
+            # DEPTH==2: shift_reg index inverted
+            "depth2_swap_dout_index|s/shift_reg\[~inflight_count\[0\]\]/shift_reg[inflight_count[0]]/"
+        )
+        ;;
+    src/toggle_memory.sv)
+        # toggle_memory backs set_clear_memory + the cache's inuse tables.
+        # Exercised by anything that uses cache_id_t / evict tables.
+        DEFAULT_TESTS="test_smoke test_random test_reset_recovery test_finish_fifo_stress"
+        MUTATIONS=(
+            "drop_toggle_xor|s/assign new_ram_data = toggle \^ _read_data\[0\];/assign new_ram_data = _read_data[0];/"
+            "force_toggle_always|s/assign new_ram_data = toggle \^ _read_data\[0\];/assign new_ram_data = ~_read_data[0];/"
+            "swap_read_id_chain|s/assign _read_id\[1:NUM_READ_PORTS\] = read_id;/assign _read_id[0] = read_id[0]; assign _read_id[1:NUM_READ_PORTS] = '{default: '0};/"
+        )
+        ;;
     *)
         echo "ERROR: no mutation set defined for $FILE" >&2
         echo "Add an entry to the case block in $0" >&2

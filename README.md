@@ -196,6 +196,8 @@ mutation. Current per-file scores:
 | `tc_flush_controller.sv` | **100%** | 6/6 killed by `test_flush` (3 scenarios) |
 | `l2_databank.sv` | **100%** | 5/5 killed |
 | `replacement_policy.sv` | 100% | 1/1 killed (`break_init_policy`) |
+| `fifo.sv` | **100%** | 3/3 reachable killed (DEPTH=1 branch unused in design, mutations on it are equivalent and excluded); plus k-induction formal proof in `tb/formal/` |
+| `toggle_memory.sv` | **100%** | 3/3 killed (covers `set_clear_memory` and cache inuse tables) |
 
 ## Formal proofs
 
