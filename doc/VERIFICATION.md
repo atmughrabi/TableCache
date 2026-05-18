@@ -249,6 +249,14 @@ mutations are coverage gaps.
 | `replacement_policy.sv` | 100% | 1 | 0 | `break_init_policy` killed by `test_lru_sanity` |
 | `LRU.sv` | deferred | 0 | 0 | per-WAYS generate branches make portable mutations hard; matrix sweep already exercises WAYS=2,4,8 |
 
+## Formal proofs (yosys + z3 SMTBMC)
+
+Location: `tb/formal/`. Run with `make -C tb/formal all` (deps: `yosys`, `z3`).
+
+| Module | Harness | BMC depth | Induction | Properties proven |
+|---|---|---:|---|---|
+| `fifo.sv` (FIFO_DEPTH=1) | `tb/formal/fifo_formal.sv` | 32 | **k=14 PASS** | `count <= DEPTH`, `valid == (count != 0)`, `full == (count == DEPTH)` under well-formed (no-overflow, no-underflow) environment |
+
 ### l2_cache.sv mutation set (11 mutations)
 
 | Mutation | Result |
