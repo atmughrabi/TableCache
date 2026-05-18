@@ -182,6 +182,41 @@ case "$FILE" in
         DEFAULT_TESTS="test_smoke test_random test_workload"
         MUTATIONS=()
         ;;
+    src/SRRIP.sv)
+        # Runner sets POLICY=SRRIP. test_lru_sanity runs the thrash
+        # pattern that distinguishes a working replacement from broken.
+        DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
+        MUTATIONS=(
+            # force_HP_decrement excluded: equivalent. Default
+            # RRIP_HP=1 (replacement_policy.sv:48), so the FP-decrement
+            # gate `if (~RRPV_HP & ...)` is dead code. No observable
+            # difference between original and mutated under default
+            # config.
+            "swap_insertion_bit|s/updated_RRPV\[j\]\[0\] = 0;/updated_RRPV[j][0] = 1;/"
+        )
+        ;;
+    src/FRQ.sv)
+        DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
+        MUTATIONS=(
+            "flip_increment_trigger|s/cache_eviction | cache_original_status == cache_way_used_int;/cache_eviction & cache_original_status == cache_way_used_int;/"
+        )
+        ;;
+    src/second_chance.sv)
+        DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
+        MUTATIONS=(
+            "swap_hit_bit_clear|s/hit_chance\[cache_way_used_int\] = 1;/hit_chance[cache_way_used_int] = 0;/"
+        )
+        ;;
+    src/random_replacement.sv)
+        DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
+        MUTATIONS=(
+            "drop_rotate|s/{cache_replacement_way\[WAYS-2:0\], cache_replacement_way\[WAYS-1\]}/cache_replacement_way/"
+        )
+        ;;
+    src/rrip_tree.sv)
+        DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
+        MUTATIONS=()  # stub -- expand if/when needed; small policy file
+        ;;
     src/l2_tagbank.sv)
         # Tagbank: hit detection, dirty calc, write enable.
         DEFAULT_TESTS="test_smoke test_random test_cbom test_workload"
@@ -230,6 +265,17 @@ source .venv/bin/activate
 if [[ "$FILE" == "src/victim_cache.sv" ]]; then
     export VICTIM=1
 fi
+
+# Per-policy modules are only "wired" when POLICY matches; otherwise
+# their outputs are unused (the replacement_policy.sv top mux selects
+# only the chosen policy's signals).
+case "$FILE" in
+    src/SRRIP.sv)              export POLICY=SRRIP ;;
+    src/FRQ.sv)                export POLICY=FRQ ;;
+    src/second_chance.sv)      export POLICY=SECOND_CHANCE ;;
+    src/random_replacement.sv) export POLICY=RANDOM ;;
+    src/rrip_tree.sv)          export POLICY=RRIP_TREE ;;
+esac
 
 killed=0; survived=0; broken=0
 total=${#MUTATIONS[@]}

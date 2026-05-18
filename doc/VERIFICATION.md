@@ -257,6 +257,10 @@ mutations are coverage gaps.
 | `LRU.sv` | **100%** | 2 | 0 | `gen4_flip_case0_evict` + `gen4_flip_case0_miss` killed by `test_lru_sanity`. Only gen_4 branch instrumented (default WAYS=4); other generates implicitly exercised by matrix |
 | `l2_tagbank.sv` | **100%** | 2 | 0 | `negate_hit` + `swap_way_select` killed. `drop_tb_wen_gate` excluded as equivalent (CBOM-miss writes invalid over already-invalid entry) |
 | `l2_hash.sv` | n/a | 0 | 0 | No effective mutations: hash quality affects performance, not correctness. `add_drop_plus1` (drop `+1` in bit sum) and `xor_fold_skip` (unreachable gen_full_hash branch) both equivalent under any functional check |
+| `SRRIP.sv` | **100%** | 1 | 0 | `swap_insertion_bit` killed by test_lru_sanity (POLICY=SRRIP). `force_HP_decrement` excluded as equivalent (RRIP_HP=1 default makes FP branch dead) |
+| `FRQ.sv` | **100%** | 1 | 0 | `flip_increment_trigger` killed (POLICY=FRQ) |
+| `second_chance.sv` | **100%** | 1 | 0 | `swap_hit_bit_clear` killed (POLICY=SECOND_CHANCE) |
+| `random_replacement.sv` | **100%** | 1 | 0 | `drop_rotate` killed (POLICY=RANDOM) |
 | `LRU.sv` | deferred | 0 | 0 | per-WAYS generate branches make portable mutations hard; matrix sweep already exercises WAYS=2,4,8 |
 
 ## Formal proofs (yosys + z3 SMTBMC)

@@ -205,6 +205,10 @@ mutation. Current per-file scores:
 | `victim_cache.sv` | 50% | 2/4 killed -- `negate_hit` + `drop_buffer_tag_uncacheable` killed; 2 survivors need deeper investigation of the L1↔victim invalidate protocol. Requires `VICTIM=1` build |
 | `LRU.sv` | **100%** | 2/2 killed (gen_4 branch, killed by `test_lru_sanity`) |
 | `l2_tagbank.sv` | **100%** | 2/2 killed (one equivalent mutation `drop_tb_wen_gate` excluded) |
+| `SRRIP.sv` | **100%** | 1/1 killed under POLICY=SRRIP (equivalent dead-branch mutation excluded) |
+| `FRQ.sv` | **100%** | 1/1 killed under POLICY=FRQ |
+| `second_chance.sv` | **100%** | 1/1 killed under POLICY=SECOND_CHANCE |
+| `random_replacement.sv` | **100%** | 1/1 killed under POLICY=RANDOM |
 ## Formal proofs
 
 ```bash
