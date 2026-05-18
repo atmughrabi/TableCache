@@ -76,6 +76,12 @@ VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
     $(TB_DIR)/dut_shim_cache.sv
 EXTRA_ARGS += +define+TC_NARROW_W=$(NARROW_W) +define+TC_BLOCK_W=$(WIDE_W) \
               +define+TC_LINES=$(LINES) +define+TC_LINE_W=$(LINE_W) +define+TC_WAYS=$(WAYS)
+else ifeq ($(MODULE),test_flush)
+TOPLEVEL := dut_flush
+VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
+    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
+    $(TB_DIR)/axi_protocol_checker.sv \
+    $(TB_DIR)/dut_flush.sv
 else
 # All RTL files (cache_config first, l2_cache and friends; exclude l2_top and shim).
 VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \

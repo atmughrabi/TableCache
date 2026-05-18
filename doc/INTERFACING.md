@@ -240,6 +240,60 @@ bundled SV test memory model historically did not, leading to bug #5;
 see [tb/common/axi_mem_model.sv](tb/common/axi_mem_model.sv) for a
 correct WRAP implementation.
 
+### Whole-cache flush controller ([`src/tc_flush_controller.sv`](../src/tc_flush_controller.sv))
+
+Optional drop-in sequencer that issues an ACE-CBOM (default
+`CleanInvalid` = `4'b1001`) on every line. Use when the accelerator
+needs an atomic "drain everything to memory" handshake rather than per-
+line snoops.
+
+Ports:
+
+| Signal | Direction | Description |
+|---|---|---|
+| `flush_req` | input | single-cycle pulse to start |
+| `flush_mode[3:0]` | input | overrides default `arsnoop`; `0` keeps default. Use `4'b1001` (CleanInvalid), `4'b1000` (CleanShared, keep clean copy), or `4'b1101` (MakeInvalid, no writeback). |
+| `flush_active` | output | high from `flush_req` until the last R beat drains |
+| `flush_done` | output | single-cycle pulse on completion |
+
+Reserved ID: `FLUSH_ID = (1<<ID_W)-1`. The accelerator must not issue
+this ID while `flush_active=1`. (The narrow-port shim already reserves
+the same ID for its own prefill traffic.)
+
+Integration with the cache requires a 2:1 priority mux on the cache's
+slave port:
+
+```sv
+// Pseudocode -- see tb/cocotb/dut_flush.sv for a working version
+tc_flush_controller #(...) flush_ctrl (
+    .clk(clk), .rst(rst),
+    .flush_req(flush_req), .flush_mode(flush_mode),
+    .flush_active(flush_active), .flush_done(flush_done),
+    .m_ar(flush_ar), .m_arid(flush_arid), .m_arready(flush_arready),
+    .m_r(flush_r), .m_rid(flush_rid), .m_rdata(flush_rdata),
+    .m_rready(flush_rready)
+);
+
+// AR mux: flush has priority
+assign cache_ar     = flush_active ? flush_ar     : acc_ar;
+assign cache_arid   = flush_active ? flush_arid   : acc_arid;
+assign acc_arready  = flush_active ? 1'b0         : cache_arready;
+assign flush_arready= flush_active ? cache_arready: 1'b0;
+
+// R demux by id: FLUSH_ID -> controller, else -> accelerator
+assign flush_rready = (cache_rid == FLUSH_ID) ? acc_rready_or_1 : 1'b0;
+assign acc_rready_visible = (cache_rid != FLUSH_ID) & cache_rvalid;
+
+// AW gated during flush so no new writes land mid-sweep
+assign cache_aw.awvalid = acc_aw.awvalid & ~flush_active;
+assign acc_awready      = cache_awready  & ~flush_active;
+```
+
+Estimated latency: ~`LINES * (DB_LATENCY + 4)` cycles for a fully-empty
+cache, plus the mem writeback time for every dirty line. Default
+config (LINES=64, DB_LATENCY=1) flushes a fully-dirty cache in ~5000-
+10000 cycles depending on mem latency.
+
 ---
 
 ## 12. What is verified / not verified
