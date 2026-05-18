@@ -2,19 +2,70 @@
 
 Fork of [`sfu-rcl/tablecache`](https://gitlab.com/sfu-rcl/tablecache) (Chris
 Keilbart, SFU RCL). This fork adds a cocotb regression, an AXI4 protocol
-checker, a narrow-port shim, and five RTL bug fixes.
+checker, a narrow-port shim, a whole-cache flush controller, a
+yosys+z3 formal proof harness, and six RTL bug fixes.
 
 Original RTL by upstream; modifications licensed under Apache-2.0 WITH
 SHL-2.1 (see [LICENSE](LICENSE)). For background on the cache itself see
 the [SFU thesis](https://summit.sfu.ca/item/39095) and the FPT 2024 paper.
 
+---
+
+## TL;DR
+
+A configurable, ACE-Lite-snoopable L2 data cache for FPGA accelerators,
+with a narrow-port shim, a flush sequencer, and a verification campaign
+that pins it at:
+
+- **19 cocotb modules / 60 tests** all PASS, AXI4 protocol-checker clean
+- **88% Verilator** line+toggle coverage (98.7% on `l2_cache.sv`)
+- **100% of reachable** functional coverage (covergroups + crosses)
+- **90.9% / 100% / 100% / 100% / 85.7%** mutation scores on the five
+  hand-written RTL files
+- **k-induction formal proof** of the FIFO invariants (DEPTH=1 and =4)
+- 500-seed nightly stress sweep, 22-config matrix sweep, X-prop sweep,
+  all clean.
+
+## Quick navigation
+
+| If you want to … | Read |
+|---|---|
+| **Use TableCache in your FPGA design** | [doc/FPGA_INTEGRATION.md](doc/FPGA_INTEGRATION.md) |
+| Understand the AXI / snoop / flush contract | [doc/INTERFACING.md](doc/INTERFACING.md) |
+| Understand how the cache works inside | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) |
+| Re-run / extend the verification | [doc/VERIFICATION.md](doc/VERIFICATION.md) |
+| **Apply the methodology to your own RTL** | [doc/VERIFICATION_GUIDELINES.md](doc/VERIFICATION_GUIDELINES.md) |
+| See residual risk + Xilinx VIP transition | [doc/VERIFICATION_XILINX_VIP_ROADMAP.md](doc/VERIFICATION_XILINX_VIP_ROADMAP.md) |
+| Run a test right now | [Run tests](#run-tests) below |
+
+## Contents
+
+- [Layout](#whats-in-here)
+- [Requirements](#requirements)
+- [Run tests](#run-tests)
+- [Coverage and seed sweep](#coverage-and-seed-sweep)
+- [Lint and X-prop](#lint-and-x-prop)
+- [Functional coverage](#functional-coverage)
+- [Mutation testing](#mutation-testing)
+- [Formal proofs](#formal-proofs)
+- [Overnight stress run](#overnight-stress-run)
+- [Test inventory](#test-inventory)
+- [How to add a test](#how-to-add-a-test)
+- [AXI4 limitations](#axi4-limitations)
+- [Documentation](#documentation)
+- [Bug fixes in this fork](#bug-fixes-in-this-fork)
+- [Syncing from upstream](#syncing-from-upstream)
+
+---
+
 ## What's in here
 
 ```
-src/                  RTL (cache + narrow-port shim)
-tb/cocotb/            cocotb regression (18 modules, 60 tests)
+src/                  RTL (cache + narrow-port shim + flush controller)
+tb/cocotb/            cocotb regression (19 modules, 60 tests)
+tb/formal/            yosys+z3 SMTBMC harnesses (fifo.sv proofs)
 tb/{Makefile,*.sv}    legacy SV directed TB (upstream)
-doc/                  architecture, interfacing, verification docs
+doc/                  architecture, interfacing, integration, verification docs
 ```
 
 ## Requirements
@@ -44,7 +95,7 @@ cd tb/cocotb && source .venv/bin/activate
 # single test
 make MODULE=test_smoke
 
-# full regression (18 modules)
+# full regression (19 modules)
 for mod in test_smoke test_random test_scoreboard test_strobe test_latency \
            test_lru_sanity test_workload test_cbom test_reset_recovery \
            test_graph_patterns test_backpressure test_realism \
@@ -120,10 +171,12 @@ cd tb/cocotb
 NTXN=300 ./cov_functional.sh           # runs instrumented tests + prints summary
 ```
 
-Covergroups in [tb_coverage.py](tb/cocotb/tb_coverage.py); currently
-instrumented by `test_random` and `test_cbom`. Per-test XML at
-`/tmp/tc_cov_<mod>.xml`. Last run hits 100% on snoop / partial cover-
-points, 50% on burst-length (2/4-beat bins unfilled).
+Covergroups in [tb_coverage.py](tb/cocotb/tb_coverage.py); instrumented
+by `test_random`, `test_cbom`, and `test_strobe`. Per-test XML at
+`/tmp/tc_cov_<mod>.xml`. Architecturally unreachable cells (CBOM
+snoops are 1-beat by ACE spec; WriteEvict is full-line only) are
+excluded via `ign_bins`. **All per-channel coverpoints AND all crosses
+hit 100%** of reachable cells.
 
 ## Mutation testing
 
@@ -143,6 +196,25 @@ mutation. Current per-file scores:
 | `tc_flush_controller.sv` | **100%** | 6/6 killed by `test_flush` (3 scenarios) |
 | `l2_databank.sv` | **100%** | 5/5 killed |
 | `replacement_policy.sv` | 100% | 1/1 killed (`break_init_policy`) |
+
+## Formal proofs
+
+```bash
+make -C tb/formal all   # deps: yosys, z3, sv2v
+```
+
+Four targets covering both `fifo.sv` implementation branches:
+
+| Target | Path | BMC depth | Induction |
+|---|---|---:|---|
+| `bmc` | DEPTH=1 (register) | 32 | PASS (k=14) |
+| `induct` | DEPTH=1 | -- | PASS (k=14) |
+| `bmc-deep` | DEPTH=4 (LFSR + LUTRAM, via `sv2v`) | 32 | PASS (k=24) |
+| `induct-deep` | DEPTH=4 | -- | PASS (k=24) |
+
+Proven invariants (under a well-formed no-overflow / no-underflow
+environment): `count <= DEPTH`, `valid == (count != 0)`,
+`full == (count == DEPTH)`.
 
 ## Overnight stress run
 
@@ -177,8 +249,8 @@ spec including what bug class it was designed to catch.
 | `test_backpressure` | 6 scenarios pausing each AXI READY independently and combined |
 | `test_realism` | DDR-style sustained mem-R inter-beat latency (20/40/80) + long-idle reset recover |
 | `test_finish_fifo_stress` | hot-set + heavy response back-pressure (drives `cp_*` cover points) |
-| `test_shim_prefill_race` | direct-driven shim test targeting `drop_prefill_check` mutation (pending validation) |
-| `test_flush` | flush controller integration test (clean / dirty / idempotent; pending validation) |
+| `test_shim_prefill_race` | direct-driven shim test targeting `drop_prefill_check` mutation; marked `expect_fail` (artifactual under default `PROMOTE_WMISS_TO_RW=0`) |
+| `test_flush` | flush controller (4 scenarios): clean / dirty-writeback / idempotent / **cold-cache** (no pre-warm required) |
 | `test_shim_cache` | shim + cache at `BLOCK_W=512`; RMW preservation tests for bug #7 |
 | `test_narrow_shim` | shim alone against `AxiRam`; 10 directed + 1 random pass |
 | `test_shim_latency` | shim cold/hot/write/merge cycle counts |
@@ -239,9 +311,11 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
 
 | File | Contents |
 |---|---|
-| [`doc/INTERFACING.md`](doc/INTERFACING.md) | port spec, snoop encodings, reset semantics, shim ports |
+| [`doc/FPGA_INTEGRATION.md`](doc/FPGA_INTEGRATION.md) | end-to-end integration: param selection, topology choices, instantiation template, AXI compliance, bring-up checklist, debug aids |
+| [`doc/INTERFACING.md`](doc/INTERFACING.md) | port spec, snoop encodings, reset semantics, shim ports, flush controller |
 | [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | cache internals, data flow, state-tracker table, bug history |
-| [`doc/VERIFICATION.md`](doc/VERIFICATION.md) | per-test specification, AXI4 PC rule list, coverage matrix |
+| [`doc/VERIFICATION.md`](doc/VERIFICATION.md) | per-test specification, AXI4 PC rule list, coverage matrix, mutation table, formal table |
+| [`doc/VERIFICATION_GUIDELINES.md`](doc/VERIFICATION_GUIDELINES.md) | generic 8-layer methodology applicable to any RTL unit (cache, FIFO, FSM, accelerator) |
 | [`doc/VERIFICATION_XILINX_VIP_ROADMAP.md`](doc/VERIFICATION_XILINX_VIP_ROADMAP.md) | residual-risk analysis + Xilinx VIP transition plan |
 
 ## Bug fixes in this fork
@@ -256,6 +330,7 @@ for details.
 | 8 | `replacement_policy.sv` | `policy_t` zero-width when `POLICY=RANDOM` under Verilator 5.x |
 | 10 | `l2_cache.sv` | slave-port VALIDs held one cycle into reset |
 | 12 | `l2_cache.sv` | mem-port VALIDs held one cycle into reset (sibling of #10) |
+| 13 | `l2_cache.sv` | CBOM-on-absent-line hung the response path; ar_fifo_push now gates out CBOMs (enables cold-cache flush) |
 
 A self-bug #11 in `axi_protocol_checker.sv` (`vcount` multi-driver race
 masking #10) was also fixed; see same section.
