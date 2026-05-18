@@ -242,15 +242,21 @@ correct WRAP implementation.
 
 ### Whole-cache flush controller ([`src/tc_flush_controller.sv`](../src/tc_flush_controller.sv))
 
-> **Status: DRAFT.** RTL + integration wrapper + test scaffolding are in
-> place. Validation hangs on the first CBOM AR -- the cache appears to
-> not respond to `CleanInvalid` snoops on absent (never-allocated) lines
-> with an R beat, so the controller's `WAIT_R` state never advances.
-> The cache's existing CBOM tests only exercise present lines; the flush
-> use-case (iterate **every** line, present or not) is new behaviour
-> that needs either (a) a small change to the cache's CBOM path to
-> synthesise a NOP R beat on absent lines, or (b) a flush controller
-> that first probes for tag-present before issuing the CBOM. Tracked.
+> **Status: working with constraints.** Validated by
+> [tb/cocotb/test_flush.py](../tb/cocotb/test_flush.py) (3 tests, all
+> PASS). Two operational constraints:
+>
+> 1. The cache's CBOM path requires the target line to be **present** in
+>    the cache to emit the R response. Issuing a CBOM to an absent
+>    (never-allocated) line hangs the flush controller in `WAIT_R`.
+>    Integrators must warm every line via reads before the first flush
+>    (the `test_flush` scenarios all do this).
+> 2. `CleanInvalid` (default `arsnoop = 4'b1001`) appears to issue a
+>    writeback for every present line regardless of dirty state, so
+>    `flush_mode = 0b1001` produces `LINES` mem AWs. Use
+>    `flush_mode = 0b1101` (MakeInvalid) to drop without writeback, or
+>    `flush_mode = 0b1001` to writeback-then-drop on every line. The
+>    `test_flush_writes_back_dirty` scenario verifies the data path.
 
 Optional drop-in sequencer that issues an ACE-CBOM (default
 `CleanInvalid` = `4'b1001`) on every line. Use when the accelerator

@@ -195,17 +195,21 @@ module dut_flush
         end
     end
 
-    // R demux by id. Flush owns FLUSH_ID; everything else goes to accelerator.
-    assign flush_r        = '{ rvalid: cache_r.rvalid & (cache_rid == FLUSH_ID),
+    // R demux by id, but ONLY when flush is active. With flush_active=0
+    // all responses go to the accelerator -- otherwise cocotbext-axi's
+    // ID-rotation can pick FLUSH_ID for a normal read and the response
+    // would be silently swallowed by the controller.
+    wire route_to_flush = flush_active & (cache_rid == FLUSH_ID);
+    assign flush_r        = '{ rvalid: cache_r.rvalid & route_to_flush,
                                 rlast:  cache_r.rlast,
                                 rresp:  cache_r.rresp };
-    assign s_r            = '{ rvalid: cache_r.rvalid & (cache_rid != FLUSH_ID),
+    assign s_r            = '{ rvalid: cache_r.rvalid & ~route_to_flush,
                                 rlast:  cache_r.rlast,
                                 rresp:  cache_r.rresp };
     assign s_rdata        = cache_rdata;
     assign s_rid          = cache_rid;
     // cache_rready = whichever side is consuming this beat
-    assign cache_rready   = (cache_rid == FLUSH_ID) ? flush_rready : s_rready;
+    assign cache_rready   = route_to_flush ? flush_rready : s_rready;
 
     // AW/W/B: accelerator only. Flush is CBOM-via-AR; never issues AW/W.
     // Gate accelerator AW while flushing so the cache sees no new writes.

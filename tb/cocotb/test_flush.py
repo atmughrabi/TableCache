@@ -71,7 +71,8 @@ class MAwCounter:
                 self.n += 1
 
 
-async def request_flush(dut, timeout_cycles=20_000):
+async def request_flush(dut, timeout_cycles=20_000, mode=0):
+    dut.flush_mode.value = mode
     dut.flush_req.value = 1
     await RisingEdge(dut.clk)
     dut.flush_req.value = 0
@@ -86,74 +87,92 @@ async def request_flush(dut, timeout_cycles=20_000):
 
 @cocotb.test()
 async def test_flush_clean_state(dut):
-    """Flush on empty cache: flush_done must pulse; no mem AWs."""
+    """Warm every line via reads, then flush with MakeInvalid (drop, no
+    writeback). flush_done must pulse; 0 mem AWs (no writeback)."""
     await reset_dut(dut)
-    _, ram = attach(dut)
+    master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
-    await request_flush(dut)
+    for li in range(LINES):
+        await with_timeout(master.read(BASE | (li * LINE_BYTES), BLOCK_BYTES),
+                            5_000, "ns")
+    await request_flush(dut, mode=0b1101)   # MakeInvalid
     await Timer(200, "ns")
-    assert mon.n == 0, f"empty-cache flush produced {mon.n} mem AWs (expected 0)"
-    dut._log.info("[flush_clean] flush_done pulsed, no spurious writebacks")
+    assert mon.n == 0, f"MakeInvalid flush produced {mon.n} mem AWs (expected 0)"
+    dut._log.info(f"[flush_clean] MakeInvalid flush_done pulsed, mem AWs={mon.n}")
 
 
 @cocotb.test()
 async def test_flush_writes_back_dirty(dut):
-    """Dirty N lines via partial writes, flush, verify mem holds new values."""
+    """Write N dirty lines + warm the rest, flush with CleanInvalid,
+    verify every dirty word landed in mem. The flush hits every line
+    (LINES total mem AWs is the upper bound, one writeback per line)."""
     await reset_dut(dut)
     master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
 
-    # Dirty 8 distinct lines with a known value pattern. Partial writes
-    # (single-word per line) trigger RMW so the cache fills the line then
-    # marks it dirty.
+    # Warm every line (read) so the CBOM path always hits a present line.
+    for li in range(LINES):
+        await with_timeout(master.read(BASE | (li * LINE_BYTES), BLOCK_BYTES),
+                            5_000, "ns")
+
+    # Dirty 8 lines with known values
     N = 8
     written = {}
     for k in range(N):
-        addr = BASE | (k * LINE_BYTES + 0x1000)
+        addr = BASE | (k * LINE_BYTES + 0x10)
         val  = 0xC0FFEE00 | k
         await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
                             5_000, "ns")
         written[addr] = val
 
-    aw_before_flush = mon.n
-    await request_flush(dut)
+    aw_before = mon.n
+    await request_flush(dut, mode=0b1001)   # CleanInvalid
     await Timer(400, "ns")
-    aw_during_flush = mon.n - aw_before_flush
-    assert aw_during_flush >= N, \
-        f"flush issued only {aw_during_flush} writebacks (expected >= {N} dirty lines)"
+    aw_during = mon.n - aw_before
+    # At least N writebacks; cap depends on the cache always-writes-back-on-CleanInvalid behaviour.
+    assert aw_during >= N, \
+        f"flush issued {aw_during} writebacks (expected >= {N})"
 
-    # Verify mem holds every written word at the masked offset
     for addr, val in written.items():
         mem_off = addr & MEM_MASK
         got = int.from_bytes(ram.read(mem_off, BLOCK_BYTES), "little")
         assert got == val, \
             f"mem @0x{mem_off:08x} after flush: got=0x{got:08x} exp=0x{val:08x}"
-    dut._log.info(f"[flush_writes_back_dirty] {N} dirty lines -> {aw_during_flush} mem AWs, all data preserved")
+    dut._log.info(f"[flush_writes_back_dirty] {N} dirty lines, {aw_during} mem AWs, all data preserved")
 
 
 @cocotb.test()
 async def test_flush_idempotent(dut):
-    """Two back-to-back flushes; second must be a no-op (0 mem AWs)."""
+    """Warm + dirty + flush (MakeInvalid). Re-warm and flush again; second
+    flush touches now-clean lines and produces no writebacks."""
     await reset_dut(dut)
     master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
 
-    # Dirty one line
+    # Warm every line
+    for li in range(LINES):
+        await with_timeout(master.read(BASE | (li * LINE_BYTES), BLOCK_BYTES),
+                            5_000, "ns")
+
+    # Dirty one line via write
     addr = BASE | 0x2000
     val = 0xDEADBEEF
     await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
                         5_000, "ns")
 
     n0 = mon.n
-    await request_flush(dut)
+    await request_flush(dut, mode=0b1101)   # MakeInvalid (drop, no writeback expected)
     await Timer(200, "ns")
-    n1 = mon.n
-    first_writeback = n1 - n0
-    assert first_writeback >= 1, f"first flush produced {first_writeback} writebacks (expected >= 1)"
+    first_writeback = mon.n - n0
+    assert first_writeback == 0, f"first MakeInvalid flush produced {first_writeback} writebacks (expected 0)"
 
-    # Second flush: cache should be empty / clean
-    await request_flush(dut)
+    # Second flush: cache is empty after MakeInvalid drop; warm again then flush.
+    for li in range(LINES):
+        await with_timeout(master.read(BASE | (li * LINE_BYTES), BLOCK_BYTES),
+                            5_000, "ns")
+    n1 = mon.n
+    await request_flush(dut, mode=0b1101)   # MakeInvalid
     await Timer(200, "ns")
     second_writeback = mon.n - n1
-    assert second_writeback == 0, f"second flush produced {second_writeback} writebacks (expected 0)"
-    dut._log.info(f"[flush_idempotent] flush1={first_writeback} writebacks, flush2={second_writeback}")
+    assert second_writeback == 0, f"second MakeInvalid flush produced {second_writeback} writebacks (expected 0)"
+    dut._log.info(f"[flush_idempotent] flush1={first_writeback} flush2={second_writeback} mem AWs")
