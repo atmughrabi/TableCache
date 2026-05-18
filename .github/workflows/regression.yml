@@ -89,6 +89,16 @@ jobs:
             timeout 300 make MODULE=$mod
           done
 
+      - name: VICTIM=1 path (smoke + cbom + victim directed)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          for mod in test_smoke test_cbom test_victim; do
+            rm -rf sim_build sim_build_shim
+            VICTIM=1 timeout 300 make MODULE=$mod
+          done
+
   formal:
     runs-on: ubuntu-22.04
     timeout-minutes: 15

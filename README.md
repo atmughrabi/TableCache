@@ -25,8 +25,8 @@ that pins it at:
 - **100%** mutation score on **all 11** mutation-instrumented RTL files
   (3 equivalent / dead-branch mutations documented and excluded)
 - **k-induction formal proof** of the FIFO invariants (DEPTH=1 and =4)
-- 500-seed nightly stress sweep, 22-config matrix sweep, X-prop sweep,
-  all clean.
+- 500-seed nightly stress sweep, **26-config** matrix sweep, X-prop sweep,
+  all clean (matrix now includes 3 `VICTIM=1` combos covering LRU/4, LRU/8, SRRIP/4).
 
 ## Quick navigation
 

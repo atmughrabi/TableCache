@@ -39,8 +39,10 @@ MATRIX = [
     ("SRRIP",         4, 1, 0, 1),
     # CBOM off
     ("LRU",           4, 1, 0, 0),
-    # VICTIM on
+    # VICTIM on (3 variants exercise different victim-cache pressure patterns)
     ("LRU",           4, 1, 1, 1),
+    ("LRU",           8, 1, 1, 1),
+    ("SRRIP",         4, 1, 1, 1),
 ]
 
 
