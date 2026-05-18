@@ -83,7 +83,10 @@ log "PHASE 3 done: rc=$rc | $(grep -E 'passed|failed' "$OUT/phase3.log" | tail -
 # Phase 4 -- mutation re-baselines (sanity check that scores haven't drifted)
 # ----------------------------------------------------------------------
 log "PHASE 4: mutation re-baselines"
-for f in src/l2_cache.sv src/tc_narrow_shim.sv src/l2_databank.sv src/replacement_policy.sv; do
+for f in src/l2_cache.sv src/tc_narrow_shim.sv src/tc_flush_controller.sv \
+         src/l2_databank.sv src/replacement_policy.sv \
+         src/fifo.sv src/toggle_memory.sv \
+         src/lutram_1w_1r.sv src/lfsr.sv src/sdp_ram.sv; do
     FILE=$f ./mutation_test.sh > "$OUT/phase4_${f//\//_}.log" 2>&1
     score=$(grep -E '^  mutation score:' "$OUT/phase4_${f//\//_}.log" | tail -1)
     log "  $f -- $score"
