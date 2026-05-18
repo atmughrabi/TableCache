@@ -34,6 +34,10 @@ BLOCK_B  = BLOCK_W  // 8
 ID_W     = 4
 PREFILL_ID = (1 << ID_W) - 1   # tc_narrow_shim uses '1 as PREFILL_ID
 
+# This race is only reachable when PROMOTE_WMISS_TO_RW=1 (write-miss
+# promotion path). Default build has it 0 and the prefill FSM is dead.
+PROMOTE = os.environ.get("TC_PROMOTE_WMISS", "0") == "1"
+
 
 async def reset_dut(dut):
     cocotb.start_soon(Clock(dut.clk, CLK_NS, units="ns").start())
@@ -58,7 +62,7 @@ async def reset_dut(dut):
     await RisingEdge(dut.clk)
 
 
-@cocotb.test(expect_fail=True)
+@cocotb.test(expect_fail=not PROMOTE)
 async def test_prefill_race_no_extra_ar(dut):
     """Drive an AW+W that triggers prefill, then drive a concurrent AR to
     a different line. Snoop every m_arvalid handshake; assert that any
@@ -74,33 +78,39 @@ async def test_prefill_race_no_extra_ar(dut):
     write_lane = 3
     write_val  = 0xC0FFEE00 & ((1 << NARROW_W) - 1)
 
-    # Background monitor on m_arvalid: count handshakes while prefill_active=1.
-    leaks = []
+    # Background monitor on m_arvalid and m_rvalid. The mutation
+    # drop_prefill_check lets the user's m_arvalid fire BEFORE the
+    # prefill's m_r response returns; correct RTL forces user AR to
+    # wait until prefill_resp_pending clears (i.e. until after the
+    # PREFILL m_r last beat). Track the cycle of each ar/r handshake.
+    ar_handshakes = []   # (cycle, arid)
+    r_handshakes  = []   # (cycle, rid, rlast)
+    cycle = 0
     async def snoop():
+        nonlocal cycle
         while True:
             await RisingEdge(dut.clk)
             await ReadOnly()
+            cycle += 1
             if int(dut.m_arvalid) and int(dut.m_arready):
-                pa = int(dut.tc_narrow_shim_inst.prefill_active.value) \
-                    if hasattr(dut, "tc_narrow_shim_inst") else None
-                arid = int(dut.m_arid.value)
-                # If we can read prefill_active and it's high, the only
-                # allowed AR is the prefill itself (arid == PREFILL_ID).
-                # We must read from inside the shim; fall back to relying
-                # on the arid != PREFILL_ID rule if not accessible.
-                if pa is None:
-                    leaks.append((arid, None))  # collect for post-hoc check
-                elif pa == 1 and arid != PREFILL_ID:
-                    leaks.append((arid, pa))
+                ar_handshakes.append((cycle, int(dut.m_arid.value)))
+            if int(dut.m_rvalid) and int(dut.m_rready):
+                r_handshakes.append((cycle, int(dut.m_rid.value), int(dut.m_rlast.value)))
     mon = cocotb.start_soon(snoop())
 
-    # 1. Drive AW+W for narrow write to line_w (triggers prefill).
+    # 1. Drive AW+W AND s_ar concurrently so the user's read is pending
+    #    when prefill_active asserts. The mutation drop_prefill_check
+    #    lets the user's m_arvalid fire while prefill is still in flight;
+    #    only the concurrent-assertion ordering exposes it.
     dut.s_awaddr.value  = line_w + write_lane * NARROW_B
     dut.s_awid.value    = 1
     dut.s_awvalid.value = 1
     dut.s_wdata.value   = write_val
     dut.s_wvalid.value  = 1
     dut.s_wlast.value   = 1
+    dut.s_araddr.value  = line_r
+    dut.s_arid.value    = 2
+    dut.s_arvalid.value = 1
     # Wait for AW handshake.
     awseen = False
     for _ in range(50):
@@ -120,11 +130,7 @@ async def test_prefill_race_no_extra_ar(dut):
     dut.s_awvalid.value = 0
     dut.s_wvalid.value  = 0
 
-    # 2. Immediately raise s_arvalid for a different-line narrow read.
-    dut.s_araddr.value  = line_r
-    dut.s_arid.value    = 2
-    dut.s_arvalid.value = 1
-    # Hold until accepted.
+    # 2. s_ar is already asserted from step 1; just wait for the AR handshake.
     arseen = False
     for _ in range(200):
         await RisingEdge(dut.clk)
@@ -151,20 +157,29 @@ async def test_prefill_race_no_extra_ar(dut):
     await Timer(200, "ns")
     mon.kill()
 
-    # 4. Check the snoop log.
-    pa_visible = any(p is not None for _, p in leaks) or len(leaks) == 0
-    if pa_visible:
-        bad = [(a, p) for a, p in leaks if p == 1 and a != PREFILL_ID]
-        assert not bad, f"m_arvalid handshakes during prefill_active with arid != PREFILL_ID: {bad}"
-        dut._log.info(f"[prefill_race] {len(leaks)} m_arvalid handshakes, all guard-compliant")
-    else:
-        # prefill_active not visible from TB; fall back to: ALL m_ar handshakes
-        # must be either PREFILL_ID or after prefill window. The mutation
-        # would produce a non-PREFILL_ID m_arvalid handshake within ~2 cycles
-        # of prefill's AR. We assert that no consecutive arids appear within
-        # a 4-cycle window (heuristic).
-        non_pf = [a for a, _ in leaks if a != PREFILL_ID]
-        pf = [a for a, _ in leaks if a == PREFILL_ID]
-        dut._log.info(f"[prefill_race] m_ar handshakes: PREFILL_ID={len(pf)} other={len(non_pf)} (prefill_active not visible)")
-        # Both transactions must complete with PREFILL_ID seen at least once.
-        assert pf, "no prefill AR observed (test did not exercise prefill)"
+    # 4. Leak detection. Find the cycle of the first PREFILL_ID AR and
+    # the cycle of its R-last response. Under correct RTL, any non-
+    # PREFILL_ID m_arvalid handshake must come at or AFTER that R-last
+    # cycle (the gate ~prefill_active forces it to wait). Under the
+    # drop_prefill_check mutation, the user m_ar fires immediately
+    # alongside the prefill, before the R returns.
+    pf_ar = next(((c, a) for c, a in ar_handshakes if a == PREFILL_ID), None)
+    assert pf_ar, f"no prefill AR observed; ar_handshakes={ar_handshakes}"
+    pf_ar_cyc = pf_ar[0]
+    pf_r_last = next(((c, rid) for c, rid, last in r_handshakes
+                      if rid == PREFILL_ID and last == 1), None)
+    assert pf_r_last, f"no prefill R-last observed; r_handshakes={r_handshakes}"
+    pf_r_cyc = pf_r_last[0]
+
+    leaks = [(c, a) for c, a in ar_handshakes
+             if a != PREFILL_ID and pf_ar_cyc <= c <= pf_r_cyc]
+    dut._log.info(
+        f"[prefill_race] prefill AR@{pf_ar_cyc} R-last@{pf_r_cyc} "
+        f"ARs={ar_handshakes} Rs={r_handshakes}"
+    )
+    assert not leaks, (
+        f"m_arvalid leak: non-PREFILL_ID handshake {leaks} during "
+        f"prefill window [{pf_ar_cyc}, {pf_r_cyc}]. "
+        f"This is the drop_prefill_check mutation footprint."
+    )
+    dut._log.info(f"[prefill_race] no leak in prefill window")

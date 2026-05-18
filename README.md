@@ -22,8 +22,8 @@ that pins it at:
 - **19 cocotb modules / 60 tests** all PASS, AXI4 protocol-checker clean
 - **88% Verilator** line+toggle coverage (98.7% on `l2_cache.sv`)
 - **100% of reachable** functional coverage (covergroups + crosses)
-- **90.9% / 100% / 100% / 100% / 85.7%** mutation scores on the five
-  hand-written RTL files
+- **90.9% / 100% / 100% / 100% / 100% / 100% / 100%** mutation scores on the
+  seven mutation-instrumented RTL files
 - **k-induction formal proof** of the FIFO invariants (DEPTH=1 and =4)
 - 500-seed nightly stress sweep, 22-config matrix sweep, X-prop sweep,
   all clean.
@@ -194,7 +194,7 @@ mutation. Current per-file scores:
 | File | Score | Notes |
 |---|---:|---|
 | `l2_cache.sv` | **90.9%** | 10/11 mutations killed; 1 survivor is an unreachable assertion bin |
-| `tc_narrow_shim.sv` | **85.7%** | 6/7 killed; last gap (`drop_prefill_check`) needs cycle-accurate pipelined W+R stimulus |
+| `tc_narrow_shim.sv` | **100%** | 7/7 killed; `drop_prefill_check` killed by `test_shim_prefill_race` under `TC_PROMOTE_WMISS=1` |
 | `tc_flush_controller.sv` | **100%** | 6/6 killed by `test_flush` (3 scenarios) |
 | `l2_databank.sv` | **100%** | 5/5 killed |
 | `replacement_policy.sv` | 100% | 1/1 killed (`break_init_policy`) |

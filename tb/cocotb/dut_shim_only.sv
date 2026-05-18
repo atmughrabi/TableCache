@@ -23,9 +23,14 @@ module dut_shim_only
         parameter int ADDR_W             = 32,
         parameter int MAX_OUTSTANDING_W  = 16,
 `ifdef TC_DISABLE_LINE_BUFFER
-        parameter bit ENABLE_LINE_BUFFER = 1'b0
+        parameter bit ENABLE_LINE_BUFFER = 1'b0,
 `else
-        parameter bit ENABLE_LINE_BUFFER = 1'b1
+        parameter bit ENABLE_LINE_BUFFER = 1'b1,
+`endif
+`ifdef TC_PROMOTE_WMISS
+        parameter bit PROMOTE_WMISS_TO_RW = 1'b1
+`else
+        parameter bit PROMOTE_WMISS_TO_RW = 1'b0
 `endif
     ) (
         input  logic clk,
@@ -143,7 +148,8 @@ module dut_shim_only
         .ID_W               (ID_W),
         .ADDR_W             (ADDR_W),
         .MAX_OUTSTANDING_W  (MAX_OUTSTANDING_W),
-        .ENABLE_LINE_BUFFER (ENABLE_LINE_BUFFER)
+        .ENABLE_LINE_BUFFER (ENABLE_LINE_BUFFER),
+        .PROMOTE_WMISS_TO_RW(PROMOTE_WMISS_TO_RW)
     ) shim (
         .clk(clk), .rst(rst),
 

@@ -42,13 +42,13 @@ case "$FILE" in
         )
         ;;
     src/tc_narrow_shim.sv)
-        DEFAULT_TESTS="test_narrow_shim test_shim_cache test_shim_throughput"
+        DEFAULT_TESTS="test_narrow_shim test_shim_cache test_shim_throughput test_shim_prefill_race"
         MUTATIONS=(
             "negate_ar_hits_buffer|0,/ar_hits_buffer = lb_valid/{s/ar_hits_buffer = lb_valid/ar_hits_buffer = ~lb_valid/}"
             "drop_buf_drain_term|0,/ar_buf_drain_this_cycle = /{s/ar_buf_drain_this_cycle = .*;/ar_buf_drain_this_cycle = 1'b0;/}"
             "swap_arvalid_or|0,/m_arvalid = prefill_ar_fire | /{s/m_arvalid = prefill_ar_fire | /m_arvalid = prefill_ar_fire \\& /}"
             "negate_s_arready|0,/s_arready = ar_buf_accept/{s/s_arready = ar_buf_accept/s_arready = ~ar_buf_accept/}"
-            "drop_prefill_check|0,/& ~prefill_active/{s/& ~prefill_active//}"
+            "drop_prefill_check|/m_arvalid = prefill_ar_fire/,/;/{s/& ~prefill_active//}"
             "swap_miss_to_hit_path|0,/ar_miss_accept = ~ar_hits_buffer/{s/~ar_hits_buffer/ar_hits_buffer/}"
             "drop_m_arready_dep|0,/ar_miss_accept = ~ar_hits_buffer  & m_arready/{s/& m_arready//}"
         )
@@ -158,7 +158,11 @@ for entry in "${MUTATIONS[@]}"; do
     fail_seen=0
     for mod in $TESTS; do
         rm -rf sim_build sim_build_shim
-        if [[ $mod == "test_random" ]]; then
+        # test_shim_prefill_race only fires under PROMOTE_WMISS_TO_RW=1;
+        # under the default 0, it is expect_fail and trivially passes.
+        if [[ $mod == "test_shim_prefill_race" ]]; then
+            TC_PROMOTE_WMISS=1 timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
+        elif [[ $mod == "test_random" ]]; then
             NTXN=$NTXN SEED=1 timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
         else
             timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1

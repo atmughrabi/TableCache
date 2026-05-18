@@ -51,6 +51,9 @@ export TC_BLOCK_W  := $(WIDE_W)
 TOPLEVEL := dut_shim_only
 VERILOG_SOURCES := $(SRC_DIR)/tc_narrow_shim.sv $(TB_DIR)/axi_protocol_checker.sv $(TB_DIR)/dut_shim_only.sv
 EXTRA_ARGS += +define+TC_NARROW_W=$(NARROW_W) +define+TC_BLOCK_W=$(WIDE_W)
+ifeq ($(TC_PROMOTE_WMISS),1)
+EXTRA_ARGS += +define+TC_PROMOTE_WMISS=1
+endif
 else ifeq ($(MODULE),test_shim_cache)
 NARROW_W   ?= 32
 WIDE_W     ?= 512
