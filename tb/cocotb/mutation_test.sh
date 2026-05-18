@@ -217,6 +217,27 @@ case "$FILE" in
         DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
         MUTATIONS=()  # stub -- expand if/when needed; small policy file
         ;;
+    src/tdp_ram.sv)
+        # True dual-port RAM. The bug #7 fix lives here -- a per-byte
+        # NBA loop was bytewise-dropping data at wide BLOCK_W on
+        # Verilator. Targets the masked-write expressions on both ports.
+        DEFAULT_TESTS="test_smoke test_random test_workload test_strobe"
+        MUTATIONS=(
+            "negate_a_wmask|s/(mem\[a_addr\] & ~a_wmask) | (a_wdata & a_wmask)/(mem[a_addr] \& a_wmask) | (a_wdata \& ~a_wmask)/"
+            "drop_b_write_gate|s/if (|b_wbe)/if (1'b1)/"
+        )
+        ;;
+    src/sdp_ram_rst.sv)
+        # SDP RAM with reset-init routine via LFSR-driven address sweep.
+        # No effective mutations under default Verilator: simulator
+        # init-to-zero masks the lack of explicit reset-init. Under
+        # XPROP=1 these mutations would fire (uninit data propagates
+        # to x), but the standard mutation run uses Verilator defaults.
+        # Documented as no-op set; XPROP regression sweep already
+        # exercises the un-init path (see VERIFICATION.md).
+        DEFAULT_TESTS="test_smoke test_random test_reset_recovery"
+        MUTATIONS=()
+        ;;
     src/l2_tagbank.sv)
         # Tagbank: hit detection, dirty calc, write enable.
         DEFAULT_TESTS="test_smoke test_random test_cbom test_workload"

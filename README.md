@@ -209,6 +209,7 @@ mutation. Current per-file scores:
 | `FRQ.sv` | **100%** | 1/1 killed under POLICY=FRQ |
 | `second_chance.sv` | **100%** | 1/1 killed under POLICY=SECOND_CHANCE |
 | `random_replacement.sv` | **100%** | 1/1 killed under POLICY=RANDOM |
+| `tdp_ram.sv` | **100%** | 2/2 killed (contains bug #7 fix) |
 ## Formal proofs
 
 ```bash
