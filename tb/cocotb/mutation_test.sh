@@ -25,7 +25,7 @@ mkdir -p "$LOGDIR"
 # ---- Per-file mutation sets ----
 case "$FILE" in
     src/l2_cache.sv)
-        DEFAULT_TESTS="test_smoke test_random test_reset_recovery test_backpressure"
+        DEFAULT_TESTS="test_smoke test_random test_reset_recovery test_backpressure test_flush"
         MUTATIONS=(
             "EQ_to_NEQ_first|0,/finish_output\\.bvalid/{s/finish_output\\.bvalid/!finish_output.bvalid/}"
             "AND_to_OR_finish|0,/bvalid_invalid & rvalid_invalid/{s/bvalid_invalid & rvalid_invalid/bvalid_invalid | rvalid_invalid/}"
@@ -38,6 +38,7 @@ case "$FILE" in
             "drop_rst_gate_mem_arvalid|0,/mem_ar\\.arvalid = mem_ar_int\\.arvalid & ~rst/{s/ & ~rst//}"
             "constant_zero_bvalid_invalid|0,/assign bvalid_invalid = /{s/assign bvalid_invalid = .*;/assign bvalid_invalid = 1'b0;/}"
             "swap_in_id_assignment|0,/in_id = chosen_arid/{s/in_id = chosen_arid/in_id = ~chosen_arid/}"
+            "drop_cbom_miss_gate|0,/& ~(INCLUDE_CBOM & (tb_out_inval | tb_out_clean))) | (INCLUDE_VICTIM/{s/ & ~(INCLUDE_CBOM & (tb_out_inval | tb_out_clean))//}"
         )
         ;;
     src/tc_narrow_shim.sv)
