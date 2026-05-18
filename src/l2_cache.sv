@@ -336,13 +336,149 @@ module l2_cache
         .in_use(wdata_table_rdata),
     .*);
 
+    //Deferred in-use clear (RTL bug #2 fix)
+    //When a read-with-eviction produces split finish-FIFO entries (rvalid
+    //alone, then bvalid alone for the writeback), the rvalid head pops
+    //with finish_clear blocked by evict_rdata=1 (eviction still pending),
+    //and the bvalid head pops with finish_clear blocked by rdata_rdata=1.
+    //Result: neither entry clears inuse_id[id] / inuse_line[hash(id)], and
+    //the line stays stuck in-use forever.
+    //
+    //Fix: latch a per-id "deferred clear pending" bit when the rvalid head
+    //pops without clearing due to evict_rdata. At the matching bvalid head
+    //cycle, this bit forces finish_clear regardless of rdata_rdata, then
+    //the bit self-clears. Implemented as a flat register (NOT a toggle
+    //memory) to keep the read path purely combinational from a flop, which
+    //avoids the aggregate-XOR/comb propagation timing that motivated the
+    //bug in the first place.
+    logic[(2**ID_W)-1:0] deferred_inuse_clear;
+    logic                deferred_inuse_set_pulse;
+    logic                deferred_inuse_rdata;
+    logic                deferred_inuse_clear_pulse;
+
+    assign deferred_inuse_set_pulse = finish_valid & finish_pop & finish_output.rvalid &
+        ~rvalid_handled & bvalid_invalid & evict_rdata;
+    assign deferred_inuse_rdata       = deferred_inuse_clear[finish_output.bid];
+    assign deferred_inuse_clear_pulse = finish_valid & ~bvalid_invalid & deferred_inuse_rdata;
+
+    always_ff @(posedge clk) begin
+        if (rst)
+            deferred_inuse_clear <= '0;
+        else begin
+            if (deferred_inuse_set_pulse)
+                deferred_inuse_clear[finish_output.rid] <= 1'b1;
+            if (deferred_inuse_clear_pulse)
+                deferred_inuse_clear[finish_output.bid] <= 1'b0;
+        end
+    end
+
     //Request is done
+    //finish_clear must fire AT MOST ONCE per finish_fifo head entry, because
+    //it toggles bits in toggle_memory_set-backed inuse_id_table and
+    //inuse_line_table. Firing twice on the same entry (e.g. a combined
+    //bvalid+rvalid entry where bid==rid because a read miss evicted a line
+    //that had been stamped with the same read's id) would toggle the same
+    //bit twice and leave it stuck SET, deadlocking any future request that
+    //hashes to that set or recycles that id.
+    //
+    //The combinational `finish_clear_raw` is the OR of all four clear
+    //conditions exactly as before. `clear_done_for_head` latches that the
+    //current head entry has already had its clear, and gates subsequent
+    //cycles until a pop advances to the next entry.
     logic finish_clear;
-    assign finish_clear = finish_valid & (
+    logic finish_clear_raw;
+    logic clear_done_for_head;
+    cache_id_t  cleared_id;     // (id, hash) most recently cleared for this entry
+    logic [HASH_WIDTH-1:0] cleared_hash;
+    logic       same_target;    // current clear target matches the last fire
+
+    assign finish_clear_raw = finish_valid & (
         (~bvalid_invalid & ~(rdata_rdata | (~finish_output.bid.rnw & wdata_rdata))) |
+        (~bvalid_invalid & deferred_inuse_rdata) |
         (finish_output.rvalid & ~rvalid_handled & bvalid_invalid & ~evict_rdata & ~(~finish_output.rid.rnw & wdata_rdata)) |
         (bvalid_invalid & rvalid_invalid & ~evict_rdata & ~rdata_rdata)
     );
+    // Bug #3 latch refined for bug #6: only suppress a re-fire that targets the
+    // SAME (id, hash) pair. A combined R+W finish entry has different (rid,hash)
+    // and (wid,hash); both phases must clear.
+    assign same_target = clear_done_for_head &
+                         (finish_id == cleared_id) &
+                         (finish_hash == cleared_hash);
+    assign finish_clear = finish_clear_raw & ~same_target;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            clear_done_for_head <= 1'b0;
+            cleared_id          <= '0;
+            cleared_hash        <= '0;
+        end else if (finish_pop) begin
+            clear_done_for_head <= 1'b0;
+        end else if (finish_clear) begin
+            clear_done_for_head <= 1'b1;
+            cleared_id          <= finish_id;
+            cleared_hash        <= finish_hash;
+        end
+    end
+
+`ifdef DIAG_FINISH
+    always @(posedge clk) begin
+        if (!rst) begin
+            if (finish_valid)
+                $display("[%0t] FIN valid b=%b r=%b w=%b bid=%h rid=%h wid=%h bvi=%b rvi=%b pop=%b clr=%b raw=%b cdh=%b clrid=%h fhash=%h rdata=%b evict=%b wdata=%b defrd=%b",
+                    $time,
+                    finish_output.bvalid, finish_output.rvalid, finish_output.wvalid,
+                    finish_output.bid, finish_output.rid, finish_output.wid,
+                    bvalid_invalid, rvalid_invalid, finish_pop, finish_clear, finish_clear_raw, clear_done_for_head,
+                    finish_id, finish_hash,
+                    rdata_rdata, evict_rdata, wdata_rdata, deferred_inuse_rdata);
+        end
+    end
+`endif
+
+`ifdef DIAG_STALL
+    // Per-cycle dump of stall signals when an AR is pending but not advancing.
+    always @(posedge clk) begin
+        if (!rst && chosen_ar.arvalid && !chosen_arready)
+            $display("[%0t] STALL ar arid=%h araddr=%h | try_read=%b tb_pw=%b cbom_full=%b prefer_r=%b aw_v=%b inuse_id=%b inuse_line=%b req_fifo_full=%b ar_fifo_full=%b in_id=%h in_hash=%h",
+                $time, chosen_arid, chosen_ar.araddr,
+                try_read, tb_pushing_write, cbom_fifo_full, prefer_read, chosen_aw.awvalid,
+                inuse_id_rdata, inuse_line_rdata, req_fifo_full, ar_fifo_full,
+                in_id, in_hash);
+    end
+`endif
+
+`ifdef DIAG_STALL2
+    // Broader per-cycle probe across the request and mem-AR path.
+    always @(posedge clk) begin
+        if (!rst) begin
+            $display("[%0t] CYC req_ar_v=%b req_arrdy=%b sav_ar=%b ch_arv=%b ch_arrdy=%b try_rd=%b tb_pw=%b tb_adv=%b | tb_valid=%b tb_hit=%b tb_full_wr=%b | ar_fifo_full=%b ar_fifo_v=%b req_fifo_full=%b | mem_ar_v=%b mem_arrdy=%b mem_arid=%h | in_id=%h in_hash=%h iir=%b ilr=%b | dbV=%b%b dbE=%b%b dbL=%b%b hit=%b will_hit=%b out_v=%b out_r=%b fin_full=%b fill=%b rdfill=%b",
+                $time,
+                req_ar.arvalid, req_arready, saved_arvalid,
+                chosen_ar.arvalid, chosen_arready, try_read, tb_pushing_write, tb_advance,
+                tb_valid, tb_hit, tb_out_full_write,
+                ar_fifo_full, ar_fifo_valid, req_fifo_full,
+                victim_ar.arvalid, victim_arready, mem_arid,
+                in_id, in_hash, inuse_id_rdata, inuse_line_rdata,
+                db_out_valid[1], db_out_valid[0],
+                db_out_evict[1], db_out_evict[0],
+                db_out_last[1], db_out_last[0],
+                hitting, will_hit, out_valid, out_ready, finish_full, filling, read_filling);
+        end
+    end
+`endif
+
+`ifdef DIAG_STALL3
+    always @(posedge clk) begin
+        if (!rst) begin
+            $display("[%0t] DB req_fifo_v=%b req_fifo_pop=%b prem_disc=%b db_req_v=%b db_ready=%b try_fill=%b fill_req_v=%b db_out_rdy=%b%b req_id=%h req_rnw=%b req_evict=%b req_line=%h",
+                $time,
+                req_fifo_valid, req_fifo_pop, premature_discard,
+                db_req_valid, db_ready, try_fill, fill_request_valid,
+                db_out_ready[1], db_out_ready[0],
+                req_fifo_data_out.id, req_fifo_data_out.rnw, req_fifo_data_out.evict, req_fifo_data_out.line);
+        end
+    end
+`endif
 
     //ID level storage
     logic inuse_id_rdata;
@@ -447,7 +583,7 @@ module l2_cache
         end
         else begin
             saved_arvalid <= saved_arvalid ? ~chosen_arready : req_ar.arvalid & ~chosen_arready;
-            saved_awvalid <= saved_awvalid ? ~chosen_awready : req_ar.arvalid & ~chosen_awready;
+            saved_awvalid <= saved_awvalid ? ~chosen_awready : req_aw.awvalid & ~chosen_awready;
         end
     end
 
@@ -550,7 +686,10 @@ module l2_cache
     logic wdata_fifo_full;
 
     assign wdata_fifo_push = req_w.wvalid & req_wready;
-    assign req_b.bvalid = wdata_fifo_valid & db_wdata_ready & wdata_fifo_data_out.last & ~finish_full;
+    // Bug #10: gate with ~rst so bvalid is 0 the cycle of reset assertion
+    // (the wdata FIFO uses synchronous reset and would otherwise leak the
+    // pre-reset value for one cycle). See doc/ARCHITECTURE.md §7.5.
+    assign req_b.bvalid = wdata_fifo_valid & db_wdata_ready & wdata_fifo_data_out.last & ~finish_full & ~rst;
     assign req_b.bresp = 2'b00; //OKAY
     assign wdata_fifo_pop = wdata_fifo_valid & db_wdata_ready & ~(wdata_fifo_data_out.last & (~req_bready | finish_full));
     assign db_wdata_valid = wdata_fifo_valid & ~(wdata_fifo_data_out.last & (~req_bready | finish_full));
@@ -1144,18 +1283,23 @@ module l2_cache
     //Mostly to break timing paths at the output of this component
     output_data_t out_fifo_data_out;
     logic out_fifo_full;
+    // Bug #10: gate rvalid with ~rst (output FIFO uses synchronous reset,
+    // so fifo_valid is stale for one cycle into rst=1). The FIFO pop sees
+    // the gated rvalid, so it does not pop spuriously during reset.
+    logic out_fifo_valid;
 
     assign out_ready = ~out_fifo_full;
     assign req_rid = out_fifo_data_out.rid;
     assign req_r.rlast = out_fifo_data_out.rlast;
     assign req_r.rresp = '0;
     assign req_rdata = out_fifo_data_out.rdata;
+    assign req_r.rvalid = out_fifo_valid & ~rst;
     fifo #(.WIDTH($bits(output_data_t)), .FIFO_DEPTH(OUT_FIFO_DEPTH)) out_fifo_inst (
         .fifo_push(out_valid & out_ready),
         .fifo_pop(req_r.rvalid & req_rready),
         .fifo_data_in(output_data),
         .fifo_data_out(out_fifo_data_out),
-        .fifo_valid(req_r.rvalid),
+        .fifo_valid(out_fifo_valid),
         .fifo_full(out_fifo_full),
     .*);
 
@@ -1164,6 +1308,13 @@ module l2_cache
     //Victim cache
     //Holds evicted lines
     //Optional
+    //
+    // Bug #12: drive INTERNAL mem-side signals from the generate; the
+    // `always_comb` below gates the three VALIDs with ~rst at the
+    // module boundary (sibling of bug #10 on the master side).
+    ar_t mem_ar_int; logic[READ_ID_WIDTH:0]  mem_arid_int; logic mem_rready_int;
+    aw_t mem_aw_int; logic[WRITE_ID_WIDTH:0] mem_awid_int; logic mem_bready_int;
+    w_t  mem_w_int;  logic[BLOCK_W-1:0] mem_wdata_int; logic[(BLOCK_W/8)-1:0] mem_wstrb_int;
     generate if (INCLUDE_VICTIM) begin : gen_victim
         victim_cache #(
             .LINES(VICTIM_LINES),
@@ -1193,27 +1344,50 @@ module l2_cache
             .cache_b(victim_b),
             .cache_bid(victim_bid),
             .cache_bready(victim_bready),
-            //Mem maps exactly
-        .*);
+            // Mem maps to internal signals; the top-level mem_* ports are
+            // driven below with VALID gating.
+            .mem_ar(mem_ar_int), .mem_arid(mem_arid_int), .mem_arready(mem_arready),
+            .mem_r(mem_r), .mem_rid(mem_rid), .mem_rdata(mem_rdata), .mem_rready(mem_rready_int),
+            .mem_aw(mem_aw_int), .mem_awid(mem_awid_int), .mem_awready(mem_awready),
+            .mem_w(mem_w_int), .mem_wdata(mem_wdata_int), .mem_wstrb(mem_wstrb_int), .mem_wready(mem_wready),
+            .mem_b(mem_b), .mem_bid(mem_bid), .mem_bready(mem_bready_int),
+            .clk(clk), .rst(rst)
+        );
     end else begin : gen_no_victim
-        assign mem_ar = victim_ar;
-        assign mem_arid = victim_arid;
+        assign mem_ar_int = victim_ar;
+        assign mem_arid_int = victim_arid;
         assign victim_arready = mem_arready;
         assign victim_r = mem_r;
         assign victim_rid = mem_rid;
         assign victim_rdata = mem_rdata;
-        assign mem_rready = victim_rready;
-        assign mem_aw = victim_aw;
-        assign mem_awid = victim_awid;
+        assign mem_rready_int = victim_rready;
+        assign mem_aw_int = victim_aw;
+        assign mem_awid_int = victim_awid;
         assign victim_awready = mem_awready;
-        assign mem_w = victim_w;
-        assign mem_wdata = victim_wdata;
-        assign mem_wstrb = victim_wstrb;
+        assign mem_w_int = victim_w;
+        assign mem_wdata_int = victim_wdata;
+        assign mem_wstrb_int = victim_wstrb;
         assign victim_wready = mem_wready;
         assign victim_b = mem_b;
         assign victim_bid = mem_bid;
-        assign mem_bready = victim_bready;
+        assign mem_bready_int = victim_bready;
     end endgenerate
+
+    // Bug #12 boundary gate: pass-through except the three VALIDs are ANDed with ~rst.
+    always_comb begin
+        mem_ar         = mem_ar_int;
+        mem_ar.arvalid = mem_ar_int.arvalid & ~rst;
+        mem_aw         = mem_aw_int;
+        mem_aw.awvalid = mem_aw_int.awvalid & ~rst;
+        mem_w          = mem_w_int;
+        mem_w.wvalid   = mem_w_int.wvalid   & ~rst;
+    end
+    assign mem_arid   = mem_arid_int;
+    assign mem_awid   = mem_awid_int;
+    assign mem_wdata  = mem_wdata_int;
+    assign mem_wstrb  = mem_wstrb_int;
+    assign mem_rready = mem_rready_int;
+    assign mem_bready = mem_bready_int;
 
     //Assertions check cache limitations, not AXI correctness
 `ifndef ASSERT_OFF
@@ -1245,6 +1419,40 @@ module l2_cache
         assert property (@(posedge clk) disable iff (rst) req_aw.awvalid |-> (&req_aw.awcache)) else $error("Writes must be write-back read and write allocate");
     arcache_assertion:
         assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (&req_ar.arcache)) else $error("Reads must be write-back read and write allocate");
+
+    // ---- Internal invariants (catch bug #2/#3/#6-class regressions) ----
+    // Bug #3 root cause: tb_advance and finish_clear toggling the same id
+    // same cycle leaves inuse_id permanently set. Cache is structured so
+    // this can't happen (finish_clear gated by ~same_target); this asserts
+    // a future refactor doesn't undo that.
+    inuse_id_no_same_cycle_collide:
+        assert property (@(posedge clk) disable iff (rst)
+            !(tb_advance && finish_clear && (in_id == finish_id))
+        ) else $error("tb_advance + finish_clear same cycle on same id (bug #3 class)");
+    inuse_line_no_same_cycle_collide:
+        assert property (@(posedge clk) disable iff (rst)
+            !(tb_advance && finish_clear && (in_hash == finish_hash))
+        ) else $error("tb_advance + finish_clear same cycle on same hash (bug #6 class)");
+    finish_clear_implies_valid:
+        assert property (@(posedge clk) disable iff (rst)
+            finish_clear |-> finish_valid
+        ) else $error("finish_clear without finish_valid");
+
+    // ---- Cover properties (prove the suite exercises interesting cases) ----
+    // cp_finish_fifo_full and cp_same_target_suppression hit 0 in regression;
+    // observation is that upstream throttling (inuse_stall + request-FIFO
+    // depth) structurally caps in-flight finishes below the FIFO depth.
+    // Tests in test_finish_fifo_stress.py have tried hard to force these
+    // and could not. They remain as a regression net in case future RTL
+    // changes loosen the upstream limit.
+    cp_concurrent_issue_and_finish:
+        cover property (@(posedge clk) disable iff (rst) tb_advance && finish_clear);
+    cp_inuse_stall_seen:
+        cover property (@(posedge clk) disable iff (rst) inuse_stall);
+    cp_finish_fifo_full:
+        cover property (@(posedge clk) disable iff (rst) finish_full);
+    cp_same_target_suppression:
+        cover property (@(posedge clk) disable iff (rst) finish_clear_raw && ~finish_clear);
 `endif
 
 endmodule
