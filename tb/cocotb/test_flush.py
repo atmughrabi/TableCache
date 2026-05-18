@@ -176,3 +176,30 @@ async def test_flush_idempotent(dut):
     second_writeback = mon.n - n1
     assert second_writeback == 0, f"second MakeInvalid flush produced {second_writeback} writebacks (expected 0)"
     dut._log.info(f"[flush_idempotent] flush1={first_writeback} flush2={second_writeback} mem AWs")
+
+
+@cocotb.test()
+async def test_flush_cold_cache(dut):
+    """Flush an unwarmed (cold) cache. Previously hung because the cache
+    issued a bogus memory fetch on CBOM-miss. After the l2_cache fix
+    gating ar_fifo_push for CBOMs, the flush should complete cleanly
+    with 0 mem ARs and 0 mem AWs."""
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    mon = MAwCounter(dut); cocotb.start_soon(mon.run())
+    # Track memory ARs as well
+    n_ar = 0
+    async def ar_mon():
+        nonlocal n_ar
+        while True:
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.m_arvalid) and int(dut.m_arready):
+                n_ar += 1
+    cocotb.start_soon(ar_mon())
+
+    await request_flush(dut, mode=0b1101)   # MakeInvalid on cold cache
+    await Timer(200, "ns")
+    assert mon.n == 0, f"cold-cache flush produced {mon.n} mem AWs (expected 0)"
+    assert n_ar == 0, f"cold-cache flush produced {n_ar} bogus mem ARs (expected 0)"
+    dut._log.info(f"[flush_cold_cache] PASS: mem ARs={n_ar}, mem AWs={mon.n}")

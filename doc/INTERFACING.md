@@ -242,16 +242,12 @@ correct WRAP implementation.
 
 ### Whole-cache flush controller ([`src/tc_flush_controller.sv`](../src/tc_flush_controller.sv))
 
-> **Status: working with constraints.** Validated by
-> [tb/cocotb/test_flush.py](../tb/cocotb/test_flush.py) (3 tests, all
-> PASS). Two operational constraints:
+> **Status: working.** Validated by
+> [tb/cocotb/test_flush.py](../tb/cocotb/test_flush.py) (4 tests, all
+> PASS), including `test_flush_cold_cache` which flushes an
+> unwarmed cache (0 mem ARs, 0 mem AWs). One operational note:
 >
-> 1. The cache's CBOM path requires the target line to be **present** in
->    the cache to emit the R response. Issuing a CBOM to an absent
->    (never-allocated) line hangs the flush controller in `WAIT_R`.
->    Integrators must warm every line via reads before the first flush
->    (the `test_flush` scenarios all do this).
-> 2. `CleanInvalid` (default `arsnoop = 4'b1001`) appears to issue a
+> 1. `CleanInvalid` (default `arsnoop = 4'b1001`) appears to issue a
 >    writeback for every present line regardless of dirty state, so
 >    `flush_mode = 0b1001` produces `LINES` mem AWs. Use
 >    `flush_mode = 0b1101` (MakeInvalid) to drop without writeback, or

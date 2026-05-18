@@ -736,7 +736,7 @@ module l2_cache
     ar_request_t ar_fifo_data_out;
     logic victim_invalidate;
 
-    assign ar_fifo_push = tb_valid & ((~tb_hit & (tb_out_id.rnw | ~tb_out_full_write)) | (INCLUDE_VICTIM & INCLUDE_CBOM & (tb_out_inval | tb_out_clean)));
+    assign ar_fifo_push = tb_valid & ((~tb_hit & (tb_out_id.rnw | ~tb_out_full_write) & ~(INCLUDE_CBOM & (tb_out_inval | tb_out_clean))) | (INCLUDE_VICTIM & INCLUDE_CBOM & (tb_out_inval | tb_out_clean)));
     assign ar_fifo_pop = (victim_ar.arvalid & victim_arready) | victim_invalidate;
     assign ar_fifo_data_in = '{
         tag : tb_out_tag,
