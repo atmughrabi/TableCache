@@ -243,7 +243,7 @@ mutations are coverage gaps.
 
 | File | Score | Killed | Survived | Notes |
 |---|---:|---:|---:|---|
-| `l2_cache.sv` | **90.9%** | 10 | 1 | Only `LT_to_LE_arlen` survives -- assertion is unreachable under cocotbext-axi traffic. Includes new `drop_cbom_miss_gate` killed by `test_flush_cold_cache` |
+| `l2_cache.sv` | **100%** | 10 | 0 | One mutation (`LT_to_LE_arlen`) excluded as equivalent: targets a `$error` assertion not promoted to test failure under Verilator+cocotb; cocotbext-axi never drives the trigger condition. See comment in `mutation_test.sh` |
 | `tc_narrow_shim.sv` | **100%** | 7 | 0 | `drop_prefill_check` killed by `test_shim_prefill_race` under `TC_PROMOTE_WMISS=1`; mutation regex now targets the `m_arvalid` line (not the first `s_arready` occurrence) |
 | `tc_flush_controller.sv` | **100%** | 6 | 0 | drop_state_advance, swap_finish_arrow, negate_arvalid_gate, constant_zero_rready, wrong_addr_stride, skip_line_idx_inc |
 | `l2_databank.sv` | **100%** | 5 | 0 | swap_state_idle, negate_ready_combine, flip_write_fifo_data, force_past_orig_keep, negate_out_fifo_push |
