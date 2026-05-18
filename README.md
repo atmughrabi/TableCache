@@ -1,5 +1,7 @@
 # TableCache (fork)
 
+[![regression](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml/badge.svg?branch=verification-and-shim)](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml)
+
 Fork of [`sfu-rcl/tablecache`](https://gitlab.com/sfu-rcl/tablecache) (Chris
 Keilbart, SFU RCL). This fork adds a cocotb regression, an AXI4 protocol
 checker, a narrow-port shim, a whole-cache flush controller, a
