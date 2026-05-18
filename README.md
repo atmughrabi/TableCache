@@ -12,7 +12,7 @@ the [SFU thesis](https://summit.sfu.ca/item/39095) and the FPT 2024 paper.
 
 ```
 src/                  RTL (cache + narrow-port shim)
-tb/cocotb/            cocotb regression (16 modules, 50 tests)
+tb/cocotb/            cocotb regression (18 modules, 60 tests)
 tb/{Makefile,*.sv}    legacy SV directed TB (upstream)
 doc/                  architecture, interfacing, verification docs
 ```
@@ -44,10 +44,11 @@ cd tb/cocotb && source .venv/bin/activate
 # single test
 make MODULE=test_smoke
 
-# full regression (16 modules)
+# full regression (18 modules)
 for mod in test_smoke test_random test_scoreboard test_strobe test_latency \
            test_lru_sanity test_workload test_cbom test_reset_recovery \
            test_graph_patterns test_backpressure test_realism \
+           test_finish_fifo_stress test_shim_prefill_race test_flush \
            test_shim_cache test_narrow_shim test_shim_latency test_shim_throughput; do
   rm -rf sim_build sim_build_shim
   timeout 600 make MODULE=$mod
@@ -175,6 +176,8 @@ spec including what bug class it was designed to catch.
 | `test_backpressure` | 6 scenarios pausing each AXI READY independently and combined |
 | `test_realism` | DDR-style sustained mem-R inter-beat latency (20/40/80) + long-idle reset recover |
 | `test_finish_fifo_stress` | hot-set + heavy response back-pressure (drives `cp_*` cover points) |
+| `test_shim_prefill_race` | direct-driven shim test targeting `drop_prefill_check` mutation (pending validation) |
+| `test_flush` | flush controller integration test (clean / dirty / idempotent; pending validation) |
 | `test_shim_cache` | shim + cache at `BLOCK_W=512`; RMW preservation tests for bug #7 |
 | `test_narrow_shim` | shim alone against `AxiRam`; 10 directed + 1 random pass |
 | `test_shim_latency` | shim cold/hot/write/merge cycle counts |
