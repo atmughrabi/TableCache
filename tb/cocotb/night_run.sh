@@ -86,7 +86,10 @@ log "PHASE 4: mutation re-baselines"
 for f in src/l2_cache.sv src/tc_narrow_shim.sv src/tc_flush_controller.sv \
          src/l2_databank.sv src/replacement_policy.sv \
          src/fifo.sv src/toggle_memory.sv \
-         src/lutram_1w_1r.sv src/lfsr.sv src/sdp_ram.sv; do
+         src/lutram_1w_1r.sv src/lfsr.sv src/sdp_ram.sv \
+         src/l2_tagbank.sv src/LRU.sv \
+         src/SRRIP.sv src/FRQ.sv src/second_chance.sv src/random_replacement.sv \
+         src/tdp_ram.sv src/victim_cache.sv; do
     FILE=$f ./mutation_test.sh > "$OUT/phase4_${f//\//_}.log" 2>&1
     score=$(grep -E '^  mutation score:' "$OUT/phase4_${f//\//_}.log" | tail -1)
     log "  $f -- $score"
