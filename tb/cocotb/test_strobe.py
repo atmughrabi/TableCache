@@ -135,15 +135,17 @@ async def test_partial_strobe_multi_beat(dut):
     dut.s_bready.value = 1
 
     addr = BASE | 0x00003000
-    n    = 4
+    n    = 8
     orig_raw = await manual_read(dut, addr, n, arid=2)
     orig_words = [
         int.from_bytes(orig_raw[i * BLOCK_BYTES:(i + 1) * BLOCK_BYTES], "little")
         for i in range(n)
     ]
 
-    new_words = [0x11223344, 0x55667788, 0x99AABBCC, 0xDDEEFF00]
-    strbs     = [0b1111, 0b1010, 0b0001, 0b1100]
+    new_words = [0x11223344, 0x55667788, 0x99AABBCC, 0xDDEEFF00,
+                 0x11111111, 0x22222222, 0x33333333, 0x44444444]
+    strbs     = [0b1111, 0b1010, 0b0001, 0b1100,
+                 0b0101, 0b1001, 0b0110, 0b1110]
     expect    = [merge_bytes(o, w, s) for o, w, s in zip(orig_words, new_words, strbs)]
     payload   = b"".join(w.to_bytes(BLOCK_BYTES, "little") for w in new_words)
 
@@ -194,5 +196,26 @@ async def test_partial_strobe_2beat(dut):
     for i in range(n):
         got = int.from_bytes(got_raw[i * BLOCK_BYTES:(i + 1) * BLOCK_BYTES], "little")
         assert got == expect[i], f"beat {i}: got=0x{got:08x} expected=0x{expect[i]:08x}"
+
+    # 4-beat partial-strobe to fill the (4, True) beat_x_partial cell.
+    addr4 = BASE | 0x00005000
+    n4    = 4
+    orig4_raw = await manual_read(dut, addr4, n4, arid=8)
+    sample_read(addr4, n4, 0)
+    orig4 = [int.from_bytes(orig4_raw[i*BLOCK_BYTES:(i+1)*BLOCK_BYTES], "little")
+             for i in range(n4)]
+    new4   = [0xA1B2C3D4, 0xA5A6A7A8, 0xB1B2B3B4, 0xC1C2C3C4]
+    strb4  = [0b1100, 0b0011, 0b1010, 0b0101]
+    exp4   = [merge_bytes(o, w, s) for o, w, s in zip(orig4, new4, strb4)]
+    pl4    = b"".join(w.to_bytes(BLOCK_BYTES, "little") for w in new4)
+    await manual_write(dut, addr4, pl4, strb4, awsnoop=0b000, awid=9)
+    sample_write(addr4, n4, 0, True)
+    await Timer(50, "ns")
+    got4_raw = await manual_read(dut, addr4, n4, arid=10)
+    sample_read(addr4, n4, 0)
+    for i in range(n4):
+        got = int.from_bytes(got4_raw[i*BLOCK_BYTES:(i+1)*BLOCK_BYTES], "little")
+        assert got == exp4[i], f"4b beat {i}: got=0x{got:08x} expected=0x{exp4[i]:08x}"
+
     dump_coverage("test_strobe")
-    dut._log.info("partial-strobe 2-beat OK")
+    dut._log.info("partial-strobe 2-beat + 4-beat OK")

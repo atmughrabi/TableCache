@@ -68,9 +68,12 @@ async def test_random_scoreboard(dut):
                 addr  = la
                 nbeat = LINE_W
             else:
-                blk   = rng.randrange(LINE_W)
+                # Choose nbeat from {1, 2, 4} to fill beat_x_snoop cross cells.
+                # Each beat is one BLOCK_BYTES; addr must stay within the line.
+                nbeat = rng.choice([1, 2, 4])
+                max_blk = LINE_W - nbeat
+                blk   = rng.randrange(max_blk + 1)
                 addr  = la | (blk * BLOCK_BYTES)
-                nbeat = 1
             try:
                 op = await with_timeout(master.read(addr, nbeat * BLOCK_BYTES), 10_000, "ns")
             except Exception as e:
@@ -98,9 +101,13 @@ async def test_random_scoreboard(dut):
                 snoop = 0b101  # WriteEvict (cache's only true full-line shortcut)
                 n_full += 1
             else:
-                blk   = rng.randrange(LINE_W)
+                # Choose nbeat from {1, 2, 4, 8} for plain writes; partial=False
+                # because we drive full strobes here. partial=True cells are
+                # filled by test_strobe.
+                nbeat = rng.choice([1, 2, 4, LINE_W])
+                max_blk = LINE_W - nbeat
+                blk   = rng.randrange(max_blk + 1)
                 addr  = la | (blk * BLOCK_BYTES)
-                nbeat = 1
                 snoop = 0b000  # plain write
                 n_single += 1
             data_words = [rng.randrange(1 << 32) for _ in range(nbeat)]
@@ -122,7 +129,7 @@ async def test_random_scoreboard(dut):
                     f"s={s} t={t} snoop={snoop:b} -- {e}"
                 )
                 raise
-            sample_write(addr, nbeat, snoop, (nbeat == 1))
+            sample_write(addr, nbeat, snoop, False)
             await RisingEdge(dut.clk)
             dut.s_awsnoop.value = 0
             n_wr += 1

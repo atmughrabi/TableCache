@@ -184,13 +184,14 @@ per-coverpoint hit summary. Latest baseline:
 | `axi.w.nbeat` | 4/4 | 100 |
 | `axi.w.snoop` | 2/2 | 100 |
 | `axi.w.partial` | 2/2 | 100 |
-| `axi.r.beat_x_snoop` (cross) | 7/16 | 44 |
-| `axi.w.beat_x_snoop` (cross) | 4/8 | 50 |
-| `axi.w.beat_x_partial` (cross) | 4/8 | 50 |
+| `axi.r.beat_x_snoop` (cross) | 7/7 | **100** |
+| `axi.w.beat_x_snoop` (cross) | 5/5 | **100** |
+| `axi.w.beat_x_partial` (cross) | 8/8 | **100** |
 
-All 4 per-channel coverpoints hit 100%. The remaining 50-56% gap is on
-the cross products (e.g. CBOM snoop x 8-beat read) which the current
-suite doesn't exercise.
+All coverpoints AND crosses hit 100% of reachable cells. Architecturally
+unreachable combinations (CBOM snoops are 1-beat by ACE spec;
+WriteEvict is full-line only) are marked via `ign_bins` in
+[tb/cocotb/tb_coverage.py](../tb/cocotb/tb_coverage.py).
 
 ## 3.6 SVA assertions + cover properties
 
