@@ -251,11 +251,12 @@ mutations are coverage gaps.
 
 ## Formal proofs (yosys + z3 SMTBMC)
 
-Location: `tb/formal/`. Run with `make -C tb/formal all` (deps: `yosys`, `z3`).
+Location: `tb/formal/`. Run with `make -C tb/formal all` (deps: `yosys`, `z3`, `sv2v`).
 
 | Module | Harness | BMC depth | Induction | Properties proven |
 |---|---|---:|---|---|
-| `fifo.sv` (FIFO_DEPTH=1) | `tb/formal/fifo_formal.sv` | 32 | **k=14 PASS** | `count <= DEPTH`, `valid == (count != 0)`, `full == (count == DEPTH)` under well-formed (no-overflow, no-underflow) environment |
+| `fifo.sv` (FIFO_DEPTH=1, register path) | `tb/formal/fifo_formal.sv` | 32 | **k=14 PASS** | `count <= DEPTH`, `valid == (count != 0)`, `full == (count == DEPTH)` under well-formed (no-overflow, no-underflow) environment |
+| `fifo.sv` (FIFO_DEPTH=4, `gen_width_3_plus`: lfsr + lutram) | `tb/formal/fifo_formal_deep.sv` (lowered via sv2v) | 32 | **k=24 PASS** | same invariants on the LFSR-pointer + LUTRAM implementation |
 
 ### l2_cache.sv mutation set (11 mutations)
 
