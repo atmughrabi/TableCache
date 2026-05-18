@@ -53,3 +53,7 @@ Thumbs.db
 # Not redistributed in this fork; see References section in README.md for
 # canonical links to the SFU thesis and FPT 2024 paper.
 research/
+
+# Verilator coverage outputs (per-run; merged data goes to /tmp)
+coverage.dat
+**/coverage.dat
