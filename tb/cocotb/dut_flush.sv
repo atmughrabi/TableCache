@@ -148,7 +148,7 @@ module dut_flush
         .flush_req(flush_req), .flush_mode(flush_mode),
         .flush_active(flush_active), .flush_done(flush_done),
         .m_ar(flush_ar), .m_arid(flush_arid), .m_arready(flush_arready),
-        .m_r(flush_r), .m_rdata(/* unused */), .m_rid(/* unused */), .m_rready(flush_rready)
+        .m_r(flush_r), .m_rdata(cache_rdata), .m_rid(cache_rid), .m_rready(flush_rready)
     );
 
     // -- Repack accelerator-side flat signals into struct types --
