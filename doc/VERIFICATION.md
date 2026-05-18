@@ -250,6 +250,9 @@ mutations are coverage gaps.
 | `replacement_policy.sv` | 100% | 1 | 0 | `break_init_policy` killed by `test_lru_sanity` |
 | `fifo.sv` | **100%** | 3 | 0 | `swap_count_pushpop`, `depth3_swap_waddr`, `depth2_swap_dout_index`. DEPTH=1 generate branch unused in this design (equivalent mutations excluded); also covered by formal proof in `tb/formal/` |
 | `toggle_memory.sv` | **100%** | 3 | 0 | `drop_toggle_xor`, `force_toggle_always`, `swap_read_id_chain` |
+| `lutram_1w_1r.sv` | **100%** | 2 | 0 | `swap_waddr_raddr`, `negate_dout`. `drop_write_enable` excluded as equivalent (held bus value identical to gated write under all consumers) |
+| `lfsr.sv` | **100%** | 1 | 0 | `drop_lfsr_advance`. Other mutations excluded as equivalent (both feedback polarities walk all values; rst-clear covered by toggle_memory) |
+| `sdp_ram.sv` | **100%** | 2 | 0 | `drop_a_en_write`, `swap_a_b_addr` |
 | `LRU.sv` | deferred | 0 | 0 | per-WAYS generate branches make portable mutations hard; matrix sweep already exercises WAYS=2,4,8 |
 
 ## Formal proofs (yosys + z3 SMTBMC)

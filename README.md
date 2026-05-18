@@ -22,9 +22,8 @@ that pins it at:
 - **19 cocotb modules / 60 tests** all PASS, AXI4 protocol-checker clean
 - **88% Verilator** line+toggle coverage (98.7% on `l2_cache.sv`)
 - **100% of reachable** functional coverage (covergroups + crosses)
-- **100%** mutation score on **all seven** mutation-instrumented RTL files
-  (1 equivalent mutation in `l2_cache.sv` excluded; documented in
-  `mutation_test.sh`)
+- **100%** mutation score on **all 11** mutation-instrumented RTL files
+  (3 equivalent / dead-branch mutations documented and excluded)
 - **k-induction formal proof** of the FIFO invariants (DEPTH=1 and =4)
 - 500-seed nightly stress sweep, 22-config matrix sweep, X-prop sweep,
   all clean.
@@ -200,8 +199,9 @@ mutation. Current per-file scores:
 | `l2_databank.sv` | **100%** | 5/5 killed |
 | `replacement_policy.sv` | 100% | 1/1 killed (`break_init_policy`) |
 | `fifo.sv` | **100%** | 3/3 reachable killed (DEPTH=1 branch unused in design, mutations on it are equivalent and excluded); plus k-induction formal proof in `tb/formal/` |
-| `toggle_memory.sv` | **100%** | 3/3 killed (covers `set_clear_memory` and cache inuse tables) |
-
+| `toggle_memory.sv` | **100%** | 3/3 killed (covers `set_clear_memory` and cache inuse tables) || `lutram_1w_1r.sv` | **100%** | 2/2 killed (`drop_write_enable` excluded as equivalent) |
+| `lfsr.sv` | **100%** | 1/1 killed |
+| `sdp_ram.sv` | **100%** | 2/2 killed (tagbank + databank BRAM) |
 ## Formal proofs
 
 ```bash

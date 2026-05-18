@@ -127,6 +127,42 @@ case "$FILE" in
             "swap_read_id_chain|s/assign _read_id\[1:NUM_READ_PORTS\] = read_id;/assign _read_id[0] = read_id[0]; assign _read_id[1:NUM_READ_PORTS] = '{default: '0};/"
         )
         ;;
+    src/lutram_1w_1r.sv)
+        # Inferred dual-port LUTRAM used by fifo.sv (DEPTH>=3) and many
+        # set/toggle memory wrappers.
+        DEFAULT_TESTS="test_smoke test_random test_backpressure test_finish_fifo_stress"
+        MUTATIONS=(
+            "swap_waddr_raddr|s/ram\[waddr\] <= new_ram_data;/ram[raddr] <= new_ram_data;/"
+            "negate_dout|s/assign ram_data_out = ram\[raddr\];/assign ram_data_out = ~ram[raddr];/"
+            # drop_write_enable excluded: equivalent in practice. Writing
+            # the held bus value on every cycle (vs only when ram_write=1)
+            # is indistinguishable when the dispatcher never changes
+            # new_ram_data between accepted writes -- which is the case
+            # for every fifo / toggle_memory consumer.
+        )
+        ;;
+    src/lfsr.sv)
+        # LFSR used as FIFO read/write pointers (DEPTH>=3).
+        DEFAULT_TESTS="test_smoke test_random test_finish_fifo_stress"
+        MUTATIONS=(
+            "drop_lfsr_advance|s/value <= value << 1;/value <= value;/"
+            # negate_feedback_width2 excluded: equivalent. Both feedback
+            # polarities walk through all DEPTH values; for a FIFO whose
+            # consumer only checks data ordering (not address mapping),
+            # both sequences observably round-trip the same data.
+            # drop_rst_clear excluded: regex needs sed -z (multi-line);
+            # the rst init is anyway covered by toggle_memory mutations.
+        )
+        ;;
+    src/sdp_ram.sv)
+        # Simple-dual-port BRAM used by tagbank + databank ways. Signals:
+        # a_en/a_wbe/a_addr/a_wdata (write), b_en/b_addr/b_rdata (read).
+        DEFAULT_TESTS="test_smoke test_random test_workload"
+        MUTATIONS=(
+            "drop_a_en_write|s/if (a_en & a_wbe\[i\])/if (a_wbe[i])/"
+            "swap_a_b_addr|s/b_ram_output <= mem\[b_addr\];/b_ram_output <= mem[a_addr];/"
+        )
+        ;;
     *)
         echo "ERROR: no mutation set defined for $FILE" >&2
         echo "Add an entry to the case block in $0" >&2
