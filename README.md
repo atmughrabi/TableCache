@@ -202,6 +202,7 @@ mutation. Current per-file scores:
 | `toggle_memory.sv` | **100%** | 3/3 killed (covers `set_clear_memory` and cache inuse tables) || `lutram_1w_1r.sv` | **100%** | 2/2 killed (`drop_write_enable` excluded as equivalent) |
 | `lfsr.sv` | **100%** | 1/1 killed |
 | `sdp_ram.sv` | **100%** | 2/2 killed (tagbank + databank BRAM) |
+| `victim_cache.sv` | 50% | 2/4 killed -- `negate_hit` + `drop_buffer_tag_uncacheable` killed; 2 survivors need deeper investigation of the L1↔victim invalidate protocol. Requires `VICTIM=1` build |
 ## Formal proofs
 
 ```bash

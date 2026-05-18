@@ -163,6 +163,20 @@ case "$FILE" in
             "swap_a_b_addr|s/b_ram_output <= mem\[b_addr\];/b_ram_output <= mem[a_addr];/"
         )
         ;;
+    src/victim_cache.sv)
+        # victim_cache is only built when VICTIM=1. The mutation runner
+        # exports VICTIM=1 for this file so each test_smoke/test_random
+        # rebuild picks up the +define+TC_VICTIM=1. test_victim has the
+        # directed scenarios that kill drop_invalidate_clear and
+        # swap_write_hit_check (the general suite doesn't exercise them).
+        DEFAULT_TESTS="test_smoke test_random test_cbom test_victim"
+        MUTATIONS=(
+            "negate_hit|s/assign hit = |hit_one_hot;/assign hit = ~|hit_one_hot;/"
+            "drop_invalidate_clear|/if (invalidate)/{N;s|tags_valid & ~hit_one_hot|tags_valid|;}"
+            "swap_write_hit_check|s/tags\[i\] == w_addr.tag;/tags[i] != w_addr.tag;/"
+            "drop_buffer_tag_uncacheable|s/& ~uncacheable_write & ~(cache_ar.arvalid/\\& ~(cache_ar.arvalid/"
+        )
+        ;;
     *)
         echo "ERROR: no mutation set defined for $FILE" >&2
         echo "Add an entry to the case block in $0" >&2
@@ -179,6 +193,11 @@ trap 'cp -f "$backup" "$src"; echo "(restored $FILE)"' EXIT
 
 cd "$HERE"
 source .venv/bin/activate
+
+# victim_cache.sv is only built when VICTIM=1.
+if [[ "$FILE" == "src/victim_cache.sv" ]]; then
+    export VICTIM=1
+fi
 
 killed=0; survived=0; broken=0
 total=${#MUTATIONS[@]}

@@ -253,6 +253,7 @@ mutations are coverage gaps.
 | `lutram_1w_1r.sv` | **100%** | 2 | 0 | `swap_waddr_raddr`, `negate_dout`. `drop_write_enable` excluded as equivalent (held bus value identical to gated write under all consumers) |
 | `lfsr.sv` | **100%** | 1 | 0 | `drop_lfsr_advance`. Other mutations excluded as equivalent (both feedback polarities walk all values; rst-clear covered by toggle_memory) |
 | `sdp_ram.sv` | **100%** | 2 | 0 | `drop_a_en_write`, `swap_a_b_addr` |
+| `victim_cache.sv` | 50% | 2 | 2 | `negate_hit` + `drop_buffer_tag_uncacheable` killed; `drop_invalidate_clear` + `swap_write_hit_check` survive even with directed `test_victim` scenarios -- need deeper investigation of the L1↔victim interaction protocol. VICTIM=1 path now reaches the file (was zero coverage before this iteration) |
 | `LRU.sv` | deferred | 0 | 0 | per-WAYS generate branches make portable mutations hard; matrix sweep already exercises WAYS=2,4,8 |
 
 ## Formal proofs (yosys + z3 SMTBMC)
