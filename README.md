@@ -140,6 +140,7 @@ mutation. Current per-file scores:
 |---|---:|---|
 | `l2_cache.sv` | **90.0%** | 9/10 mutations killed; 1 survivor is an unreachable assertion bin |
 | `tc_narrow_shim.sv` | **85.7%** | 6/7 killed; last gap (`drop_prefill_check`) needs cycle-accurate pipelined W+R stimulus |
+| `tc_flush_controller.sv` | **100%** | 6/6 killed by `test_flush` (3 scenarios) |
 | `l2_databank.sv` | **100%** | 5/5 killed |
 | `replacement_policy.sv` | 100% | 1/1 killed (`break_init_policy`) |
 

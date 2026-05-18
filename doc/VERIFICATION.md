@@ -244,6 +244,7 @@ mutations are coverage gaps.
 |---|---:|---:|---:|---|
 | `l2_cache.sv` | **90.0%** | 9 | 1 | Only `LT_to_LE_arlen` survives -- assertion is unreachable under cocotbext-axi traffic |
 | `tc_narrow_shim.sv` | **85.7%** | 6 | 1 | `drop_prefill_check` needs cycle-accurate pipelined W+R stimulus |
+| `tc_flush_controller.sv` | **100%** | 6 | 0 | drop_state_advance, swap_finish_arrow, negate_arvalid_gate, constant_zero_rready, wrong_addr_stride, skip_line_idx_inc |
 | `l2_databank.sv` | **100%** | 5 | 0 | swap_state_idle, negate_ready_combine, flip_write_fifo_data, force_past_orig_keep, negate_out_fifo_push |
 | `replacement_policy.sv` | 100% | 1 | 0 | `break_init_policy` killed by `test_lru_sanity` |
 | `LRU.sv` | deferred | 0 | 0 | per-WAYS generate branches make portable mutations hard; matrix sweep already exercises WAYS=2,4,8 |

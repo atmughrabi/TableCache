@@ -71,6 +71,17 @@ case "$FILE" in
         DEFAULT_TESTS="test_smoke test_lru_sanity"
         MUTATIONS=()
         ;;
+    src/tc_flush_controller.sv)
+        DEFAULT_TESTS="test_flush"
+        MUTATIONS=(
+            "drop_state_advance|0,/state <= state_n;/{s/state <= state_n;/state <= state;/}"
+            "swap_finish_arrow|0,/FINISH\\s*:\\s*state_n = IDLE;/{s/state_n = IDLE/state_n = FINISH/}"
+            "negate_arvalid_gate|0,/m_ar\\.arvalid  = (state == ISSUE)/{s/(state == ISSUE)/(state != ISSUE)/}"
+            "constant_zero_rready|0,/m_rready = (state == WAIT_R)/{s/m_rready = .*;/m_rready = 1'b0;/}"
+            "wrong_addr_stride|0,/m_ar\\.araddr   = ADDR_BASE/{s/<< LOG2_STRIDE/<< 0/}"
+            "skip_line_idx_inc|0,/line_idx <= line_idx + 1'b1;/{s/line_idx <= line_idx + 1'b1;/line_idx <= line_idx;/}"
+        )
+        ;;
     src/replacement_policy.sv)
         DEFAULT_TESTS="test_smoke test_lru_sanity"
         MUTATIONS=(
