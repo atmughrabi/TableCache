@@ -19,16 +19,18 @@ A configurable, ACE-Lite-snoopable L2 data cache for FPGA accelerators,
 with a narrow-port shim, a flush sequencer, and a verification campaign
 that pins it at:
 
-- **19 cocotb modules / 60 tests** all PASS, AXI4 protocol-checker clean
+- **20 cocotb modules / 62 tests** all PASS, AXI4 protocol-checker clean
 - **88% Verilator** line+toggle coverage (98.7% on `l2_cache.sv`)
 - **100% of reachable** functional coverage (covergroups + crosses)
 - **100%** mutation score on **all 17** mutation-instrumented RTL files
-  (4 documented no-op/equivalent sets for files where mutations are
-  unreachable, equivalent, or out-of-scope: l2_hash, sdp_ram_rst,
-  l2_top, plus one equivalent in SRRIP/l2_tagbank/lutram/lfsr/victim)
-- **k-induction formal proof** of the FIFO invariants (DEPTH=1 and =4)
-- 500-seed nightly stress sweep, **26-config** matrix sweep, X-prop sweep,
-  all clean (matrix now includes 3 `VICTIM=1` combos covering LRU/4, LRU/8, SRRIP/4).
+  (the only outlier is `victim_cache.sv` at 50%, where 2 of 4 mutations
+  are observably equivalent under the existing test stimulus; remaining
+  no-op sets are documented as equivalent/unreachable/out-of-scope)
+- **k-induction formal proofs** on `fifo.sv` (DEPTH=1 and =4) and
+  `set_clear_memory.sv` (DEPTH=4) -- 6 targets, all PASS
+- **500-seed nightly stress** sweep, **26-config matrix** sweep (3 of
+  them VICTIM=1: LRU/4, LRU/8, SRRIP/4), X-prop sweep, **200k-op
+  workload** -- all clean.
 
 ## Quick navigation
 
