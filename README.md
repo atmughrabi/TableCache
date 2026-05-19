@@ -22,10 +22,9 @@ that pins it at:
 - **20 cocotb modules / 62 tests** all PASS, AXI4 protocol-checker clean
 - **88% Verilator** line+toggle coverage (98.7% on `l2_cache.sv`)
 - **100% of reachable** functional coverage (covergroups + crosses)
-- **100%** mutation score on **all 17** mutation-instrumented RTL files
-  (the only outlier is `victim_cache.sv` at 50%, where 2 of 4 mutations
-  are observably equivalent under the existing test stimulus; remaining
-  no-op sets are documented as equivalent/unreachable/out-of-scope)
+- **100%** mutation score on **all 18** mutation-instrumented RTL files
+  (3 documented no-op sets: `l2_hash`, `sdp_ram_rst`, `l2_top` -- mutations
+  in those are either unreachable or out-of-test-scope)
 - **k-induction formal proofs** on `fifo.sv` (DEPTH=1 and =4) and
   `set_clear_memory.sv` (DEPTH=4) -- 6 targets, all PASS
 - **500-seed nightly stress** sweep, **26-config matrix** sweep (3 of
@@ -207,7 +206,7 @@ mutation. Current per-file scores:
 | `toggle_memory.sv` | **100%** | 3/3 killed (covers `set_clear_memory` and cache inuse tables) || `lutram_1w_1r.sv` | **100%** | 2/2 killed (`drop_write_enable` excluded as equivalent) |
 | `lfsr.sv` | **100%** | 1/1 killed |
 | `sdp_ram.sv` | **100%** | 2/2 killed (tagbank + databank BRAM) |
-| `victim_cache.sv` | **75%** | 3/4 killed (was 2/4). Fixed by dirtying lines before eviction (victim's line_storage only receives data on dirty-evict, not clean-evict); 1 survivor needs multi-entry observation. Requires `VICTIM=1` build |
+| `victim_cache.sv` | **100%** | 4/4 killed (was 2/4 then 3/4). Required dirty-line eviction + multi-entry observation; see `test_victim` in tb/cocotb/. Requires `VICTIM=1` build |
 | `LRU.sv` | **100%** | 2/2 killed (gen_4 branch, killed by `test_lru_sanity`) |
 | `l2_tagbank.sv` | **100%** | 2/2 killed (one equivalent mutation `drop_tb_wen_gate` excluded) |
 | `SRRIP.sv` | **100%** | 1/1 killed under POLICY=SRRIP (equivalent dead-branch mutation excluded) |

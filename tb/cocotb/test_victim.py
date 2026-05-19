@@ -204,3 +204,86 @@ async def test_victim_write_hit_invalidates_correct_tag(dut):
         f"(swap_write_hit_check mutation footprint)"
     )
     dut._log.info(f"[victim_write_hit] final read 0x{final:08x} != dirty 0x{dirty_val:08x} OK")
+
+
+@cocotb.test(skip=not VICTIM_ON)
+async def test_victim_write_hit_preserves_others(dut):
+    """Targets swap_write_hit_check via multi-entry observation.
+
+    Under the mutation, write_hit_one_hot fires on tags that DON'T
+    match w_addr.tag, so any concurrent victim entries get incorrectly
+    invalidated while only the matching one survives.
+
+    Stimulus:
+      1. Dirty addrs[0..3] with distinct dirty_vals.
+      2. Evict each to victim (4 dirty entries land in victim).
+      3. Sanity: re-read each addrs[i] returns its dirty_val.
+      4. Re-cache addrs[0] in L1, write a NEW value, force eviction.
+         This triggers write_hit_one_hot processing in victim.
+      5. Re-read addrs[1..3]: clean RTL preserves them (dirty_val_i),
+         mutated RTL invalidated them so the read goes through to mem.
+
+    We mutate mem under those addrs between steps 4 and 5 so a mem
+    fetch is observable as the sentinel rather than the dirty value."""
+    await reset_dut(dut)
+    ram = attach_mem(dut, size_bytes=1 << 20)
+    master = attach_master(dut)
+
+    # Choose 4 lines in DIFFERENT sets so dirty-eviction of each goes
+    # to a fresh victim slot (one set's L1 can only evict 1 line at a time).
+    bases = [line_addr(s=s, t=10 + s) for s in range(4)]
+    dirties = [0xD17710A0 | (i << 4) for i in range(4)]
+
+    # 1+2. Dirty each, then trigger its eviction by reading a fresh
+    # extra line in the SAME set.
+    for i, (a, d) in enumerate(zip(bases, dirties)):
+        await _read_block(master, a)
+        await _write_block(master, a, d)
+        await Timer(10 * CLK_PERIOD_NS, "ns")
+        extra = line_addr(s=i, t=200 + i)
+        await _read_block(master, extra)
+        await Timer(30 * CLK_PERIOD_NS, "ns")
+
+    # 3. Sanity: each addrs[i] should hit victim with dirty_val_i.
+    for a, d in zip(bases, dirties):
+        v = await _read_block(master, a)
+        assert v == d, (
+            f"sanity pre-write: {hex(a)} should hit victim with "
+            f"0x{d:08x}, got 0x{v:08x}"
+        )
+
+    # 4. Re-cache addrs[0] in L1 (sanity read above did), write NEW value,
+    #    then force re-eviction to trigger write_hit_one_hot.
+    new0 = 0xACCE5500
+    await _write_block(master, bases[0], new0)
+    await Timer(20 * CLK_PERIOD_NS, "ns")
+    # Evict addrs[0] from L1 (its set is set 0; fill set 0 with WAYS other tags).
+    for k in range(WAYS + 1):
+        await _read_block(master, line_addr(s=0, t=500 + k))
+    await Timer(40 * CLK_PERIOD_NS, "ns")
+
+    # Mutate mem for addrs[1..3] so a fresh mem fetch is observable as
+    # a value distinct from both the dirty and the original mem contents.
+    sentinels = [0xBEEF1100 | (i << 4) for i in range(1, 4)]
+    for a, s in zip(bases[1:], sentinels):
+        ram.write(a & 0x000F_FFFF, s.to_bytes(BLOCK_BYTES, "little"))
+
+    # Evict addrs[1..3] from L1 by reading WAYS+1 distinct tags in their
+    # respective sets. Otherwise the re-reads hit L1 and never reach
+    # victim, masking the mutation.
+    for i in range(1, 4):
+        for k in range(WAYS + 1):
+            await _read_block(master, line_addr(s=i, t=700 + 10*i + k))
+    await Timer(40 * CLK_PERIOD_NS, "ns")
+
+    # 5. Re-read addrs[1..3]: clean RTL -> still in victim with dirty_val_i.
+    #    Mutated RTL -> invalidated by step 4's write_hit, mem fetch returns sentinel.
+    for i, a in enumerate(bases[1:], start=1):
+        v = await _read_block(master, a)
+        assert v == dirties[i], (
+            f"victim entry for {hex(a)} was incorrectly invalidated by "
+            f"write to addrs[0]: got 0x{v:08x}, expected dirty 0x{dirties[i]:08x} "
+            f"(swap_write_hit_check mutation footprint -- write_hit_one_hot "
+            f"fired on non-matching tags)"
+        )
+    dut._log.info("[victim_write_hit_preserves_others] all 3 other entries survived")
