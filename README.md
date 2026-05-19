@@ -207,7 +207,7 @@ mutation. Current per-file scores:
 | `toggle_memory.sv` | **100%** | 3/3 killed (covers `set_clear_memory` and cache inuse tables) || `lutram_1w_1r.sv` | **100%** | 2/2 killed (`drop_write_enable` excluded as equivalent) |
 | `lfsr.sv` | **100%** | 1/1 killed |
 | `sdp_ram.sv` | **100%** | 2/2 killed (tagbank + databank BRAM) |
-| `victim_cache.sv` | 50% | 2/4 killed -- `negate_hit` + `drop_buffer_tag_uncacheable` killed; 2 survivors need deeper investigation of the L1↔victim invalidate protocol. Requires `VICTIM=1` build |
+| `victim_cache.sv` | **75%** | 3/4 killed (was 2/4). Fixed by dirtying lines before eviction (victim's line_storage only receives data on dirty-evict, not clean-evict); 1 survivor needs multi-entry observation. Requires `VICTIM=1` build |
 | `LRU.sv` | **100%** | 2/2 killed (gen_4 branch, killed by `test_lru_sanity`) |
 | `l2_tagbank.sv` | **100%** | 2/2 killed (one equivalent mutation `drop_tb_wen_gate` excluded) |
 | `SRRIP.sv` | **100%** | 1/1 killed under POLICY=SRRIP (equivalent dead-branch mutation excluded) |
