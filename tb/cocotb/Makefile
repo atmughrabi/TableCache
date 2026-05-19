@@ -195,3 +195,15 @@ lint:
 .PHONY: perf
 perf:
 	@python3 $(TB_DIR)/perf.py
+
+.PHONY: vlint
+vlint:
+	@VERIBLE=$$(command -v verible-verilog-lint 2>/dev/null || \
+	            echo $$HOME/.local/bin/verible-verilog-lint); \
+	if [ ! -x "$$VERIBLE" ]; then \
+	    echo "verible-verilog-lint not found; download from"; \
+	    echo "  https://github.com/chipsalliance/verible/releases"; \
+	    exit 1; \
+	fi; \
+	cd $(REPO_ROOT) && $$VERIBLE --rules_config_search src/*.sv && \
+	echo "vlint: clean (bug-class rules only -- see .rules.verible_lint)"
