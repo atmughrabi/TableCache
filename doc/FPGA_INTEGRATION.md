@@ -239,6 +239,27 @@ Highlights:
 - `SECOND_CHANCE` saturates at 4 ways; adding more ways gains <1pp.
 - At 2 ways, policy choice barely matters (43-46% across all five).
 
+### LINES sweep (SRRIP vs LRU)
+
+WAYS=4 LINE_W=8 NTXN=3000:
+
+| LINES | SRRIP hit rate | LRU hit rate |
+|---:|---:|---:|
+| 32  | 46.0% | 40.2% |
+| 64  | **72.1%** | 55.1% |
+| 128 | 77.6% | 64.8% |
+| 256 | 78.1% | 70.4% |
+
+Two patterns worth noting:
+- **`SRRIP` saturates at LINES=128** for this workload (working-set
+  fits). Doubling LINES from 128→256 buys only +0.5pp.
+- **`LRU` keeps scaling linearly with capacity** (40→55→65→70). It
+  needs ~4× more capacity than `SRRIP` to reach the same hit rate:
+  `SRRIP@LINES=64 (72.1%) ≈ LRU@LINES=256 (70.4%)`.
+
+Implication: on small-capacity FPGAs, `SRRIP` is significantly more
+area-efficient. On large-capacity FPGAs (>=256 lines), the gap shrinks.
+
 ## 11. What to expect on Xilinx UltraScale+ (zcu102 ballpark)
 
 `LINE_W=8, WAYS=4, LINES=64, ID_W=4, INCLUDE_CBOM=1, INCLUDE_VICTIM=0`:
