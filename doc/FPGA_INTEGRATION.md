@@ -219,6 +219,26 @@ Workload assumptions skew toward graph-traversal access patterns
 `LRU` remains the default-parameter pick for clarity and lowest area;
 upgrade to `SRRIP` if hit rate is the bottleneck.
 
+### WAYS × POLICY sweep (smaller workload, NTXN=3000)
+
+Same workload at three associativities (`python3 tb/cocotb/perf_sweep.py`):
+
+| Policy | 2 ways | 4 ways | 8 ways |
+|---|---:|---:|---:|
+| `LRU` | 44.6% | 55.1% | 77.4% |
+| **`SRRIP`** | **46.0%** | **72.1%** | **77.7%** |
+| `FRQ` | 44.6% | 66.0% | 75.4% |
+| `SECOND_CHANCE` | 45.3% | 64.1% | 65.0% |
+| `RANDOM` | 42.7% | 60.8% | 69.3% |
+
+Highlights:
+- **`SRRIP` at 4 ways (72.1%) gets within 5pp of `LRU` at 8 ways (77.4%)**
+  -- half the associativity area, near-equal hit rate.
+- `LRU` benefits the most from going 2→8 ways (+33pp); other policies
+  asymptote earlier.
+- `SECOND_CHANCE` saturates at 4 ways; adding more ways gains <1pp.
+- At 2 ways, policy choice barely matters (43-46% across all five).
+
 ## 11. What to expect on Xilinx UltraScale+ (zcu102 ballpark)
 
 `LINE_W=8, WAYS=4, LINES=64, ID_W=4, INCLUDE_CBOM=1, INCLUDE_VICTIM=0`:

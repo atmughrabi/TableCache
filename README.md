@@ -242,6 +242,8 @@ environment): `count <= DEPTH`, `valid == (count != 0)`,
 ```bash
 cd tb/cocotb && source .venv/bin/activate
 NTXN=5000 python3 perf.py            # ~4 min, all 5 policies
+make perf                            # same, default NTXN
+NTXN=3000 python3 perf_sweep.py      # ~12 min, 5 policies x 3 ways
 POLICIES=LRU,SRRIP NTXN=10000 python3 perf.py
 ```
 

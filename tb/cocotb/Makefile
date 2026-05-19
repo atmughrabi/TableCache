@@ -191,3 +191,7 @@ lint:
 	    $(SRC_DIR)/cache_config.sv \
 	    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv))
 	@echo "lint: clean"
+
+.PHONY: perf
+perf:
+	@python3 $(TB_DIR)/perf.py
