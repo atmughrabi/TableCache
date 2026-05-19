@@ -50,6 +50,7 @@ that pins it at:
 - [Run tests](#run-tests)
 - [Coverage and seed sweep](#coverage-and-seed-sweep)
 - [Lint and X-prop](#lint-and-x-prop)
+- [Make targets cheat-sheet](#make-targets-cheat-sheet)
 - [Functional coverage](#functional-coverage)
 - [Mutation testing](#mutation-testing)
 - [Formal proofs](#formal-proofs)
@@ -159,7 +160,12 @@ cd tb/cocotb
 
 # Strict-lint gate (production CI gate). Exits non-zero on any new latch,
 # multi-driver, or unhandled width truncation.
-make lint                                         # currently clean
+make lint                                         # Verilator -Wall, ~1s
+
+# Verible bug-class lint (curated rule set in .rules.verible_lint).
+# Disables stylistic rules (line length, naming, etc.) on the upstream
+# RTL; enables only the bug-finders.
+make vlint                                        # ~1s, currently clean
 
 # X-propagation: re-runs the regression with --x-assign unique --x-initial
 # unique. Catches reset-then-read-before-fill bugs that Verilator's default
@@ -169,6 +175,17 @@ rm -rf sim_build && XPROP=1 make MODULE=test_random NTXN=200
 
 Last XPROP run (12 modules / 31 tests): all PASS, 0 PC violations -- no
 test depends on uninit / pre-fill data.
+
+## Make targets cheat-sheet
+
+| Target | What it does |
+|---|---|
+| `make MODULE=<test>` | Run a single cocotb test |
+| `make lint` | Verilator strict lint, all RTL |
+| `make vlint` | Verible bug-class lint (needs `verible-verilog-lint` in PATH or `~/.local/bin/`) |
+| `make perf` | Run 5-policy performance benchmark (`tb/cocotb/perf.py`) |
+| `make wave` | Open the latest `dump.vcd` in GTKWave (re-run with `TRACE=1` first) |
+| `make -C tb/formal all` | Run all 6 formal proof targets (yosys+z3, sv2v) |
 
 ## Functional coverage
 

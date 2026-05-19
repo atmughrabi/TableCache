@@ -207,3 +207,20 @@ vlint:
 	fi; \
 	cd $(REPO_ROOT) && $$VERIBLE --rules_config_search src/*.sv && \
 	echo "vlint: clean (bug-class rules only -- see .rules.verible_lint)"
+
+# Open the most recent VCD in GTKWave. Re-run a test with TRACE=1 first
+# (default builds dump dump.vcd to the current dir).
+.PHONY: wave
+wave:
+	@VCD=$$(ls -t $(TB_DIR)/dump.vcd $(REPO_ROOT)/tb/dump.vcd 2>/dev/null | head -1); \
+	if [ -z "$$VCD" ]; then \
+	    echo "no dump.vcd found. Re-run a test with TRACE=1, e.g.:"; \
+	    echo "  TRACE=1 make MODULE=test_smoke"; \
+	    exit 1; \
+	fi; \
+	if ! command -v gtkwave >/dev/null; then \
+	    echo "gtkwave not installed: sudo apt install gtkwave"; \
+	    exit 1; \
+	fi; \
+	echo "opening $$VCD ..."; \
+	gtkwave "$$VCD" &
