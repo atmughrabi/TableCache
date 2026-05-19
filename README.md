@@ -54,6 +54,7 @@ that pins it at:
 - [Functional coverage](#functional-coverage)
 - [Mutation testing](#mutation-testing)
 - [Formal proofs](#formal-proofs)
+- [Performance benchmark](#performance-benchmark)
 - [Overnight stress run](#overnight-stress-run)
 - [Test inventory](#test-inventory)
 - [How to add a test](#how-to-add-a-test)
@@ -235,6 +236,27 @@ Four targets covering both `fifo.sv` implementation branches:
 Proven invariants (under a well-formed no-overflow / no-underflow
 environment): `count <= DEPTH`, `valid == (count != 0)`,
 `full == (count == DEPTH)`.
+
+## Performance benchmark
+
+```bash
+cd tb/cocotb && source .venv/bin/activate
+NTXN=5000 python3 perf.py            # ~4 min, all 5 policies
+POLICIES=LRU,SRRIP NTXN=10000 python3 perf.py
+```
+
+Hit-rate ranking on a 5000-op hot/cold graph-shaped workload
+(`LINES=64 WAYS=4 LINE_W=8 SEED=1`):
+
+| Policy | Hit rate | p50 hit (cyc) | p95 hit |
+|---|---:|---:|---:|
+| **`SRRIP`** | **74.3%** | 7 | 14 |
+| `SECOND_CHANCE` | 70.4% | 7 | 14 |
+| `FRQ` | 67.2% | 7 | 14 |
+| `RANDOM` | 62.1% | 7 | 15 |
+| `LRU` | 56.6% | 8 | 15 |
+
+Detailed table + tuning notes in [doc/FPGA_INTEGRATION.md §10](doc/FPGA_INTEGRATION.md#10-performance-tuning-knobs).
 
 ## Overnight stress run
 

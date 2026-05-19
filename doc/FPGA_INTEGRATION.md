@@ -191,11 +191,33 @@ slave handles that burst length (Xilinx MIG accepts up to 256-beat).
 
 | Symptom | Try |
 |---|---|
-| Low hit rate on streaming workload | Increase `WAYS` to 8 or switch `POLICY` to `RRIP_TREE` |
+| Low hit rate on streaming workload | Increase `WAYS` to 8 or switch `POLICY` to `SRRIP` (see policy benchmark below) |
 | Stalls on bursty writes | Increase `WDATA_FIFO_DEPTH` and `AWID_FIFO_DEPTH` |
 | Frequent eviction-track full | Increase `FINISH_FIFO_DEPTH` and `REQ_FIFO_DEPTH` |
 | Long flush latency | Use `MakeInvalid` (no writebacks) when data is reclaimable |
 | Shim AR backpressure | Set `PROMOTE_WMISS_TO_RW=1` (but read INTERFACING.md §10 first) |
+
+### Replacement-policy benchmark
+
+5000-op hot/cold graph-shaped workload (`tb/cocotb/test_workload.py`)
+at `LINES=64 WAYS=4 LINE_W=8 SEED=1`, run via
+`python3 tb/cocotb/perf.py`:
+
+| Policy | Hit rate | p50 hit (cyc) | p95 hit | p50 miss | p95 miss |
+|---|---:|---:|---:|---:|---:|
+| **`SRRIP`**          | **74.3%** | 7 | 14 | 8 | 15 |
+| `SECOND_CHANCE` | 70.4% | 7 | 14 | 8 | 15 |
+| `FRQ`           | 67.2% | 7 | 14 | 8 | 17 |
+| `RANDOM`        | 62.1% | 7 | 15 | 8 | 17 |
+| `LRU`           | 56.6% | 8 | 15 | 8 | 17 |
+
+Workload assumptions skew toward graph-traversal access patterns
+(hot-set + occasional cold misses). For your own workload, rerun
+`perf.py` with representative stimulus before committing to a policy.
+
+`SRRIP` is the recommended default for graph-like workloads.
+`LRU` remains the default-parameter pick for clarity and lowest area;
+upgrade to `SRRIP` if hit rate is the bottleneck.
 
 ## 11. What to expect on Xilinx UltraScale+ (zcu102 ballpark)
 
