@@ -248,6 +248,8 @@ Four targets covering both `fifo.sv` implementation branches:
 | `induct-deep` | DEPTH=4 | -- | PASS (k=24) |
 | `bmc-scm` | `set_clear_memory.sv` (DEPTH=4) | 16 | PASS (k=16) |
 | `induct-scm` | `set_clear_memory.sv` | -- | PASS (k=16) |
+| `bmc-flush` | `tc_flush_controller.sv` (LINES=4) | 32 | PASS |
+| `induct-flush` | `tc_flush_controller.sv` FSM | -- | PASS (k=16) |
 
 Proven invariants (under a well-formed no-overflow / no-underflow
 environment): `count <= DEPTH`, `valid == (count != 0)`,

@@ -9,18 +9,21 @@ SV2V     := $(if $(shell command -v sv2v 2>/dev/null),sv2v,$(HOME)/.local/bin/sv
 HARNESS_1    := $(ROOT)/tb/formal/fifo_formal.sv
 HARNESS_DEEP := $(ROOT)/tb/formal/fifo_formal_deep.sv
 HARNESS_SCM  := $(ROOT)/tb/formal/scm_formal.sv
+HARNESS_FLUSH:= $(ROOT)/tb/formal/flush_formal.sv
 RTL_1        := $(ROOT)/src/fifo.sv
 RTL_DEEP     := $(ROOT)/src/fifo.sv $(ROOT)/src/lfsr.sv $(ROOT)/src/lutram_1w_1r.sv
 RTL_SCM      := $(ROOT)/src/set_clear_memory.sv $(ROOT)/src/toggle_memory_set.sv \
                 $(ROOT)/src/toggle_memory.sv $(ROOT)/src/lutram_1w_mr.sv \
                 $(ROOT)/src/lutram_1w_1r.sv $(ROOT)/src/lfsr.sv \
                 $(ROOT)/src/cache_config.sv
+RTL_FLUSH    := $(ROOT)/src/cache_config.sv $(ROOT)/src/tc_flush_controller.sv
 SMT2_1       := $(BUILD)/fifo.smt2
 SMT2_DEEP    := $(BUILD)/fifo_deep.smt2
 SMT2_SCM     := $(BUILD)/scm.smt2
+SMT2_FLUSH   := $(BUILD)/flush.smt2
 
-.PHONY: all bmc induct bmc-deep induct-deep bmc-scm induct-scm clean
-all: bmc induct bmc-deep induct-deep bmc-scm induct-scm
+.PHONY: all bmc induct bmc-deep induct-deep bmc-scm induct-scm bmc-flush induct-flush clean
+all: bmc induct bmc-deep induct-deep bmc-scm induct-scm bmc-flush induct-flush
 
 $(SMT2_1): $(HARNESS_1) $(RTL_1)
 	@mkdir -p $(BUILD)
@@ -36,12 +39,19 @@ $(SMT2_SCM): $(HARNESS_SCM) $(RTL_SCM)
 	$(SV2V) -DASSERT_OFF $(HARNESS_SCM) $(RTL_SCM) > $(BUILD)/scm.v
 	$(YOSYS) -q -p "read -sv -formal $(BUILD)/scm.v; prep -top scm_formal -flatten; write_smt2 -wires $@"
 
+$(SMT2_FLUSH): $(HARNESS_FLUSH) $(RTL_FLUSH)
+	@mkdir -p $(BUILD)
+	$(SV2V) -DASSERT_OFF $(HARNESS_FLUSH) $(RTL_FLUSH) > $(BUILD)/flush.v
+	$(YOSYS) -q -p "read -sv -formal $(BUILD)/flush.v; prep -top flush_formal -flatten; write_smt2 -wires $@"
+
 bmc: $(SMT2_1)        ; $(SMTBMC) --presat -s $(SOLVER) -t 32 $<
 induct: $(SMT2_1)     ; $(SMTBMC) --presat -s $(SOLVER) -i -t 16 $<
 bmc-deep: $(SMT2_DEEP)    ; $(SMTBMC) --presat -s $(SOLVER) -t 32 $<
 induct-deep: $(SMT2_DEEP) ; $(SMTBMC) --presat -s $(SOLVER) -i -t 24 $<
 bmc-scm: $(SMT2_SCM)      ; $(SMTBMC) --presat -s $(SOLVER) -t 16 $<
 induct-scm: $(SMT2_SCM)   ; $(SMTBMC) --presat -s $(SOLVER) -i -t 16 $<
+bmc-flush: $(SMT2_FLUSH)      ; $(SMTBMC) --presat -s $(SOLVER) -t 32 $<
+induct-flush: $(SMT2_FLUSH)   ; $(SMTBMC) --presat -s $(SOLVER) -i -t 16 $<
 
 clean:
 	rm -rf $(BUILD)
