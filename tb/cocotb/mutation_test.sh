@@ -71,6 +71,60 @@ case "$FILE" in
             "negate_out_fifo_push|0,/assign out_fifo_push\[i\] = valid_pipeline/{s/valid_pipeline\[i\]\[LATENCY\]/~valid_pipeline[i][LATENCY]/}"
         )
         ;;
+    src/l2_databank.sv:sdp)
+        # SDP-mode (DATABANK_SDP=1) mutation set. The standard
+        # l2_databank.sv mutations above exercise the TDP path; these
+        # cover the SDP-specific port-1-disable gating that lives in
+        # l2_databank.sv between the FSM and the storage. Each mutation
+        # breaks one part of the "port 1 must stay inert in SDP mode"
+        # invariant -- functional tests deadlock or corrupt data.
+        FILE=src/l2_databank.sv  # real path for sed
+        EXTRA_MAKE_ARGS='+define+TC_DATABANK_SDP=1'
+        DEFAULT_TESTS="test_smoke test_random test_backpressure test_workload"
+        MUTATIONS=(
+            # Flip polarity: en_gated[1] = en[1] & DATABANK_SDP -> port 1
+            # only fires in SDP mode (always 0 in TDP). In SDP mode this
+            # un-stalls port 1 at the RAM boundary while the FSM still
+            # thinks port 1 is operating normally, so RAM reads/writes
+            # for port 1 fire when they shouldn't. Expected: data corruption.
+            "sdp_flip_en_gated_p1|s/assign en_gated\\[1\\] = en\\[1\\] \\& ~DATABANK_SDP;/assign en_gated[1] = en[1] \\& DATABANK_SDP;/"
+            # Drop the ~DATABANK_SDP mask on port_ready[1] output. Upstream
+            # sees ready=1 when port 1 is in READY -> sends requests ->
+            # port 1's state advances to READING/WRITING -> but
+            # en_gated[1] stays 0 (other mask intact) -> saved_block[1]
+            # stuck -> port 1 deadlocks indefinitely. Expected: timeout.
+            "sdp_drop_ready_mask|s/(port_ready\\[1\\]            & ~DATABANK_SDP)/port_ready[1]/"
+            # Drop the ~DATABANK_SDP mask on write_data_ready output.
+            # With ready_mask intact, port 1 can still transition to
+            # WRITING state via the priority logic (en[1] in READY uses
+            # request_valid which can fire if port 0 just released).
+            # The dropped wdata mask then causes port 1 to advertise
+            # data-acceptance while en_gated[1]=0 -> dropped beat.
+            # Expected: scoreboard mismatch under workload.
+            "sdp_drop_wdata_ready_mask|s/(port_write_data_ready\\[1\\] & ~DATABANK_SDP)/port_write_data_ready[1]/"
+            # Replace sdp_ram_uram with tdp_ram in the SDP generate.
+            # The sdp_ram_uram interface is SDP (1R+1W) so plugging in
+            # tdp_ram leaves b_wbe/b_wdata floating and a_rdata unused;
+            # Verilator x-propagates into the read path.
+            # Expected: read data corruption.
+            "sdp_swap_uram_to_tdp|s/sdp_ram_uram #(/tdp_ram #(/"
+
+            # ---- Documented equivalent mutations (excluded from score) ----
+            # sdp_drop_fill_ready_mask: equivalent under current "port 1
+            # disabled" implementation. Fill requests are issued by the
+            # internal miss handler in l2_cache.sv, which only routes
+            # fills to port 0 in practice (priority-based, port 0 always
+            # available since port 1 is gated off). port_fill_data_ready[1]
+            # is computed by the FSM but stays 0 throughout, so the gate
+            # mask is dead. Would become live if a future change re-
+            # enables port 1 or splits fills across both ports.
+            #
+            # sdp_invert_rdata_route: equivalent. With port 1 disabled,
+            # read_was_p1_pipe[LATENCY] is always 0, so swapping the '0
+            # and sdp_rdata branches produces the same output stream.
+            # Would become live if port 1 ever issued a read.
+        )
+        ;;
     src/tc_flush_controller.sv)
         DEFAULT_TESTS="test_flush"
         MUTATIONS=(
@@ -339,11 +393,11 @@ for entry in "${MUTATIONS[@]}"; do
         # test_shim_prefill_race only fires under PROMOTE_WMISS_TO_RW=1;
         # under the default 0, it is expect_fail and trivially passes.
         if [[ $mod == "test_shim_prefill_race" ]]; then
-            TC_PROMOTE_WMISS=1 timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
+            TC_PROMOTE_WMISS=1 EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
         elif [[ $mod == "test_random" ]]; then
-            NTXN=$NTXN SEED=1 timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
+            NTXN=$NTXN SEED=1 EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
         else
-            timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
+            EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
         fi
         rc=$?
         if [[ $rc -ne 0 ]] || ! grep -qE '\*\* TESTS=.*FAIL=0 ' "$LOGDIR/${label}__${mod}.log"; then
