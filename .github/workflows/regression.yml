@@ -109,6 +109,20 @@ jobs:
             VICTIM=1 timeout 300 make MODULE=$mod
           done
 
+      - name: DATABANK_SDP=1 (UltraRAM mode smoke + correctness)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # Run the core regression with the SDP databank enabled so that
+          # the port-1-disable gating (l2_databank.sv) and the dedicated
+          # sdp_ram_uram primitive stay verified on every PR. See
+          # doc/INTERFACING.md section 5.1 and ARCHITECTURE.md bug #14.
+          for mod in test_smoke test_cbom test_strobe test_backpressure test_flush; do
+            rm -rf sim_build sim_build_shim
+            EXTRA_ARGS="+define+TC_DATABANK_SDP=1" timeout 300 make MODULE=$mod
+          done
+
   formal:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
