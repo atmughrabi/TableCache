@@ -1,0 +1,189 @@
+name: regression
+
+on:
+  push:
+    branches: [main, verification-and-shim]
+  pull_request:
+    branches: [main, verification-and-shim]
+
+jobs:
+  lint-and-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cache the *built* Verilator install dir, not just the apt archive.
+      # Building Verilator 5.020 from source on a 2-core GitHub runner takes
+      # ~10-15 min and was the main reason the 25-min job timeout was tight.
+      - name: Cache built Verilator
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/verilator
+            /usr/local/bin/verilator_*
+            /usr/local/share/verilator
+          key: verilator-bin-${{ runner.os }}-5.020
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-verilator-5.020
+
+      - name: Install Verilator 5.020 + Python deps
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git make autoconf g++ flex bison ccache \
+            libunwind-dev libgoogle-perftools-dev numactl perl-doc \
+            libfl2 libfl-dev zlib1g zlib1g-dev \
+            help2man python3 python3-pip python3-venv
+          # Build Verilator 5.020 only if the cache didn't restore it.
+          if ! command -v verilator >/dev/null || \
+             ! verilator --version | grep -q '5\.020'; then
+            git clone --depth 1 --branch v5.020 https://github.com/verilator/verilator.git /tmp/verilator
+            cd /tmp/verilator
+            autoconf && ./configure --prefix=/usr/local
+            make -j"$(nproc)"
+            sudo make install
+          fi
+          verilator --version
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-cocotb-1.9
+
+      - name: Python venv + cocotb stack
+        working-directory: tb/cocotb
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip wheel
+          pip install 'cocotb>=1.9,<2.0' cocotb-bus cocotbext-axi==0.1.28 \
+                      'cocotb-coverage<2.0' pytest
+
+      - name: Lint
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          make lint
+
+      - name: Verible bug-class lint
+        run: |
+          set -eux
+          curl -fsSL -o /tmp/verible.tar.gz \
+            "https://github.com/chipsalliance/verible/releases/download/v0.0-4053-g89d4d98a/verible-v0.0-4053-g89d4d98a-linux-static-x86_64.tar.gz"
+          tar -xzf /tmp/verible.tar.gz -C /tmp
+          sudo cp /tmp/verible-v0.0-4053-g89d4d98a/bin/verible-verilog-lint /usr/local/bin/
+          verible-verilog-lint --rules_config_search src/*.sv
+          echo "verible: clean"
+
+      - name: Smoke + flush + lru_sanity + cbom
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          for mod in test_smoke test_lru_sanity test_flush test_cbom; do
+            rm -rf sim_build sim_build_shim
+            timeout 300 make MODULE=$mod
+          done
+
+      - name: Random (short)
+        working-directory: tb/cocotb
+        env:
+          NTXN: "100"
+        run: |
+          . .venv/bin/activate
+          rm -rf sim_build
+          timeout 300 make MODULE=test_random
+
+      - name: Shim regression (3 modules)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          for mod in test_narrow_shim test_shim_cache test_shim_throughput; do
+            rm -rf sim_build sim_build_shim
+            timeout 300 make MODULE=$mod
+          done
+
+      - name: VICTIM=1 path (smoke + cbom + victim directed)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          for mod in test_smoke test_cbom test_victim; do
+            rm -rf sim_build sim_build_shim
+            VICTIM=1 timeout 300 make MODULE=$mod
+          done
+
+      - name: DATABANK_SDP=1 (UltraRAM mode smoke + correctness)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # Run the core regression with the SDP databank enabled so that
+          # the port-1-disable gating (l2_databank.sv) and the dedicated
+          # sdp_ram_uram primitive stay verified on every PR. See
+          # doc/INTERFACING.md section 5.1 and ARCHITECTURE.md bug #14.
+          # Restrict to 3 fast modules on PR CI so we stay within the
+          # job timeout; the full 9-module sweep with SDP=1 runs in the
+          # local nightly.
+          for mod in test_smoke test_cbom test_backpressure; do
+            rm -rf sim_build sim_build_shim
+            EXTRA_ARGS="+define+TC_DATABANK_SDP=1" SEED=1 \
+                timeout 300 make MODULE=$mod
+            rm -rf sim_build sim_build_shim
+          done
+
+  formal:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yosys + z3
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends yosys z3
+          # Ubuntu 22.04's apt yosys is ~0.9 -- older than the 0.33 the
+          # local formal stack pins but new enough for the smtbmc options
+          # tb/formal/Makefile uses (--presat, -s z3, -i, -t N have been
+          # stable for years). If a proof fails on old yosys, the error
+          # message will be specific ("unknown command ...") and we can
+          # bump to a yosys-from-source build at that point. Avoid the
+          # yowasp-yosys fallback because yowasp-yosys-smtbmc isn't a real
+          # PyPI package and conjuring an alternative isn't worth the
+          # complexity for an already-niche job.
+          yosys -V
+          yosys-smtbmc --help 2>&1 | head -3 || true
+          z3 --version
+
+      - name: Install sv2v prebuilt
+        run: |
+          set -eux
+          curl -fsSL -o /tmp/sv2v.zip \
+            "https://github.com/zachjs/sv2v/releases/latest/download/sv2v-Linux.zip"
+          unzip -oq /tmp/sv2v.zip -d /tmp/
+          # sv2v release zip layout has historically been either
+          # /tmp/sv2v-Linux/sv2v  or  /tmp/sv2v (bare). Locate the binary
+          # robustly so a layout change upstream doesn't break CI.
+          SV2V_BIN=$(find /tmp -maxdepth 3 -type f -name sv2v -perm -u+x 2>/dev/null | head -1)
+          if [ -z "$SV2V_BIN" ]; then
+              echo "ERROR: sv2v binary not found inside the release zip; layout:"
+              find /tmp -maxdepth 3 -name 'sv2v*' -print
+              exit 1
+          fi
+          sudo cp "$SV2V_BIN" /usr/local/bin/sv2v
+          sudo chmod +x /usr/local/bin/sv2v
+          sv2v --version
+
+      - name: Run formal proofs (BMC + k-induction)
+        working-directory: tb/formal
+        run: make all

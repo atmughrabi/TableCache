@@ -1,0 +1,226 @@
+# cocotb Makefile for TableCache L2.
+# Usage:
+#   source .venv/bin/activate
+#   make MODULE=test_smoke
+#   make MODULE=test_random NTXN=200 SEED=1
+SIM        ?= verilator
+TOPLEVEL_LANG ?= verilog
+TOPLEVEL   ?= dut_cocotb
+MODULE     ?= test_smoke
+
+# Knobs forwarded into the SV defines and into the test via environ.
+POLICY     ?= LRU
+LINES      ?= 64
+LINE_W     ?= 8
+WAYS       ?= 4
+# BLOCK_W is intentionally fixed at 32 on the bare-cocotb (l2_cache) path:
+# `dut_cocotb.sv` declares `parameter int BLOCK_W = 32` without a TC_BLOCK_W
+# guard, and every test_*.py file under tb/cocotb has BLOCK_BYTES hardcoded
+# to 4 (with golden() returning 32-bit words). Wider buses are exercised on
+# the shim integration path (test_shim_cache) at BLOCK_W=WIDE_W=512.
+BLOCK_W    ?= 32
+DB_LATENCY ?= 1
+VICTIM     ?= 0
+CBOM       ?= 1
+NTXN       ?= 100
+SEED       ?= 1
+RATIO_RD   ?= 60
+RATIO_FULL ?= 70
+
+# Guard: warn if a user sets BLOCK_W != 32 on a bare-cocotb target. The
+# dut_cocotb.sv parameter ignores TC_BLOCK_W (bus width stays 32), so the
+# override silently does nothing for the RTL while the Python harness still
+# expects 4-byte beats. Force-error instead of letting the test fail with a
+# confusing data-mismatch message.
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
+ifneq ($(BLOCK_W),32)
+$(error BLOCK_W=$(BLOCK_W) is not supported on the bare-cocotb path (MODULE=$(MODULE)); only BLOCK_W=32 is wired end-to-end. Use MODULE=test_shim_cache to exercise wider buses (BLOCK_W=512).)
+endif
+endif
+
+REPO_ROOT  := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
+SRC_DIR    := $(REPO_ROOT)/src
+TB_DIR     := $(REPO_ROOT)/tb/cocotb
+
+# Shim-only target uses a different top + a single RTL source.
+ifneq (,$(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race))
+NARROW_W   ?= 32
+WIDE_W     ?= 512
+export TC_NARROW_W := $(NARROW_W)
+export TC_BLOCK_W  := $(WIDE_W)
+TOPLEVEL := dut_shim_only
+VERILOG_SOURCES := $(SRC_DIR)/tc_narrow_shim.sv $(TB_DIR)/axi_protocol_checker.sv $(TB_DIR)/dut_shim_only.sv
+EXTRA_ARGS += +define+TC_NARROW_W=$(NARROW_W) +define+TC_BLOCK_W=$(WIDE_W)
+ifeq ($(TC_PROMOTE_WMISS),1)
+EXTRA_ARGS += +define+TC_PROMOTE_WMISS=1
+endif
+else ifeq ($(MODULE),test_shim_cache)
+NARROW_W   ?= 32
+WIDE_W     ?= 512
+# Force LINES/LINE_W/WAYS overrides for the shim+cache integration target.
+# The top-level `?=` defaults above (LINES=64 LINE_W=8 WAYS=4) are for the
+# legacy l2_cache-only tests; with LINE_W>1 a physical cache line spans
+# multiple BLOCK_W beats, but the narrow-port shim only issues 1-beat req_ar
+# (m_arlen=0) and relies on the cache's beat-selection. Use LINE_W=2 as the
+# smallest non-degenerate value Verilator accepts (LINE_W=1 triggers a
+# zero-width bit-extract in the upstream cache RTL).
+LINES      := 128
+LINE_W     := 2
+WAYS       := 8
+export TC_NARROW_W := $(NARROW_W)
+export TC_BLOCK_W  := $(WIDE_W)
+export TC_LINES    := $(LINES)
+export TC_LINE_W   := $(LINE_W)
+export TC_WAYS     := $(WAYS)
+TOPLEVEL := dut_shim_cache
+VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
+    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv,$(wildcard $(SRC_DIR)/*.sv)) \
+    $(TB_DIR)/axi_protocol_checker.sv \
+    $(TB_DIR)/dut_shim_cache.sv
+EXTRA_ARGS += +define+TC_NARROW_W=$(NARROW_W) +define+TC_BLOCK_W=$(WIDE_W) \
+              +define+TC_LINES=$(LINES) +define+TC_LINE_W=$(LINE_W) +define+TC_WAYS=$(WAYS)
+else ifeq ($(MODULE),test_flush)
+TOPLEVEL := dut_flush
+VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
+    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
+    $(TB_DIR)/axi_protocol_checker.sv \
+    $(TB_DIR)/dut_flush.sv
+else
+# All RTL files (cache_config first, l2_cache and friends; exclude l2_top and shim).
+VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
+    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
+    $(TB_DIR)/axi_protocol_checker.sv \
+    $(TB_DIR)/dut_cocotb.sv
+endif
+
+EXTRA_ARGS += --timing
+# Coverage: enable with COV=1. Emits sim_build/logs/coverage.dat which
+# `verilator_coverage` merges + annotates. Slows sim ~2x; off by default.
+# --coverage-user picks up SVA `cover property` hits.
+ifeq ($(COV),1)
+EXTRA_ARGS += --coverage --coverage-line --coverage-toggle --coverage-user
+endif
+# X-propagation: enable with XPROP=1. Verilator randomizes uninit storage
+# and unassigned signals; any test that reads pre-fill data fails. Catches
+# reset-then-read-before-fill bugs that Verilator's default (drive 0) hides.
+ifeq ($(XPROP),1)
+EXTRA_ARGS += --x-assign unique --x-initial unique
+endif
+# Stats (item 2): --stats dumps FSM/var/inst counts and per-process line
+# counts to sim_build/Vtop__stats.txt. Free; on by default.
+EXTRA_ARGS += --stats --stats-vars
+# VCD trace is hugely slow at BLOCK_W>=512 (signal count explodes). Opt in
+# only when explicitly requested (TRACE=1) or for the small-bus builds.
+ifeq ($(TRACE),1)
+EXTRA_ARGS += --trace --trace-structs
+else ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
+EXTRA_ARGS += --trace --trace-structs
+endif
+EXTRA_ARGS += -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINCONNECTEMPTY \
+              -Wno-VARHIDDEN -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-BLKSEQ -Wno-INITIALDLY \
+              -Wno-TIMESCALEMOD -Wno-CASEINCOMPLETE -Wno-MULTITOP \
+              -Wno-ALWCOMBORDER -Wno-UNOPTFLAT -Wno-BLKLOOPINIT \
+              -Wno-SYMRSVDWORD
+EXTRA_ARGS += +define+TC_POLICY=$(POLICY) +define+TC_LINES=$(LINES) +define+TC_LINE_W=$(LINE_W) \
+              +define+TC_WAYS=$(WAYS) \
+              +define+TC_DB_LATENCY=$(DB_LATENCY) +define+TC_VICTIM=$(VICTIM) +define+TC_CBOM=$(CBOM)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
+EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
+endif
+# DIAG knobs: pass DIAG=1 (DB-level) or DIAG=2 (DB + stall) to enable per-cycle dumps.
+ifeq ($(DIAG),1)
+EXTRA_ARGS += +define+DIAG_DB
+endif
+ifeq ($(DIAG),2)
+EXTRA_ARGS += +define+DIAG_DB +define+DIAG_STALL2 +define+DIAG_FINISH
+endif
+
+# Pass test parameters via env so Python can read them.
+export TC_NTXN     := $(NTXN)
+export TC_SEED     := $(SEED)
+export TC_RATIO_RD := $(RATIO_RD)
+export TC_RATIO_FULL := $(RATIO_FULL)
+export TC_LINES    := $(LINES)
+export TC_LINE_W   := $(LINE_W)
+export TC_WAYS     := $(WAYS)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
+export TC_BLOCK_W  := $(BLOCK_W)
+endif
+# workload knobs (test_workload.py); leave default if unset
+TC_POOL_LINES     ?=
+TC_HOT_PCT        ?=
+TC_HOT_ACCESS_PCT ?=
+TC_RD_PCT         ?=
+TC_FULL_PCT       ?=
+ifneq ($(TC_POOL_LINES),)
+export TC_POOL_LINES
+endif
+ifneq ($(TC_HOT_PCT),)
+export TC_HOT_PCT
+endif
+ifneq ($(TC_HOT_ACCESS_PCT),)
+export TC_HOT_ACCESS_PCT
+endif
+ifneq ($(TC_RD_PCT),)
+export TC_RD_PCT
+endif
+ifneq ($(TC_FULL_PCT),)
+export TC_FULL_PCT
+endif
+
+include $(shell cocotb-config --makefiles)/Makefile.sim
+
+# ---- Static lint gate (item 9 in doc/VERIFICATION_XILINX_VIP_ROADMAP.md) ----
+# Runs Verilator with -Wall and the SAME suppressions the build uses (those
+# warnings are known-benign upstream patterns: UNUSEDSIGNAL, PINCONNECTEMPTY,
+# WIDTHEXPAND in assertion comparisons, etc.). Exits non-zero on anything
+# else, which is the production gate -- new latches, multi-drivers,
+# bit-width truncations would all fall out here.
+LINT_SUPPRESS := -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+                  -Wno-PINCONNECTEMPTY -Wno-VARHIDDEN -Wno-WIDTHEXPAND \
+                  -Wno-WIDTHTRUNC -Wno-BLKSEQ -Wno-INITIALDLY \
+                  -Wno-TIMESCALEMOD -Wno-CASEINCOMPLETE -Wno-MULTITOP \
+                  -Wno-ALWCOMBORDER -Wno-UNOPTFLAT -Wno-BLKLOOPINIT \
+                  -Wno-SYMRSVDWORD
+LINT_DEFINES  := +define+TC_POLICY=LRU +define+TC_LINES=64 +define+TC_LINE_W=8 \
+                  +define+TC_WAYS=4 +define+TC_DB_LATENCY=1 +define+TC_VICTIM=0 \
+                  +define+TC_CBOM=1 +define+TC_BLOCK_W=32
+.PHONY: lint
+lint:
+	verilator --lint-only -Wall --top-module l2_cache $(LINT_SUPPRESS) $(LINT_DEFINES) \
+	    $(SRC_DIR)/cache_config.sv \
+	    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv))
+	@echo "lint: clean"
+
+.PHONY: perf
+perf:
+	@python3 $(TB_DIR)/perf.py
+
+.PHONY: vlint
+vlint:
+	@VERIBLE=$$(command -v verible-verilog-lint 2>/dev/null || \
+	            echo $$HOME/.local/bin/verible-verilog-lint); \
+	if [ ! -x "$$VERIBLE" ]; then \
+	    echo "verible-verilog-lint not found; download from"; \
+	    echo "  https://github.com/chipsalliance/verible/releases"; \
+	    exit 1; \
+	fi; \
+	cd $(REPO_ROOT) && $$VERIBLE --rules_config_search src/*.sv && \
+	echo "vlint: clean (bug-class rules only -- see .rules.verible_lint)"
+
+# Open the most recent VCD in GTKWave. Re-run a test with TRACE=1 first
+# (default builds dump dump.vcd to the current dir).
+.PHONY: wave
+wave:
+	@VCD=$$(ls -t $(TB_DIR)/dump.vcd $(REPO_ROOT)/tb/dump.vcd 2>/dev/null | head -1); \
+	if [ -z "$$VCD" ]; then \
+	    echo "no dump.vcd found. Re-run a test with TRACE=1, e.g.:"; \
+	    echo "  TRACE=1 make MODULE=test_smoke"; \
+	    exit 1; \
+	fi; \
+	if ! command -v gtkwave >/dev/null; then \
+	    echo "gtkwave not installed: sudo apt install gtkwave"; \
+	    exit 1; \
+	fi; \
+	echo "opening $$VCD ..."; \
+	gtkwave "$$VCD" &
