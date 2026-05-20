@@ -46,7 +46,12 @@ module dut_cocotb
 `else
         parameter logic INCLUDE_VICTIM = 0,
 `endif
-        parameter int VICTIM_LINES = 8
+        parameter int VICTIM_LINES = 8,
+`ifdef TC_DATABANK_SDP
+        parameter logic DATABANK_SDP = `TC_DATABANK_SDP
+`else
+        parameter logic DATABANK_SDP = 0
+`endif
     ) (
         input  logic clk,
         input  logic rst,
@@ -215,7 +220,8 @@ module dut_cocotb
         .DB_LATENCY     (DB_LATENCY),
         .INCLUDE_CBOM   (INCLUDE_CBOM),
         .INCLUDE_VICTIM (INCLUDE_VICTIM),
-        .VICTIM_LINES   (VICTIM_LINES)
+        .VICTIM_LINES   (VICTIM_LINES),
+        .DATABANK_SDP   (DATABANK_SDP)
     ) dut (
         .clk(clk), .rst(rst),
         .req_ar(s_ar), .req_arid(s_arid), .req_arready(s_arready),

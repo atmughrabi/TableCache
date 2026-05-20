@@ -29,6 +29,8 @@ module l2_top
         //Victim cache
         parameter logic INCLUDE_VICTIM = 1,
         parameter int VICTIM_LINES = 8,
+        //1=SDP databank (URAM-friendly, ~1-3% throughput cost); 0=TDP (default)
+        parameter logic DATABANK_SDP = 0,
 
         // Parameters of Axi Slave Bus Interface S00_AXI
         parameter integer C_S00_AXI_ID_WIDTH = 4,
@@ -287,7 +289,8 @@ module l2_top
         .DB_LATENCY(DB_LATENCY),
         .BLOCK_W(C_S00_AXI_DATA_WIDTH),
         .READ_ID_WIDTH(C_S00_AXI_ID_WIDTH),
-        .WRITE_ID_WIDTH(C_S00_AXI_ID_WIDTH)
+        .WRITE_ID_WIDTH(C_S00_AXI_ID_WIDTH),
+        .DATABANK_SDP(DATABANK_SDP)
     ) inst (
         .clk(s00_axi_aclk),
         .rst(~s00_axi_aresetn),

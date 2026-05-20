@@ -26,7 +26,8 @@ module l2_cache
         parameter int unsigned DB_LATENCY = 1, //Latency in cycles of databank, must be >= 1
         parameter int unsigned BLOCK_W = 32, //Data width
         parameter int unsigned READ_ID_WIDTH = 4, //AXI read ID width
-        parameter int unsigned WRITE_ID_WIDTH = 4 //AXI write ID width
+        parameter int unsigned WRITE_ID_WIDTH = 4, //AXI write ID width
+        parameter logic DATABANK_SDP = 0 //1=SDP databank (URAM-friendly, ~1-3% throughput cost); 0=TDP (default)
     )
     (
         input logic clk,
@@ -927,7 +928,8 @@ module l2_cache
         .LINE_ADDR_W(LINE_ADDR_W),
         .BLOCK_ADDR_W(BLOCK_ADDR_W),
         .LATENCY(DB_LATENCY),
-        .SAVED_LEN($bits(saved_t))
+        .SAVED_LEN($bits(saved_t)),
+        .DATABANK_SDP(DATABANK_SDP)
     ) db_inst (
         .request_valid(db_req_valid),
         .request_rnw(db_req.rnw),
