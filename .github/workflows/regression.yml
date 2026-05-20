@@ -13,6 +13,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Cache the *built* Verilator install dir, not just the apt archive.
+      # Building Verilator 5.020 from source on a 2-core GitHub runner takes
+      # ~10-15 min and was the main reason the 25-min job timeout was tight.
+      - name: Cache built Verilator
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/verilator
+            /usr/local/bin/verilator_*
+            /usr/local/share/verilator
+          key: verilator-bin-${{ runner.os }}-5.020
+
       - name: Cache apt packages
         uses: actions/cache@v4
         with:
@@ -28,7 +41,7 @@ jobs:
             libgoogle-perftools-dev numactl perl-doc \
             libfl2 libfl-dev zlib1g zlib1g-dev \
             help2man python3 python3-pip python3-venv
-          # Build Verilator 5.020 (apt's verilator is too old).
+          # Build Verilator 5.020 only if the cache didn't restore it.
           if ! command -v verilator >/dev/null || \
              ! verilator --version | grep -q '5\.020'; then
             git clone --depth 1 --branch v5.020 https://github.com/verilator/verilator.git /tmp/verilator
@@ -136,8 +149,31 @@ jobs:
 
       - name: Install yosys + z3
         run: |
+          set -eux
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends yosys z3
+          sudo apt-get install -y --no-install-recommends yosys z3 python3 python3-pip python3-venv
+          # Apt yosys on Ubuntu 22.04 is ~0.9 which is too old for some of
+          # the smtbmc switches we use (the local stack pins 0.33). If the
+          # apt version is < 0.30, fall back to yowasp-yosys (Python wheel,
+          # ships current yosys via wasmtime). This keeps CI usable without
+          # a multi-minute yosys-from-source build.
+          YOSYS_VER=$(yosys -V 2>/dev/null | awk '{print $2}' | head -1)
+          echo "apt yosys version: $YOSYS_VER"
+          YOSYS_MAJOR_MINOR=$(echo "$YOSYS_VER" | awk -F'[.+-]' '{printf "%d%02d", $1, $2}')
+          if [ -z "$YOSYS_MAJOR_MINOR" ] || [ "$YOSYS_MAJOR_MINOR" -lt 30 ]; then
+              echo "Apt yosys too old, installing yowasp-yosys + yowasp-yosys-smtbmc"
+              pip3 install --user 'yowasp-yosys' 'yowasp-yosys-smtbmc' || true
+              # Create wrapper scripts so 'yosys' / 'yosys-smtbmc' invoke the
+              # yowasp versions transparently. Use printf rather than a
+              # heredoc to keep the YAML indentation happy (heredocs whose
+              # closing EOF lands at column 0 break the workflow parser).
+              sudo bash -c 'printf "%s\n%s\n" "#!/bin/sh" "exec python3 -m yowasp_yosys \"\$@\"" > /usr/local/bin/yosys'
+              sudo bash -c 'printf "%s\n%s\n" "#!/bin/sh" "exec python3 -m yowasp_yosys_smtbmc \"\$@\"" > /usr/local/bin/yosys-smtbmc'
+              sudo chmod +x /usr/local/bin/yosys /usr/local/bin/yosys-smtbmc
+          fi
+          yosys -V
+          yosys-smtbmc --help 2>&1 | head -3 || true
+          z3 --version
 
       - name: Install sv2v prebuilt
         run: |
@@ -145,7 +181,16 @@ jobs:
           curl -fsSL -o /tmp/sv2v.zip \
             "https://github.com/zachjs/sv2v/releases/latest/download/sv2v-Linux.zip"
           unzip -oq /tmp/sv2v.zip -d /tmp/
-          sudo cp /tmp/sv2v-Linux/sv2v /usr/local/bin/sv2v
+          # sv2v release zip layout has historically been either
+          # /tmp/sv2v-Linux/sv2v  or  /tmp/sv2v (bare). Locate the binary
+          # robustly so a layout change upstream doesn't break CI.
+          SV2V_BIN=$(find /tmp -maxdepth 3 -type f -name sv2v -perm -u+x 2>/dev/null | head -1)
+          if [ -z "$SV2V_BIN" ]; then
+              echo "ERROR: sv2v binary not found inside the release zip; layout:"
+              find /tmp -maxdepth 3 -name 'sv2v*' -print
+              exit 1
+          fi
+          sudo cp "$SV2V_BIN" /usr/local/bin/sv2v
           sudo chmod +x /usr/local/bin/sv2v
           sv2v --version
 
