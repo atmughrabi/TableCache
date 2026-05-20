@@ -41,9 +41,12 @@ jobs:
             libunwind-dev libgoogle-perftools-dev numactl perl-doc \
             libfl2 libfl-dev zlib1g zlib1g-dev \
             help2man python3 python3-pip python3-venv
-          # Build Verilator 5.020 only if the cache didn't restore it.
+          # Build Verilator 5.020 if cache restore is incomplete.
+          # A stale/partial cache can leave the binary present but miss
+          # built-in include files (verilated_std.sv), which breaks lint.
           if ! command -v verilator >/dev/null || \
-             ! verilator --version | grep -q '5\.020'; then
+             ! verilator --version | grep -q '5\.020' || \
+             [ ! -f /usr/local/share/verilator/include/verilated_std.sv ]; then
             git clone --depth 1 --branch v5.020 https://github.com/verilator/verilator.git /tmp/verilator
             cd /tmp/verilator
             autoconf && ./configure --prefix=/usr/local
@@ -51,6 +54,7 @@ jobs:
             sudo make install
           fi
           verilator --version
+          test -f /usr/local/share/verilator/include/verilated_std.sv
 
       - name: Cache pip
         uses: actions/cache@v4
