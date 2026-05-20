@@ -27,7 +27,22 @@ all: bmc induct bmc-deep induct-deep bmc-scm induct-scm bmc-flush induct-flush
 
 $(SMT2_1): $(HARNESS_1) $(RTL_1)
 	@mkdir -p $(BUILD)
-	$(YOSYS) -q -p "verilog_defines -DASSERT_OFF; read -sv -formal $(HARNESS_1) $(RTL_1); prep -top fifo_formal -flatten; write_smt2 -wires $@"
+	# Lower SV -> plain Verilog through sv2v first. Yosys' built-in
+	# SV reader (especially older apt-shipped 0.9 on Ubuntu 22.04 CI)
+	# rejects typed parameters like 'parameter int unsigned' that the
+	# harness uses. The other three targets already do this; matching
+	# the pattern here keeps the formal job CI-portable.
+	#
+	# Need to feed sv2v ALL of fifo.sv's submodule deps even though the
+	# DEPTH=1 generate branch in the harness doesn't instantiate them --
+	# sv2v parses the whole file and needs to resolve the `.*` wildcard
+	# port connections in fifo.sv lines 112/117/127 (which reference
+	# lfsr / lutram_1w_1r) before yosys' plain-verilog reader can take
+	# the lowered file. Without these deps sv2v leaves `.*` literally
+	# in the output and yosys rejects "Wildcard port connections are
+	# only supported in SystemVerilog mode."
+	$(SV2V) -DASSERT_OFF $(HARNESS_1) $(RTL_1) $(ROOT)/src/lfsr.sv $(ROOT)/src/lutram_1w_1r.sv > $(BUILD)/all.v
+	$(YOSYS) -q -p "read_verilog -formal $(BUILD)/all.v; prep -top fifo_formal -flatten; write_smt2 -wires $@"
 
 $(SMT2_DEEP): $(HARNESS_DEEP) $(RTL_DEEP)
 	@mkdir -p $(BUILD)
