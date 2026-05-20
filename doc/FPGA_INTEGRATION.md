@@ -155,6 +155,10 @@ slave handles that burst length (Xilinx MIG accepts up to 256-beat).
   `report_utilization -hierarchical` after synth.
 - LUTRAM-backed `lutram_1w_1r` / `lutram_1w_mr` are inferred for small
   associative tables (set_clear_memory, inuse tables).
+- The **TDP databank** (default) is **BRAM-only** by primitive
+  constraint — UltraRAM cannot service per-byte writes on both ports
+  simultaneously. To reach UltraRAM for the data array, enable
+  `DATABANK_SDP=1` (see §10.1).
 
 ## 8. Bring-up checklist (on-board)
 
@@ -218,6 +222,76 @@ Workload assumptions skew toward graph-traversal access patterns
 `SRRIP` is the recommended default for graph-like workloads.
 `LRU` remains the default-parameter pick for clarity and lowest area;
 upgrade to `SRRIP` if hit rate is the bottleneck.
+
+### 10.1 UltraRAM packing mode (`DATABANK_SDP=1`)
+
+For BRAM-constrained, URAM-rich deployments — typically multi-cache
+designs on Alveo U250 / U280 / Versal V80 — set `DATABANK_SDP=1` on
+the `l2_cache` (or `l2_top`) instantiation to map the data array to
+UltraRAM instead of BRAM. This is the only way the data bank reaches
+UltraRAM; the default (TDP) topology is BRAM-only by primitive
+constraint.
+
+```sv
+l2_cache #(
+    .POLICY         (SRRIP),
+    .LINES          (1024),
+    .LINE_W         (16),       // 64-byte line at 32-bit word
+    .WAYS           (8),
+    .BLOCK_W        (32),
+    .DB_LATENCY     (2),        // recommended for URAM cascade depth >=8
+    .INCLUDE_VICTIM (1),
+    .VICTIM_LINES   (16),
+    .DATABANK_SDP   (1)         // <-- enable UltraRAM packing
+) cache_inst ( ... );
+```
+
+What this changes:
+
+| | TDP (`DATABANK_SDP=0`, default) | SDP (`DATABANK_SDP=1`) |
+|---|---|---|
+| Data array primitive | BRAM via `tdp_ram` | **UltraRAM via `sdp_ram_uram`** |
+| Internal databank ports | 2 (true dual-port) | 1 (port 1 of the databank FSM is disabled, all traffic serialised through port 0) |
+| Throughput cost | baseline | ~6.3 % slower on graph workloads (`test_workload` 5000 txn) |
+| 512 KB / 8-way / 64 B line on U250 | 132 BRAM tiles, 0 URAM, 3194 LUT | 5 BRAM, **16 URAM**, 1919 LUT |
+| 1 MB / 8-way on U250 | 258 BRAM, 2 URAM (doesn't fit 16×) | 2 BRAM, **34 URAM** (fits 16×) |
+| Recommended `DB_LATENCY` | 1 | **2** for sizes ≥ 512 KB (URAM cascade depth) |
+| Slave port AXI behaviour | unchanged | unchanged |
+| Verification status | layer 0-7 clean | layer 0-7 clean (100-seed stress + mutation 100 %) |
+
+**When to enable**: multi-cache deployments where the per-CU BRAM
+budget binds first. For the 16-CU GraphBlox-style target on U250:
+
+| Per-CU size | TDP (16×)        | SDP (16×)            | Recommendation        |
+|-------------|------------------|----------------------|-----------------------|
+| 256 KB      | 568 BRAM (21 %) | 64 URAM (5 %)        | either fits           |
+| 512 KB      | 2112 BRAM (79 %)| 256 URAM (20 %)      | **SDP** (BRAM tight)  |
+| 1 MB        | 4128 BRAM (>100 %, won't fit) | 544 URAM (43 %) | **SDP mandatory** |
+
+For single-cache designs the TDP default is faster and uses BRAM
+more naturally — leave `DATABANK_SDP=0`.
+
+**When NOT to enable**:
+- Single-cache designs where 6.3 % throughput matters more than freeing
+  ~130 BRAM tiles
+- FPGA fabrics without UltraRAM (Intel, older Xilinx 7-series)
+- Configurations under 128 KB where BRAM auto-inference is already
+  efficient and the URAM cascade-depth penalty isn't worth paying
+
+**Verify the URAM inference fires**: after Vivado synth, look in
+`utilization.rpt` for a non-zero `URAM` row in section "2. BLOCKRAM".
+On U250 with `WAYS=8 LINES=1024 LINE_W=16 DATABANK_SDP=1` you should
+see 16 URAMs and ~5 BRAM tiles (the BRAMs are for the tagbank / FIFOs;
+the SDP databank is fully URAM). Vivado will also print a
+"automatically implemented using URAM" INFO line per inferred
+primitive.
+
+For a worked sweep across configs and modes, see
+[`syn/vivado/sweep_results.md`](../syn/vivado/sweep_results.md).
+For the design history of why this is `DATABANK_SDP=1` and not, say,
+`USE_URAM=1`, see `doc/ARCHITECTURE.md` §7.5 bug #14 and the
+banked-SDP follow-on proposal in
+[`doc/DESIGN_BANKED_SDP_DATABANK.md`](DESIGN_BANKED_SDP_DATABANK.md).
 
 ### WAYS × POLICY sweep (smaller workload, NTXN=3000)
 

@@ -104,6 +104,38 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 | `INCLUDE_CBOM` | 1 | Enables the ACE snoop opcodes above. |
 | `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | 4 | Max in-flight unique IDs per direction. |
 | `ADDR_RANGE_L/H` | 0x80000000 / 0xFFFFFFFF | Bounding address range; must be NAPOT. |
+| `DATABANK_SDP` | 0 | **0** = TDP databank (`tdp_ram`, BRAM only). **1** = SDP+URAM databank (`sdp_ram_uram`, AMD UltraRAM mapping). See §5.1. |
+
+### 5.1 `DATABANK_SDP` — UltraRAM packing mode
+
+| | TDP (default) | SDP + URAM |
+|---|---|---|
+| Data-array primitive | `tdp_ram` → BRAM | `sdp_ram_uram` → UltraRAM |
+| Storage ports | True dual-port (R/W each) | 1 read + 1 write port; port 1 disabled in FSM |
+| 512 KB / 8-way / 64 B line on U250 | 132 BRAM, 0 URAM, 3194 LUT | 5 BRAM, **16 URAM**, 1919 LUT |
+| Sustained throughput | baseline | **-6.3 %** (measured on `test_workload`, 5000 txn) |
+| 16-cache fit on U250 (2688 BRAM / 1280 URAM) | 2112 BRAM (79 %), 0 URAM | 80 BRAM (3 %), 256 URAM (20 %) |
+| Vivado synth target | any UltraScale+ | UltraScale+ with URAM (U250/U280/V80/…) |
+| Throughput cost source | n/a | port 1 of the databank is disabled (`port_ready[1] & ~DATABANK_SDP`); all R/W serialise through port 0, so fills and reads cannot overlap |
+
+**When to enable**: multi-cache deployments on URAM-rich parts where
+BRAM is the binding constraint (the 16-CU GraphBlox-style scenario was
+the original driver). For single-cache designs the TDP default has
+better throughput and uses BRAM more naturally.
+
+**Verified**: 9/9 cocotb test modules pass with `DATABANK_SDP=1`
+(29/29 tests including the full back-pressure suite). Mutation score
+100 % on the SDP gating logic (4/4 effective mutations killed, 2
+documented equivalent). Vivado synth (Vivado 2025.2 on
+`xcu250-figd2104-2L-e`) infers UltraRAM cleanly with cascade height 8.
+
+**History**: the chosen "disable port 1 entirely" implementation is the
+third attempt — two earlier approaches (runtime conflict-stall with
+output `ready` gating, then with only data-handshake gating) closed a
+combinational loop through the upstream `req_fifo`/`fill_request`
+paths in `l2_cache.sv` and caused write-data loss respectively. See
+`doc/ARCHITECTURE.md` §7.5 bug #14 and the
+`tablecache_databank_sdp_uram` Copilot memory note.
 
 ---
 

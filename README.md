@@ -379,6 +379,10 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
 | [`doc/VERIFICATION.md`](doc/VERIFICATION.md) | per-test specification, AXI4 PC rule list, coverage matrix, mutation table, formal table |
 | [`doc/VERIFICATION_GUIDELINES.md`](doc/VERIFICATION_GUIDELINES.md) | generic 8-layer methodology applicable to any RTL unit (cache, FIFO, FSM, accelerator) |
 | [`doc/VERIFICATION_XILINX_VIP_ROADMAP.md`](doc/VERIFICATION_XILINX_VIP_ROADMAP.md) | residual-risk analysis + Xilinx VIP transition plan |
+| [`doc/DESIGN_BANKED_SDP_DATABANK.md`](doc/DESIGN_BANKED_SDP_DATABANK.md) | design proposal: 2-bank SDP databank successor to recover the 6.3 % throughput cost of `DATABANK_SDP=1` |
+| [`doc/wiki/URAM_Mode.md`](doc/wiki/URAM_Mode.md) | **wiki-ready page** on the `DATABANK_SDP=1` UltraRAM mode — when to use it, what it costs, how to verify it fired |
+| [`syn/vivado/README.md`](syn/vivado/README.md) | out-of-context synthesis driver, headline U250 numbers per top, URAM mode usage |
+| [`syn/vivado/sweep_results.md`](syn/vivado/sweep_results.md) | full multi-config TDP-vs-SDP synth comparison (4 sizes × 2 modes, LUT/FF/BRAM/URAM/WNS) |
 
 ## Bug fixes in this fork
 
@@ -392,7 +396,8 @@ for details.
 | 8 | `replacement_policy.sv` | `policy_t` zero-width when `POLICY=RANDOM` under Verilator 5.x |
 | 10 | `l2_cache.sv` | slave-port VALIDs held one cycle into reset |
 | 12 | `l2_cache.sv` | mem-port VALIDs held one cycle into reset (sibling of #10) |
-| 13 | `l2_cache.sv` | CBOM-on-absent-line hung the response path; ar_fifo_push now gates out CBOMs (enables cold-cache flush) |
+| 13 | `tdp_ram.sv` | `ram_style="ultra"` rejected by Vivado for TDP+byte-enable pattern; hard-coded to `"block"` |
+| 14 | `l2_databank.sv` | new `DATABANK_SDP=1` UltraRAM mode initially closed a combinational loop and lost write data; chosen fix disables databank port 1 in SDP mode |
 
 A self-bug #11 in `axi_protocol_checker.sv` (`vcount` multi-driver race
 masking #10) was also fixed; see same section.

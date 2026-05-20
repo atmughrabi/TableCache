@@ -350,6 +350,8 @@ every AXI bus of every wrapper; one combined regression produces zero
 | 10 | `l2_cache.sv` | `req_r.rvalid` / `req_b.bvalid` driven from FIFOs with synchronous reset → held high one cycle into `rst==1`. AXI4 B1 violation. | Route FIFO valids through intermediate signals, AND with `~rst` at the slave-port boundary (lines ~689, ~1296). | `test_reset_recovery::test_reset_with_two_in_flight` (only after bug #11 fix). |
 | 11 | `tb/cocotb/axi_protocol_checker.sv` | `vcount` had two drivers: B1 increment block and a separate `if (rst) vcount <= 0;`. The rst-clear won every cycle, so B1 violations during reset printed via `$display` but never counted. | Removed the rst-clear block; initialize via `integer vcount = 0;` at declaration. | Test PASS while log showed `AXI_PC_VIOLATION B1 RVALID asserted during rst`. |
 | 12 | `l2_cache.sv` | Master-side mirror of #10: `mem_ar.arvalid` / `mem_aw.awvalid` / `mem_w.wvalid` held one cycle into reset under m_arready / m_wready back-pressure. | Restructured `gen_victim`/`gen_no_victim` to drive internal `mem_*_int`; an `always_comb` outside the generate gates the three VALIDs with `~rst`. | `test_backpressure::test_mem_wready_backpressure`. |
+| 13 | `tdp_ram.sv` | Original AMD branch set `(* ram_style = "ultra" *)`. Vivado 2025.x rejects the masked-NBA + true-dual-port + per-byte-enable pattern for UltraRAM ("Unsupported RAM template"), since URAM is internally SDP/multi-pumped and cannot service simultaneous per-byte writes on both ports. | Hard-code `(* ram_style = "block" *)` on the AMD TDP path. Verilator (the masked-single-NBA form needed by bug #7) is gated behind `\`ifdef COCOTB_SIM`; Vivado synthesises the original per-byte-NBA loop, which is the canonical BRAM-with-byte-enable template. Comment in `src/tdp_ram.sv:86` records the rationale. | First Vivado OOC build on Alveo U250 (`syn/vivado/run_synth.sh`). |
+| 14 | `l2_databank.sv` | New `DATABANK_SDP=1` mode (paper-style URAM packing via `sdp_ram_uram`) initially gated `port_*_data_ready` outputs with a runtime `sdp_p1_stall` signal. That created a combinational loop through the upstream `req_fifo`/`fill_request` bypass paths in `l2_cache.sv` ("Input combinational region did not converge" at runtime under `test_backpressure`). A second attempt that only gated the data-handshake signals avoided the loop but corrupted port-1 fill data (4/6 backpressure tests failed because upstream had already committed the gated beat). | Switched to the simplest provably-correct strategy: in SDP mode disable databank port 1 entirely via parameter-elaborated `~DATABANK_SDP` masks on `port_ready[1]`, `port_write_data_ready[1]`, `port_fill_data_ready[1]`, and `en_gated[1]`. No runtime signal feeds back; the FSM serializes all traffic through port 0. Cost: -6.3% throughput (vs the 1.3% the broken stall logic predicted). Win: 132 BRAM → 16 URAM + 5 BRAM @ 512 KB/8-way on U250. Two failed approaches preserved in `/memories/repo/tablecache_databank_sdp_uram.md` so they aren't re-attempted. | Initial fail: `test_backpressure` with `+define+TC_DATABANK_SDP=1`. Fix verified by 9/9-module 29/29-test regression with SDP=1, plus Vivado URAM-inference confirmation. |
 
 All twelve fixes were caught by tests in this repo. Bugs #1-#3 by the
 upstream SV directed suite, #4-#6 by the cocotb random scoreboard at
@@ -357,7 +359,10 @@ scale, #7 by the wide-port shim+cache TB at `BLOCK_W=512`, #8 by the
 pytest matrix `POLICY=RANDOM` combo, #9 was a stale workaround whose
 redundancy became provable after #7, and #10-#12 by the mid-burst-reset
 + adversarial-back-pressure tests (#11 had to be fixed first; it was
-masking #10, which then exposed #12's mirror on the mem side).
+masking #10, which then exposed #12's mirror on the mem side). Bugs #13
+and #14 were found by the OOC Vivado synthesis flow against Alveo U250
+(`syn/vivado/run_synth.sh`) — #13 in the first ever Vivado build, #14
+while developing the optional `DATABANK_SDP=1` UltraRAM-packing mode.
 
 ---
 

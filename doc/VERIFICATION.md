@@ -139,6 +139,35 @@ Fails (exits non-zero) if any seed reports `PC > 0` or `FAIL > 0`.
 Per-seed logs go to `/tmp/tc_seedsweep_<module>/seed_<N>.log`.
 Last run: `test_random N=32 NTXN=200` -- 32/32 OK, 0 PC, 0 FAIL.
 
+### 3.2.1 SDP-mode stress sweep
+
+For the `DATABANK_SDP=1` UltraRAM mode (see
+[`doc/INTERFACING.md`](INTERFACING.md) §5.1) an additional
+**100-seed `test_random` sweep** is gated:
+
+```bash
+N_SEEDS=100 NTXN=100 ./tb/cocotb/sdp_stress.sh
+```
+
+Last run: **100/100 PASS** after rerunning false-positive seeds that
+collided with concurrent Vivado processes on the build cache
+(verilator's precompiled-header race; not an RTL bug). Per-seed logs
+land at `/tmp/tc_sdp_stress/seed_<N>.log` with the summary table at
+`/tmp/tc_sdp_stress/summary.md`.
+
+### 3.2.2 SDP × VICTIM cross verification
+
+`DATABANK_SDP=1` is also gated against `VICTIM=1` since the two
+parameters touch overlapping FSM paths:
+
+```bash
+for M in test_smoke test_cbom test_victim test_workload; do
+    VICTIM=1 EXTRA_ARGS='+define+TC_DATABANK_SDP=1' make MODULE=$M
+done
+```
+
+Last run: 4/4 modules clean (8/8 individual tests).
+
 ## 3.3 Lint gate
 
 ```bash
@@ -247,6 +276,7 @@ mutations are coverage gaps.
 | `tc_narrow_shim.sv` | **100%** | 7 | 0 | `drop_prefill_check` killed by `test_shim_prefill_race` under `TC_PROMOTE_WMISS=1`; mutation regex now targets the `m_arvalid` line (not the first `s_arready` occurrence) |
 | `tc_flush_controller.sv` | **100%** | 6 | 0 | drop_state_advance, swap_finish_arrow, negate_arvalid_gate, constant_zero_rready, wrong_addr_stride, skip_line_idx_inc |
 | `l2_databank.sv` | **100%** | 5 | 0 | swap_state_idle, negate_ready_combine, flip_write_fifo_data, force_past_orig_keep, negate_out_fifo_push |
+| `l2_databank.sv` (SDP mode, `DATABANK_SDP=1`) | **100%** | 4 | 0 | `sdp_flip_en_gated_p1`, `sdp_drop_ready_mask`, `sdp_drop_wdata_ready_mask`, `sdp_swap_uram_to_tdp`. Two mutations excluded as documented-equivalent: `sdp_drop_fill_ready_mask` (fills always route through port 0 in current "port-1-disabled" implementation, so the gate is dead) and `sdp_invert_rdata_route` (read_was_p1_pipe[LATENCY] is always 0 since port 1 never reads in SDP mode). Run with `FILE=src/l2_databank.sv:sdp ./mutation_test.sh` |
 | `replacement_policy.sv` | 100% | 1 | 0 | `break_init_policy` killed by `test_lru_sanity` |
 | `fifo.sv` | **100%** | 3 | 0 | `swap_count_pushpop`, `depth3_swap_waddr`, `depth2_swap_dout_index`. DEPTH=1 generate branch unused in this design (equivalent mutations excluded); also covered by formal proof in `tb/formal/` |
 | `toggle_memory.sv` | **100%** | 3 | 0 | `drop_toggle_xor`, `force_toggle_always`, `swap_read_id_chain` |
