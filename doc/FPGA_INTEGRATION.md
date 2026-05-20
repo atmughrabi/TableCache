@@ -11,26 +11,146 @@ campaign is in [VERIFICATION.md](VERIFICATION.md).
 
 ---
 
+## 0. Drop-in copy guide
+
+TableCache RTL lives entirely under [`src/`](../src/) — flat, no
+sub-folders, no external `include` paths, no per-file build order
+required. Drop the whole folder into your project, point your synthesis
+tool at all the `.sv` files, and you're done.
+
+### What to copy
+
+```
+your_project/
+└── rtl/                       (or whatever you call it)
+    └── tablecache/            ← new folder, copy src/*.sv here
+        ├── cache_config.sv    ← package; compile FIRST (other files import it)
+        ├── l2_cache.sv        ← MAIN MODULE to instantiate
+        ├── l2_top.sv          ← thin AXI-port wrapper around l2_cache
+        ├── l2_databank.sv     │
+        ├── l2_tagbank.sv      │
+        ├── l2_hash.sv         │
+        ├── replacement_policy.sv │
+        ├── LRU.sv             │ pulled in automatically
+        ├── SRRIP.sv           │ by l2_cache; no manual
+        ├── FRQ.sv             │ instantiation needed
+        ├── second_chance.sv   │
+        ├── random_replacement.sv │
+        ├── rrip_tree.sv       │
+        ├── victim_cache.sv    │
+        ├── fifo.sv            │
+        ├── lfsr.sv            │
+        ├── lutram_1w_1r.sv    │
+        ├── lutram_1w_mr.sv    │
+        ├── sdp_ram.sv         │
+        ├── sdp_ram_rst.sv     │
+        ├── sdp_ram_padded_rst.sv │
+        ├── sdp_ram_uram.sv    ← URAM variant (only used if DATABANK_SDP=1)
+        ├── tdp_ram.sv         │
+        ├── set_clear_memory.sv │
+        ├── toggle_memory.sv   │
+        ├── toggle_memory_set.sv │
+        ├── one_hot_to_integer.sv │
+        ├── tc_narrow_shim.sv  ← OPTIONAL — 4-byte master <-> wide cache
+        └── tc_flush_controller.sv ← OPTIONAL — whole-cache flush sequencer
+```
+
+29 files, ~5900 lines, MIT-class licence (Apache-2.0 / SHL-2.1 — see
+[LICENSE](../LICENSE)).
+
+### Which module do I instantiate?
+
+| Your situation | Instantiate | Notes |
+|---|---|---|
+| You speak AXI4 with `cache_config::ar_t` / `aw_t` / etc. struct ports natively | **`l2_cache`** | smallest wrapper; struct-typed ports |
+| You speak vanilla AXI4 with flat signals (most common) | **`l2_top`** | wraps `l2_cache`, flat AXI4 ports on both slave (`s00_axi_*`) and master (`m00_axi_*`) sides — drop-in compatible with Vivado IP Integrator |
+| You have a 32-bit master and want to talk to a wider cache | **`tc_narrow_shim` + `l2_cache`** | shim widens / RMW-promotes, then talks to the cache |
+| You need a software-visible "flush everything to memory" | add **`tc_flush_controller`** + a 2:1 arbiter on the cache's slave port | see §2c |
+
+### What you do NOT copy
+
+- `tb/` — testbench, simulator-only
+- `doc/` — documentation (this file)
+- `syn/` — example Vivado OOC synth scripts (useful as reference but not part of your design)
+- `research/` — reference papers (not in the repo)
+
+### Compile order
+
+`cache_config.sv` is a SystemVerilog `package`. Make sure your tool
+sees it first. Vivado / Verilator / xsim usually figure this out
+automatically from `import cache_config::*;` statements, but if you
+get "Module not found" errors for `ar_t` / `aw_t` etc., add an
+explicit `-y` / file-list rule that compiles `cache_config.sv` ahead
+of the rest.
+
+### No external dependencies
+
+- No external IP — every memory is inferred (BRAM or URAM automatically).
+- No `define` files outside the package; everything that needs to be
+  user-settable is a module parameter.
+- No vendor primitives instantiated directly. The attributes
+  (`ram_style`, `cascade_height`, `ramstyle`) are inert on non-Xilinx
+  tools and your synthesiser will just ignore them.
+
+### One-time wiring sanity check
+
+After copy + first-time elaboration, confirm in your tool's report:
+- `l2_cache` (or `l2_top`) is the top of the cache hierarchy
+- `sdp_ram_uram` is **only** elaborated when `DATABANK_SDP=1`
+  (otherwise `tdp_ram` is elaborated instead)
+- The replacement-policy module matching your `POLICY` parameter
+  is elaborated, the others are stripped (generate-based selection)
+
+---
+
 ## 1. Decide your configuration
 
-Pin the four major parameters before instantiation. Defaults that have
+Pin the major parameters before instantiation. Defaults that have
 been swept and proven in the cocotb config matrix:
+
+### Cache-shape parameters (these determine total size)
+
+| Param | Meaning | Tested values | Default | Notes |
+|---|---|---|---|---|
+| `LINES` | Sets per way (must be power of 2) | 32, 64, 128, 256, 512, 1024, 2048 | 512 | More sets = lower conflict-miss rate |
+| `WAYS` | Set-associativity | 2, 4, 8 | 4 | More ways = better hit rate, more LUTs |
+| `LINE_W` | Blocks (words) per cache line | 4, 8, 16 | 8 | Line size in bytes = `LINE_W × BLOCK_W/8` |
+| `BLOCK_W` | Data bus width in bits (= 1 block) | 32, 64, 128 (32 tested by every test) | 32 | Slave + master AXI data width |
+| `DB_LATENCY` | Databank RAM read-pipeline depth | 1, 2, 3 | 1 | Bump to 2 if URAM cascade depth >= 8 (see §10.1) |
+
+**Total cache size in bytes** = `WAYS × LINES × LINE_W × (BLOCK_W/8)`.
+Example: 8 × 1024 × 16 × 4 = **512 KB** at default 32-bit word, 64-byte
+line. Sweep table at [`syn/vivado/sweep_results.md`](../syn/vivado/sweep_results.md).
+
+### Feature toggles
 
 | Param | Meaning | Tested values | Default |
 |---|---|---|---|
-| `LINE_W` | Beats per cache line (block size = LINE_W × NARROW) | 4, 8, 16 | 8 |
-| `WAYS` | Associativity | 2, 4, 8 | 4 |
-| `LINES` | Sets (must be `2**LINE_BITS`) | 32, 64, 128, 256 | 64 |
-| `POLICY` | Replacement | `LRU`, `RR`, `SRRIP`, `2ND`, `RRIP_TREE` | `LRU` |
-| `ID_W` | AXI ID width (slave side) | 3-5 | 4 |
+| `POLICY` | Replacement | `LRU`, `RR` (RANDOM), `SRRIP`, `2ND` (SECOND_CHANCE), `FRQ`, `RRIP_TREE` | `LRU` |
 | `INCLUDE_CBOM` | ACE snoop support (CleanShared/Inval, MakeInval) | 0/1 | 1 |
-| `INCLUDE_VICTIM` | Victim-cache layer | 0/1 | 0 |
+| `INCLUDE_VICTIM` | Small fully-associative victim cache between L2 and mem | 0/1 | 1 |
+| `VICTIM_LINES` | Capacity of the victim cache | 4, 8, 16 | 8 |
+| `DATABANK_SDP` | UltraRAM-packed databank (see §10.1) | 0/1 | 0 |
+| `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | Slave AXI ID widths | 3-5 | 4 |
+| `ADDR_RANGE_L/H` | Bounding address window (NAPOT) | 0x80000000-0xFFFFFFFF | per design |
+
+### Recommended configs by use case
+
+| Use case | LINES | WAYS | LINE_W | POLICY | INCLUDE_VICTIM | DATABANK_SDP | Total |
+|---|---|---|---|---|---|---|---|
+| Single small cache, embedded CPU | 64 | 4 | 8 | `LRU` | 0 | 0 | 8 KB |
+| Single mid cache, accelerator | 512 | 4 | 8 | `SRRIP` | 1 | 0 | 64 KB |
+| **16-CU graph accelerator on U250** | **1024** | **8** | **16** | **`SRRIP`** | **1** | **1** | **512 KB / CU** |
+| Single big cache for streaming graph | 2048 | 8 | 16 | `SRRIP` | 1 | 1 | 1 MB |
 
 Notes:
 - `INCLUDE_CBOM=1` is required if you use the flush controller.
-- The `(1 << ID_W) - 1` slave ID is reserved as `FLUSH_ID` / `PREFILL_ID`
-  when those features are enabled — do not issue master traffic with
-  that ID.
+- The `(1 << READ_ID_WIDTH) - 1` slave ID is reserved as `FLUSH_ID` /
+  `PREFILL_ID` when those features are enabled — do not issue master
+  traffic with that ID.
+- `BLOCK_W` is the **cache word** and equals the AXI slave data width.
+  If your accelerator drives a narrower port (e.g. 32-bit master into
+  a 256-bit cache), use the `tc_narrow_shim` adapter (§2b).
 
 ## 2. Choose your topology
 
