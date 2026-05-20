@@ -38,7 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git make autoconf g++ flex bison ccache \
-            libgoogle-perftools-dev numactl perl-doc \
+            libunwind-dev libgoogle-perftools-dev numactl perl-doc \
             libfl2 libfl-dev zlib1g zlib1g-dev \
             help2man python3 python3-pip python3-venv
           # Build Verilator 5.020 only if the cache didn't restore it.
@@ -151,26 +151,16 @@ jobs:
         run: |
           set -eux
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends yosys z3 python3 python3-pip python3-venv
-          # Apt yosys on Ubuntu 22.04 is ~0.9 which is too old for some of
-          # the smtbmc switches we use (the local stack pins 0.33). If the
-          # apt version is < 0.30, fall back to yowasp-yosys (Python wheel,
-          # ships current yosys via wasmtime). This keeps CI usable without
-          # a multi-minute yosys-from-source build.
-          YOSYS_VER=$(yosys -V 2>/dev/null | awk '{print $2}' | head -1)
-          echo "apt yosys version: $YOSYS_VER"
-          YOSYS_MAJOR_MINOR=$(echo "$YOSYS_VER" | awk -F'[.+-]' '{printf "%d%02d", $1, $2}')
-          if [ -z "$YOSYS_MAJOR_MINOR" ] || [ "$YOSYS_MAJOR_MINOR" -lt 30 ]; then
-              echo "Apt yosys too old, installing yowasp-yosys + yowasp-yosys-smtbmc"
-              pip3 install --user 'yowasp-yosys' 'yowasp-yosys-smtbmc' || true
-              # Create wrapper scripts so 'yosys' / 'yosys-smtbmc' invoke the
-              # yowasp versions transparently. Use printf rather than a
-              # heredoc to keep the YAML indentation happy (heredocs whose
-              # closing EOF lands at column 0 break the workflow parser).
-              sudo bash -c 'printf "%s\n%s\n" "#!/bin/sh" "exec python3 -m yowasp_yosys \"\$@\"" > /usr/local/bin/yosys'
-              sudo bash -c 'printf "%s\n%s\n" "#!/bin/sh" "exec python3 -m yowasp_yosys_smtbmc \"\$@\"" > /usr/local/bin/yosys-smtbmc'
-              sudo chmod +x /usr/local/bin/yosys /usr/local/bin/yosys-smtbmc
-          fi
+          sudo apt-get install -y --no-install-recommends yosys z3
+          # Ubuntu 22.04's apt yosys is ~0.9 -- older than the 0.33 the
+          # local formal stack pins but new enough for the smtbmc options
+          # tb/formal/Makefile uses (--presat, -s z3, -i, -t N have been
+          # stable for years). If a proof fails on old yosys, the error
+          # message will be specific ("unknown command ...") and we can
+          # bump to a yosys-from-source build at that point. Avoid the
+          # yowasp-yosys fallback because yowasp-yosys-smtbmc isn't a real
+          # PyPI package and conjuring an alternative isn't worth the
+          # complexity for an already-niche job.
           yosys -V
           yosys-smtbmc --help 2>&1 | head -3 || true
           z3 --version
