@@ -92,7 +92,8 @@ older `sweep_results.md` for the comparison.
 | CLB FFs     | 716   | 0.02 %  |
 | BRAM tiles  | 5     | 0.19 %  |
 | **URAM**    | **16**| **1.25 %** |
-| **WNS**     | **+0.186 ns @ 4.0 ns target (250 MHz met)**     |
+| **WNS (post-synth)** | **+0.186 ns @ 4.0 ns target (250 MHz met)**     |
+| **WNS (post-PnR)**   | **+0.088 ns post-route, ~255 MHz on Alveo U250 silicon**  |
 
 That is the production URAM-deployment config: hits 250 MHz post-synth,
 PnR typically recovers another 0.5–1.5 ns of headroom. **GRASP adds 0 ns
@@ -105,7 +106,8 @@ of WNS overhead vs SRRIP** (the policy logic is not on the critical path).
 | CLB FFs     | 792   | 0.02 %  |
 | BRAM tiles  | 2     | 0.07 %  |
 | **URAM**    | **34**| **2.66 %** |
-| WNS         | -0.101 ns @ 4.0 ns (~243 MHz post-synth) |
+| WNS (post-synth) | -0.101 ns @ 4.0 ns (~243 MHz post-synth) |
+| WNS (post-PnR)   | -0.122 ns post-route, ~242 MHz on Alveo U250 silicon |
 
 ### `tc_narrow_shim` defaults
 | Resource    | Used  | %device |

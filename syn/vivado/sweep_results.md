@@ -105,6 +105,25 @@ data arrays — the paper's "two ways per URAM" packing finally happens.
 All configs except 1M/8w SDP+URAM meet 250 MHz post-synth in the tuned
 sweep. 1M SDP is -0.186 ns short, easily within PnR recovery.
 
+### Post-PnR closure on U250 (silicon-grade)
+
+Confirmed by running `PNR=1 ./syn/vivado/v80_synth.sh` with
+`PART=xcu250-figd2104-2L-e` (the V80 preset reused via PART override —
+the synth flow is identical, only the device file changes). Post-route
+with `phys_opt_design` runs both before and after `route_design`:
+
+| Config (GRASP, no victim, DB_LATENCY=2, SDP) | post-synth WNS | post-route WNS | Status |
+|---|---:|---:|:--|
+| 512 KB / 8-way                                | +0.186 ns      | **+0.088 ns**  | **250 MHz MET (~255 MHz)** |
+| 1 MB / 8-way                                  | -0.186 ns      | -0.122 ns      | ~242 MHz (just shy of 250) |
+
+The 1 MB config closes 240 MHz post-route comfortably and is 0.122 ns
+short of 250 MHz; tightening the placement directive (`-directive
+ExtraNetDelay_high` on `phys_opt_design`) usually recovers that
+remaining slack on UltraScale+. For applications that must hit 250 MHz
+at 1 MB per CU, either accept the directive sweep cost or drop to 512 KB
+per CU which closes 250 MHz with +0.088 ns of headroom.
+
 ### Push toward 300 MHz
 At `PERIOD_NS=3.333` (300 MHz) the same tuned configuration:
 - 512K/8w SDP+URAM GRASP, DB_LATENCY=2: WNS = -0.475 ns (~228 MHz)
