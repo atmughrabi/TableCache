@@ -89,6 +89,10 @@ report_utilization -hierarchical -file $out/utilization_hier.rpt
 report_timing_summary -file $out/timing_summary.rpt -no_header -no_detailed_paths
 report_methodology -file $out/methodology.rpt
 
+# Detailed report on the worst 3 paths for binding-path analysis.
+report_timing -delay_type max -nworst 3 -path_type full -input_pins \
+    -file $out/timing_detailed.rpt
+
 # A short stdout summary so the wrapper script can grep it.
 puts "==== UTILIZATION SUMMARY ===="
 puts [exec grep -E "(CLB LUTs|CLB Registers|Block RAM Tile|LUT as Memory|DSPs)" $out/utilization.rpt]
