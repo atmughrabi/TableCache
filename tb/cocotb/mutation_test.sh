@@ -223,16 +223,23 @@ case "$FILE" in
         )
         ;;
     src/l2_hash.sv)
-        # Hash function. Default IN_WIDTH=log2(LINES)=6 uses the
-        # gen_add_hash branch. The other branches (identity / full XOR)
-        # are unreachable in default config.
+        # Hash function. Used only to index inuse_line_table (the
+        # same-line serialisation tracker in l2_cache.sv around line 520),
+        # NOT for the actual cache set index — that comes directly from
+        # the address's line-index field, see l2_tagbank.sv.
         #
-        # No effective mutations: hash quality affects performance, not
-        # correctness, so add_drop_plus1 (drop the +1 in the bit sum)
-        # and xor_fold_skip (gen_full_hash branch, unreachable) are both
-        # equivalent under any functional-correctness check. Killing
-        # them would require a directed test that observed bucket-
-        # distribution properties, which is outside the standard set.
+        # Consequence: any DETERMINISTIC hash is functionally correct.
+        # A broken hash can only widen the same-line collision class
+        # in inuse_line_table, causing extra request serialisation (a
+        # throughput effect, not a correctness one). The data scoreboard
+        # never catches it. The hit-rate-distribution test we initially
+        # tried (test_hash_distribution.py touching LINES distinct
+        # addresses) does NOT exercise this module at all because the
+        # cache's line index comes from the address, not from l2_hash.
+        #
+        # Mutations remain empty; that test was instead kept as a
+        # general cache-coverage sanity check (it exercises the
+        # tagbank's tag-mismatch path across all 64 sets).
         DEFAULT_TESTS="test_smoke test_random test_workload"
         MUTATIONS=()
         ;;
