@@ -257,17 +257,34 @@ PNR=1 SIZE=1M ./u55c_synth.sh
 POLICY=4 ./u55c_synth.sh
 ```
 
-**U55C headline** (GRASP / SDP+URAM / DB_LATENCY=2 / default directive, 4 ns clock):
+**U55C headline** (GRASP / DB_LATENCY=2 / default directive, 4 ns clock):
 
-| Cache size | LUT  | URAM | Phase      | WNS (ns) | Effective MHz |
-|---|---:|---:|---|---:|---:|
-| 512 KB / 8-way | 1543 | 16 | post-synth | **+0.186** | **~262 MHz** ✓ MET |
-| 512 KB / 8-way | 1547 | 16 | post-route |  -0.022    | ~248 MHz (essentially MET; closes 250 MHz with `phys_opt_design -directive AggressiveExplore` or one route_design reseed) |
-| 1 MB   / 8-way | 1540 | 34 | post-synth |  -0.186    | ~238 MHz (run with `PNR=1` to confirm post-route closure) |
+| Cache size | Mode | LUT  | BRAM | URAM | Phase      | WNS (ns) | Effective MHz |
+|---|---|---:|---:|---:|---|---:|---:|
+| 512 KB / 8-way | **SDP+URAM** | 1543 |   5 | 16 | post-synth | **+0.186** | **~262** ✓ MET |
+| 512 KB / 8-way |  SDP+URAM    | 1547 |   5 | 16 | post-route |  -0.022    | ~248 (one reseed closes 250) |
+| 512 KB / 8-way |  TDP+BRAM    | 2654 | 133 |  0 | post-synth | **+0.348** | **~273** ✓ MET |
+| 1 MB   / 8-way |  SDP+URAM    | 1540 |   2 | 34 | post-synth |  -0.186    | ~238 (PnR pending) |
+| 1 MB   / 8-way |  TDP+BRAM    | 3001 | 258 |  2 | post-synth | **+0.071** | **~254** ✓ MET |
+
+**Mode trade-off** (U55C, 1936 URAM / 2016 BRAM, GRASP, 32 caches):
+
+| Cache | Mode | URAM / cache | BRAM / cache | 32-CU URAM | 32-CU BRAM | Verdict |
+|---|---|---:|---:|---:|---:|---|
+| 512 KB | TDP+BRAM |  0 | 133 |   0 ( 0 %) | 4256 (211 %) | ✗ BRAM-bound |
+| 512 KB | SDP+URAM | 16 |   5 | 512 (26 %) |  160 (  8 %) | ✓ fits comfortably |
+| 1 MB   | TDP+BRAM |  2 | 258 |  64 ( 3 %) | 8256 (410 %) | ✗ BRAM-bound |
+| 1 MB   | SDP+URAM | 34 |   2 | 1088 (56 %) |  64 (  3 %) | ✓ fits |
+
+TDP+BRAM has slightly better post-synth WNS (BRAM cascade is shorter than
+URAM288, so the data-bank critical path has fewer LUT levels), but BRAM
+budget binds first for any 16+ CU deployment. URAM mode is the only
+practical option for multi-cache HBM accelerators; the WNS gap closes
+in PnR. Use `DATABANK_SDP=0 ./u55c_synth.sh` to reproduce the BRAM
+numbers above.
 
 U55C 512 KB matches U250 to the picosecond on the binding path (both are
-xcvu13p-family silicon). Run `PNR=1 ./u55c_synth.sh` to reproduce the
-post-route number; the 0.022 ns gap to 250 MHz is in seed-variance
+xcvu13p-family). The 0.022 ns deficit at post-route is in seed-variance
 territory.
 
 **U55C capacity** (`xcu55c-fsvh2892`: 1936 URAMs, 2016 BRAM tiles, 16 GB HBM2 @ 460 GB/s):
