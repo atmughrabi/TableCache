@@ -13,10 +13,26 @@
 
 module dut_l2top
     #(
+`ifdef TC_LINES
+        parameter int LINES   = `TC_LINES,
+`else
         parameter int LINES   = 64,
+`endif
+`ifdef TC_LINE_W
+        parameter int LINE_W  = `TC_LINE_W,
+`else
         parameter int LINE_W  = 8,
+`endif
+`ifdef TC_WAYS
+        parameter int WAYS    = `TC_WAYS,
+`else
         parameter int WAYS    = 4,
+`endif
+`ifdef TC_BLOCK_W
+        parameter int BLOCK_W = `TC_BLOCK_W,
+`else
         parameter int BLOCK_W = 32,
+`endif
         parameter int READ_ID_WIDTH  = 4,
         parameter int WRITE_ID_WIDTH = 4,
 `ifdef TC_POLICY_INT
@@ -26,7 +42,11 @@ module dut_l2top
 `endif
         parameter logic INCLUDE_VICTIM = 0,
         parameter int VICTIM_LINES = 8,
+`ifdef TC_DB_LATENCY
+        parameter int DB_LATENCY = `TC_DB_LATENCY
+`else
         parameter int DB_LATENCY = 1
+`endif
     ) (
         input  logic clk,
         input  logic rst,
