@@ -40,26 +40,48 @@ set_property top $top [current_fileset]
 #
 # Optional parameter overrides via env vars (e.g. WAYS=8 LINES=1024 LINE_W=16).
 # Only applied for l2_cache / l2_top so the shim/flush tops aren't disturbed.
+#
+# IMPORTANT param-name mapping:
+#   * l2_top  declares REPLACEMENT_POLICY (int) and casts it to POLICY for
+#     its internal l2_cache instance.
+#   * l2_cache itself declares POLICY (replacement_policy_t).
+# We accept both names. Setting REPLACEMENT_POLICY when TOP=l2_cache used
+# to silently default to LRU (Vivado emits "Unused top level parameter"
+# but exits 0), corrupting every "policy sweep" run targeting l2_cache.
+# The matching POLICY env var now works for both tops.
+#
+# Also accepts SDP_WRITE_INPUT_REG (1-cycle URAM write-port input reg,
+# default 0, only meaningful with DATABANK_SDP=1) and DB_LATENCY.
 set generics [list]
 if {$top eq "l2_cache" || $top eq "l2_top"} {
-    foreach v {WAYS LINES LINE_W REPLACEMENT_POLICY INCLUDE_VICTIM VICTIM_LINES DATABANK_SDP} {
+    foreach v {WAYS LINES LINE_W POLICY REPLACEMENT_POLICY INCLUDE_VICTIM \
+               VICTIM_LINES DATABANK_SDP DB_LATENCY} {
         if {[info exists ::env($v)]} {
             lappend generics "$v=$::env($v)"
             puts "==== override $v=$::env($v)"
         }
     }
 }
+# Synthesis directive: AreaOptimized_high prioritises LUT count over WNS
+# and costs ~1.3 ns of slack on the SDP+URAM databank critical path
+# (cache controller -> URAM cascade write input). 'default' produces
+# fewer LUTs AND better timing on big SDP+URAM configs. Override with
+# DIRECTIVE=AreaOptimized_high if you really want the old behaviour.
+set dir [expr {[info exists ::env(DIRECTIVE)] ? $::env(DIRECTIVE) : "default"}]
+puts "==== directive = $dir"
 if {[llength $generics] > 0} {
     synth_design -top $top -part $part -mode out_of_context \
-        -directive AreaOptimized_high -generic $generics
+        -directive $dir -generic $generics
 } else {
     synth_design -top $top -part $part -mode out_of_context \
-        -directive AreaOptimized_high
+        -directive $dir
 }
 
 # Clock constraint: 250 MHz target (typical Alveo U250 acceleration
-# kernel clock). Override with: synth.sh + period <ns> arg later.
-create_clock -name clk -period 4.0 [get_ports clk]
+# kernel clock). Override via env: PERIOD_NS=3.33 ./run_synth.sh for 300 MHz.
+set period_ns [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : "4.0"}]
+puts "==== clock period = $period_ns ns"
+create_clock -name clk -period $period_ns [get_ports clk]
 
 # Run timing / methodology / utilization reports after synth (no PnR).
 report_utilization -file $out/utilization.rpt

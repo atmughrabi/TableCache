@@ -7,8 +7,10 @@ without committing to a full IO ring / shell context.
 ## Tools
 - Vivado 2025.2 (`VIVADO=/opt/xilinx/2025.2/Vivado/bin/vivado` by default)
 - Target part: Alveo U250 (`xcu250-figd2104-2L-e`, speed grade -2L)
-- Target clock: 250 MHz (`create_clock -period 4.0`)
-- Directive: `AreaOptimized_high`
+- Target clock: 250 MHz (`PERIOD_NS=4.0` default; override for other targets)
+- Directive: `default` (was `AreaOptimized_high` pre-2026-05 — that variant
+  costs ~1.3 ns of WNS on the big SDP+URAM databank critical path and is
+  no longer the default. Set `DIRECTIVE=AreaOptimized_high` to restore.)
 
 ## Usage
 
@@ -26,15 +28,30 @@ TOP=tc_flush_controller ./run_synth.sh
 ALL=1 ./run_synth.sh
 
 # Override RTL parameters (l2_cache / l2_top only)
-WAYS=8 LINES=1024 LINE_W=16 REPLACEMENT_POLICY=4 \
+WAYS=8 LINES=1024 LINE_W=16 POLICY=4 \
     INCLUDE_VICTIM=1 VICTIM_LINES=16 ./run_synth.sh
 
 # Force URAM-packed databank (see "URAM mode" below)
 DATABANK_SDP=1 WAYS=8 LINES=1024 LINE_W=16 ./run_synth.sh
+
+# Target 300 MHz with the no-victim/DB_LATENCY=2 tuning
+PERIOD_NS=3.333 DATABANK_SDP=1 DB_LATENCY=2 \
+    WAYS=8 LINES=1024 LINE_W=16 POLICY=5 INCLUDE_VICTIM=0 ./run_synth.sh
 ```
 
-Supported env-var parameter overrides: `WAYS`, `LINES`, `LINE_W`,
-`REPLACEMENT_POLICY`, `INCLUDE_VICTIM`, `VICTIM_LINES`, `DATABANK_SDP`.
+Supported env-var parameter overrides:
+
+- `POLICY` — enum index passed to `l2_cache.POLICY`
+  (0=LRU, 1=FRQ, 2=SECOND_CHANCE, 3=RANDOM, 4=SRRIP, 5=GRASP).
+- `REPLACEMENT_POLICY` — equivalent name for `l2_top` (which has an
+  integer wrapper parameter cast to `POLICY` internally). **Setting
+  `REPLACEMENT_POLICY` on `TOP=l2_cache` is a no-op** — pre-fix runs
+  silently defaulted to LRU. Use `POLICY` for `l2_cache`.
+- `WAYS`, `LINES`, `LINE_W`, `INCLUDE_VICTIM`, `VICTIM_LINES`,
+  `DATABANK_SDP`, `DB_LATENCY`.
+- `DIRECTIVE` (default `default`; tried `AreaOptimized_high`,
+  `PerformanceOptimized`).
+- `PERIOD_NS` (default `4.0` ns for 250 MHz; `3.333` for 300 MHz).
 
 ## Outputs (per top)
 ```
@@ -45,35 +62,43 @@ build/<TOP>/methodology.rpt
 build/<TOP>/synth.log              full stdout (Vivado warnings + INFO)
 ```
 
-## Headline results on U250 @ 250 MHz target
+## Headline results on U250 @ 250 MHz target (post-fix, `default` directive)
 
-### `l2_cache` defaults (4-way / 512 sets / 8-block line, victim cache on)
+The pre-fix numbers used `AreaOptimized_high` and `REPLACEMENT_POLICY=4`
+(silently dropped → LRU under `TOP=l2_cache`). Cross-check against the
+older `sweep_results.md` for the comparison.
+
+### `l2_cache` defaults (4-way / 512 sets / 8-block line, victim cache on, LRU)
 | Resource    | Used | %device |
 |-------------|------|---------|
 | CLB LUTs    | 1681 | 0.10 %  |
 | CLB FFs     | 930  | 0.03 %  |
 | BRAM tiles  | 18   | 0.67 %  |
 | URAM        | 0    | 0.00 %  |
-| WNS         | -0.974 ns @ 4.0 ns target → ~201 MHz post-synth |
+| WNS (pre-fix)  | -0.974 ns @ 4.0 ns (~201 MHz) |
+| WNS (post-fix) | TBD — re-run with `./sweep.sh` |
 
-### `l2_cache` 512 KB / 8-way / 16-block line / SRRIP / TDP databank
+### `l2_cache` 512 KB / 8-way / 16-block line / **GRASP** / **SDP+URAM** databank / no victim / DB_LATENCY=2
 | Resource    | Used  | %device |
 |-------------|-------|---------|
-| CLB LUTs    | 3194  | 0.18 %  |
-| CLB FFs     | 1223  | 0.04 %  |
-| BRAM tiles  | 132   | 4.91 %  |
-| URAM        | 0     | 0.00 %  |
-
-### `l2_cache` 512 KB / 8-way / 16-block line / SRRIP / **SDP+URAM** databank
-| Resource    | Used  | %device |
-|-------------|-------|---------|
-| CLB LUTs    | 1919  | 0.11 %  |
-| CLB FFs     | 1180  | 0.03 %  |
+| CLB LUTs    | 1493  | 0.09 %  |
+| CLB FFs     | 716   | 0.02 %  |
 | BRAM tiles  | 5     | 0.19 %  |
 | **URAM**    | **16**| **1.25 %** |
+| **WNS**     | **+0.186 ns @ 4.0 ns target (250 MHz met)**     |
 
-That last row is the configuration to use for multi-cache deployment
-on URAM-rich parts (Alveo U250 / U280 / V80). See "URAM mode" below.
+That is the production URAM-deployment config: hits 250 MHz post-synth,
+PnR typically recovers another 0.5–1.5 ns of headroom. **GRASP adds 0 ns
+of WNS overhead vs SRRIP** (the policy logic is not on the critical path).
+
+### `l2_cache` 1 MB / 8-way / 16-block line / GRASP / SDP+URAM / no victim / DB_LATENCY=2
+| Resource    | Used  | %device |
+|-------------|-------|---------|
+| CLB LUTs    | 1493  | 0.09 %  |
+| CLB FFs     | 792   | 0.02 %  |
+| BRAM tiles  | 2     | 0.07 %  |
+| **URAM**    | **34**| **2.66 %** |
+| WNS         | -0.101 ns @ 4.0 ns (~243 MHz post-synth) |
 
 ### `tc_narrow_shim` defaults
 | Resource    | Used  | %device |
@@ -146,3 +171,20 @@ Conflict-class stats are still meaningful, but the active-cycle
 absolute number in SDP mode reflects demand-as-if-TDP, not actual port
 usage. The throughput delta is most reliably measured by sim cycle
 count, not by the in-RTL counters.
+
+### `REPLACEMENT_POLICY` vs `POLICY` (fixed 2026-05)
+Pre-fix `run_synth.tcl` only accepted `REPLACEMENT_POLICY` as a generic.
+`l2_cache` declares the parameter as `POLICY` (typed
+`replacement_policy_t`); `l2_top` declares an integer
+`REPLACEMENT_POLICY` that it casts. Setting `REPLACEMENT_POLICY` when
+`TOP=l2_cache` produced `WARNING: [Synth 8-3301] Unused top level
+parameter/generic REPLACEMENT_POLICY` and silently fell back to LRU.
+Every "policy sweep" run targeting `l2_cache` was therefore a LRU run.
+Post-fix the script accepts both names; use `POLICY` for `l2_cache`.
+
+### `AreaOptimized_high` directive (changed default 2026-05)
+The legacy default directive prioritises LUT count over WNS. On the
+512 KB / 8-way / SDP+URAM config it costs ~1.36 ns of WNS vs the
+`default` directive (which also produces fewer LUTs in this case:
+1493 vs 2092). The new default is `default`; set
+`DIRECTIVE=AreaOptimized_high` to restore the old behaviour.
