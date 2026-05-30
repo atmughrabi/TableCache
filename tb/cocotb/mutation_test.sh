@@ -271,6 +271,48 @@ case "$FILE" in
         DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
         MUTATIONS=()  # stub -- expand if/when needed; small policy file
         ;;
+    src/GRASP.sv)
+        # Address-region-aware RRIP. Killed by test_grasp directed cases
+        # (hot retention, SRRIP-FP fallback, hot/moderate overlap precedence)
+        # plus test_grasp_pressure (set-aliased thrash kills the hit-promotion
+        # mutations the single-read test cannot), test_workload (drives the
+        # hot region), and test_random (data scoreboard catches victim-index
+        # corruption). test_grasp_pressure runs as its own module so it
+        # gets a clean cache; cocotb test-isolation within a single MODULE
+        # is imperfect (the sdp_ram_rst LFSR sweep doesn't fully clear all
+        # cache state under back-to-back tests), and that contamination
+        # masked 2 of the GRASP mutations during the initial sweep.
+        DEFAULT_TESTS="test_smoke test_grasp test_grasp_pressure test_workload test_random"
+        export POLICY=GRASP
+        MUTATIONS=(
+            # Functional-correctness: victim index always 0 -> every miss
+            # overwrites way 0 -> data scoreboard divergence.
+            "victim_idx_to_zero|s/assign cache_replacement_way_int = WAY_W'(victim_index);/assign cache_replacement_way_int = WAY_W'(0);/"
+            # Multi-hot replacement way: violates the one-hot invariant
+            # the tagbank assertion catches; also corrupts the way write.
+            "way_onehot_invert|s/assign cache_replacement_way = WAYS'(1 << victim_index);/assign cache_replacement_way = WAYS'(~(1 << victim_index));/"
+            # On a hit, decrement -> increment: hot lines age faster
+            # (the opposite of the policy's intent). Killed by
+            # test_grasp_hot_under_pressure (multi-round re-reads expose
+            # cumulative aging that the single-read test cannot see).
+            "swap_hit_decrement|s/updated_RRPV\\[j\\] -= 1'b1;/updated_RRPV[j] += 1'b1;/"
+            # Hot-region insert at MAX_RRPV instead of HOT_INSERT_RRPV='0:
+            # hot misses are immediate re-evict candidates. Killed by
+            # test_grasp_hot_under_pressure (round 1 hot pool re-warm).
+            "swap_hot_insert_to_max|s/HOT_INSERT_RRPV = '0;/HOT_INSERT_RRPV = '1;/"
+            # Hot-region hit promotion to MAX_RRPV instead of '0: even
+            # repeated hits don't pin the line. Killed by
+            # test_grasp_hot_under_pressure (cumulative age across rounds).
+            "swap_hot_hit_to_max|s/HOT_HIT_RRPV = '0;/HOT_HIT_RRPV = '1;/"
+            # drop_moderate_exclusion (drop the `~high_reuse;` term in
+            # moderate_reuse) excluded: equivalent. The if-elseif chain
+            # in the eviction path already enforces precedence
+            # (`if (high_reuse) ... else if (moderate_reuse) ...`), so
+            # whether moderate_reuse is logically true OR false when high
+            # also matches is observable nowhere. Confirmed by 4-test
+            # SURVIVED run on the initial mutation matrix.
+        )
+        ;;
     src/tdp_ram.sv)
         # True dual-port RAM. The bug #7 fix lives here -- a per-byte
         # NBA loop was bytewise-dropping data at wide BLOCK_W on

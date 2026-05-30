@@ -1,8 +1,13 @@
 """Directed tests for the GRASP replacement policy.
 
-Latency-as-oracle: the cocotb harness measures cycles from AR to
-first R beat; hits land in ~<=10 cycles, misses in >=20 (memory
-roundtrip). HIT_LATENCY_THRESHOLD splits them at 15.
+Mem-AR-counting oracle: a miss issues a mem-AR transaction, a hit does
+not. _read_and_classify(addr) snapshots m_arvalid handshakes during the
+slave-side read; if mem traffic ticked, the access was a MISS, else a
+HIT. This is more robust than latency thresholds when the cocotbext-axi
+AxiRam responds in just a few cycles (which makes hit/miss latencies
+overlap; the previous HIT_LATENCY_THRESHOLD=15 oracle silently counted
+every access as a hit and never caught policy regressions, as shown by
+the GRASP mutation sweep — see mutation_test.sh GRASP entry).
 
 Coverage:
   - hot retention under cold thrash (with HOT region configured)
@@ -10,6 +15,8 @@ Coverage:
   - invalid region (_h<_l, _h!=0) treated as disabled
   - runtime reconfiguration between phases
   - hot/moderate overlap precedence (hot must win)
+  - hot-under-pressure: interleaved set-aliased thrash that stresses
+    both the hot-insert and hot-hit promotion paths
 
 POLICY=GRASP is required (test asserts on TC_POLICY_NAME).
 """
@@ -24,10 +31,6 @@ BLOCK_BYTES = 4
 LINE_W      = 8
 LINE_BYTES  = LINE_W * BLOCK_BYTES   # 32B default
 
-# Hit-vs-miss threshold. Hits return on the same cycle the line is ready
-# (a few cycles); misses pay the mem roundtrip. 15 is a safe split.
-HIT_LATENCY_THRESHOLD = 15
-
 
 def _set_grasp(dut, hot_l=0, hot_h=0, mod_l=0, mod_h=0):
     dut.grasp_high_addr_l.value     = hot_l
@@ -36,8 +39,8 @@ def _set_grasp(dut, hot_l=0, hot_h=0, mod_l=0, mod_h=0):
     dut.grasp_moderate_addr_h.value = mod_h
 
 
-async def _read_line_latency(dut, addr):
-    """Issue a single-beat read and return cycles from AR-handshake to first R."""
+async def _drive_read(dut, addr):
+    """Drive one single-beat read on the slave port; return after the R beat."""
     await RisingEdge(dut.clk)
     dut.s_araddr.value   = addr
     dut.s_arlen.value    = 0
@@ -52,34 +55,57 @@ async def _read_line_latency(dut, addr):
     dut.s_arid.value     = 0
     dut.s_arvalid.value  = 1
     dut.s_rready.value   = 1
-    # Wait for AR handshake.
     for _ in range(500):
         await RisingEdge(dut.clk)
         if int(dut.s_arready.value) == 1 and int(dut.s_arvalid.value) == 1:
             break
     dut.s_arvalid.value = 0
-    # Count cycles until first R beat.
-    for c in range(500):
+    for _ in range(500):
         await RisingEdge(dut.clk)
         if int(dut.s_rvalid.value) == 1 and int(dut.s_rready.value) == 1:
-            # Drain RLAST if multi-beat (we issued single-beat so rlast=1).
-            return c + 1
+            return
     raise TimeoutError(f"no R beat for addr 0x{addr:x}")
 
 
+async def _mem_ar_counter(dut, state):
+    """Background coroutine: counts m_arvalid handshakes into state[0]."""
+    while True:
+        await RisingEdge(dut.clk)
+        if int(dut.m_arvalid.value) and int(dut.m_arready.value):
+            state[0] += 1
+
+
+def _ensure_mem_counter(dut):
+    """Lazily install one mem-AR counter on the dut."""
+    if not hasattr(dut, "_grasp_mem_ar_state"):
+        dut._grasp_mem_ar_state = [0]
+        cocotb.start_soon(_mem_ar_counter(dut, dut._grasp_mem_ar_state))
+
+
+async def _read_and_classify(dut, addr):
+    """Return True iff the access was a HIT (no NEW mem-AR fired during it).
+    Snapshots a continuously-running mem-AR counter before and after the
+    slave read; new mem-AR handshakes during the read window indicate a
+    miss. Robust against residual m_arvalid from the previous transaction."""
+    _ensure_mem_counter(dut)
+    before = dut._grasp_mem_ar_state[0]
+    await _drive_read(dut, addr)
+    # Settle a few cycles so a delayed mem-AR (FIFO arbitration) still counts.
+    for _ in range(8):
+        await RisingEdge(dut.clk)
+    after = dut._grasp_mem_ar_state[0]
+    return after == before
+
+
 async def _hot_cold_workload(dut, hot_addrs, cold_addrs):
-    """Warm hot lines, thrash cold lines, then re-measure hot latencies."""
-    # Warm hot set (each becomes a miss the first time).
+    """Warm hot lines, thrash cold lines, then classify the hot re-reads."""
     for a in hot_addrs:
-        await _read_line_latency(dut, a)
-    # Thrash with cold.
+        await _drive_read(dut, a)
     for a in cold_addrs:
-        await _read_line_latency(dut, a)
-    # Re-measure hot.
+        await _drive_read(dut, a)
     hit_count = 0
     for a in hot_addrs:
-        lat = await _read_line_latency(dut, a)
-        if lat <= HIT_LATENCY_THRESHOLD:
+        if await _read_and_classify(dut, a):
             hit_count += 1
     return hit_count
 
@@ -216,3 +242,4 @@ async def test_grasp_overlap_priority(dut):
     assert hits >= len(hot_addrs) - 1, (
         f"hot precedence broken in overlap: {hits}/{len(hot_addrs)}"
     )
+
