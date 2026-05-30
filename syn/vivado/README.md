@@ -34,8 +34,8 @@ WAYS=8 LINES=1024 LINE_W=16 POLICY=4 \
 # Force URAM-packed databank (see "URAM mode" below)
 DATABANK_SDP=1 WAYS=8 LINES=1024 LINE_W=16 ./run_synth.sh
 
-# Target 300 MHz with the no-victim/DB_LATENCY=2 tuning
-PERIOD_NS=3.333 DATABANK_SDP=1 DB_LATENCY=2 \
+# Target 300 MHz with the SDP+URAM databank fix on
+PERIOD_NS=3.333 DATABANK_SDP=1 DB_LATENCY=2 SDP_WRITE_INPUT_REG=1 \
     WAYS=8 LINES=1024 LINE_W=16 POLICY=5 INCLUDE_VICTIM=0 ./run_synth.sh
 ```
 
@@ -48,7 +48,7 @@ Supported env-var parameter overrides:
   `REPLACEMENT_POLICY` on `TOP=l2_cache` is a no-op** — pre-fix runs
   silently defaulted to LRU. Use `POLICY` for `l2_cache`.
 - `WAYS`, `LINES`, `LINE_W`, `INCLUDE_VICTIM`, `VICTIM_LINES`,
-  `DATABANK_SDP`, `DB_LATENCY`.
+  `DATABANK_SDP`, `DB_LATENCY`, `SDP_WRITE_INPUT_REG`.
 - `DIRECTIVE` (default `default`; tried `AreaOptimized_high`,
   `PerformanceOptimized`).
 - `PERIOD_NS` (default `4.0` ns for 250 MHz; `3.333` for 300 MHz).
@@ -147,6 +147,26 @@ primitives, matching the paper's "2 ways per URAM" packing strategy
 
 See `/memories/repo/tablecache_databank_sdp_uram.md` (Copilot memory)
 for the design history and the two failed earlier approaches.
+
+## SDP write-input register (`SDP_WRITE_INPUT_REG=1`)
+
+Optional 1-cycle register on the SDP URAM write port (en / wbe / data /
+addr). Targets the post-synth critical path observed on big SDP+URAM
+configs under the legacy `AreaOptimized_high` directive: an 18–24 LUT
+deep combinational chain from cache-FSM/FIFO control LFSRs into the
+URAM cascade write-data input (`CAS_IN_DIN_B[*]`).
+
+- **Latency cost**: writes commit at cycle N+2 instead of N+1.
+- **Safety**: the cache FSM transitions WRITING → READY → READING for
+  any same-port write/read sequence, which provides a 1-cycle slack
+  cycle that absorbs the extra latency. Verified functionally on
+  test_smoke / test_random / test_scoreboard / test_workload /
+  test_reset_recovery / test_backpressure / test_strobe / test_latency
+  × {LRU, GRASP} with `+define+TC_SDP_WRITE_INPUT_REG=1`.
+- **WNS impact**: ~0 ns under the new `default` directive (the path was
+  already broken by smarter synth). Kept as a defensive knob for
+  configurations where the chain re-emerges (e.g. wider WAYS,
+  alternative synthesis tools).
 
 ## Known issues
 

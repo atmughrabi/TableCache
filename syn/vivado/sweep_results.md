@@ -181,6 +181,16 @@ tuned configuration: 1493 vs 2092). The new default directive is
 `default`; set `DIRECTIVE=AreaOptimized_high` to restore the old
 behaviour.
 
+### 3. `SDP_WRITE_INPUT_REG` parameter added
+New optional 1-cycle register on the SDP URAM write port (en / wbe /
+data / addr). Targets the residual critical path when the wide LUT
+chain from cache-FSM/FIFO LFSRs into `URAM CAS_IN_DIN_B[*]` reappears
+(e.g. under aggressive directive variants or wider WAYS). Off by
+default; functionally verified (32/32 regression PASS) for both LRU
+and GRASP. Costs 1 cycle of write commit latency, safe under the
+cache FSM's `WRITING → READY → READING` serialisation. See
+[`syn/vivado/README.md`](README.md) for usage.
+
 ---
 
 ## Open follow-ups (not addressed by this sweep)

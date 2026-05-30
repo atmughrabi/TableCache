@@ -27,7 +27,23 @@ module sdp_ram_uram
         parameter int unsigned NUM_COL = 4,
         parameter int unsigned COL_WIDTH = 16,
         parameter int unsigned PIPELINE_DEPTH = 1,
-        parameter CASCADE_DEPTH = 8
+        parameter CASCADE_DEPTH = 8,
+        // Optional 1-cycle register on the WRITE port inputs (en/wbe/data/addr).
+        // Targets the URAM cascade write-data critical path: in big SDP+URAM
+        // configs the combinational chain from the cache FSM (FIFO control
+        // LFSRs etc.) into the URAM `CAS_IN_DIN_B[*]` cascade is 18-24 LUT
+        // levels deep with high routing share, costing ~1ns of WNS. With
+        // this register the LUT chain terminates at a flop and Vivado can
+        // retime backward into the URAM's built-in input registers.
+        //
+        // COST: a write asserted at cycle N commits to storage at cycle N+2
+        // instead of N+1. SAFE under the cache controller's FSM because
+        // port state transitions are WRITING -> READY -> READING (with a
+        // mandatory READY cycle between WRITING and any same-address read),
+        // which provides a 1-cycle slack that absorbs the extra latency.
+        // Do NOT enable without DATABANK_SDP=1; only the SDP URAM cascade
+        // exhibits the targeted critical path.
+        parameter logic WRITE_INPUT_REG = 1'b0
     )
     (
         input logic clk,
@@ -48,11 +64,32 @@ module sdp_ram_uram
     (* cascade_height = CASCADE_DEPTH, ramstyle = "no_rw_check", ram_style = "ultra" *)
     logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0];
 
+    // Optional 1-cycle write-input register (see header). When disabled the
+    // _q signals are pure aliases of the inputs (no FFs, no latency).
+    logic                        a_en_q;
+    logic[NUM_COL-1:0]           a_wbe_q;
+    logic[DATA_WIDTH-1:0]        a_wdata_q;
+    logic[ADDR_WIDTH-1:0]        a_addr_q;
+    generate if (WRITE_INPUT_REG) begin : gen_a_reg
+        always_ff @(posedge clk) begin
+            a_en_q    <= a_en;
+            a_wbe_q   <= a_wbe;
+            a_wdata_q <= a_wdata;
+            a_addr_q  <= a_addr;
+        end
+    end
+    else begin : gen_a_combo
+        assign a_en_q    = a_en;
+        assign a_wbe_q   = a_wbe;
+        assign a_wdata_q = a_wdata;
+        assign a_addr_q  = a_addr;
+    end endgenerate
+
     //A write (per-byte enables)
     always_ff @(posedge clk) begin
         for (int i = 0; i < NUM_COL; i++) begin
-            if (a_en & a_wbe[i])
-                mem[a_addr][i*COL_WIDTH +: COL_WIDTH] <= a_wdata[i*COL_WIDTH +: COL_WIDTH];
+            if (a_en_q & a_wbe_q[i])
+                mem[a_addr_q][i*COL_WIDTH +: COL_WIDTH] <= a_wdata_q[i*COL_WIDTH +: COL_WIDTH];
         end
     end
 

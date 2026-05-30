@@ -48,9 +48,14 @@ module dut_cocotb
 `endif
         parameter int VICTIM_LINES = 8,
 `ifdef TC_DATABANK_SDP
-        parameter logic DATABANK_SDP = `TC_DATABANK_SDP
+        parameter logic DATABANK_SDP = `TC_DATABANK_SDP,
 `else
-        parameter logic DATABANK_SDP = 0
+        parameter logic DATABANK_SDP = 0,
+`endif
+`ifdef TC_SDP_WRITE_INPUT_REG
+        parameter logic SDP_WRITE_INPUT_REG = `TC_SDP_WRITE_INPUT_REG
+`else
+        parameter logic SDP_WRITE_INPUT_REG = 0
 `endif
     ) (
         input  logic clk,
@@ -228,7 +233,8 @@ module dut_cocotb
         .INCLUDE_CBOM   (INCLUDE_CBOM),
         .INCLUDE_VICTIM (INCLUDE_VICTIM),
         .VICTIM_LINES   (VICTIM_LINES),
-        .DATABANK_SDP   (DATABANK_SDP)
+        .DATABANK_SDP   (DATABANK_SDP),
+        .SDP_WRITE_INPUT_REG (SDP_WRITE_INPUT_REG)
     ) dut (
         .clk(clk), .rst(rst),
         .grasp_high_addr_l(grasp_high_addr_l),
