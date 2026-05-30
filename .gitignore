@@ -66,3 +66,4 @@ research/
 # Verilator coverage outputs (per-run; merged data goes to /tmp)
 coverage.dat
 **/coverage.dat
+syn/build_post_pnr/
