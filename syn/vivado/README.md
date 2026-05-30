@@ -6,7 +6,14 @@ without committing to a full IO ring / shell context.
 
 ## Tools
 - Vivado 2025.2 (`VIVADO=/opt/xilinx/2025.2/Vivado/bin/vivado` by default)
-- Target part: Alveo U250 (`xcu250-figd2104-2L-e`, speed grade -2L)
+- Target parts (override with `PART=<name>`):
+  - Alveo U250: `xcu250-figd2104-2L-e` (speed grade `-2L`) — the default
+  - Alveo U280: `xcu280-fsvh2892-2L-e`
+  - Alveo V80: `xcv80-lsva4737-2MHP-e-S` (engineering sample — see
+    [`v80_synth.sh`](v80_synth.sh) for the deployment preset, and note
+    that the `-S` speed file reports `clock uncertainty = 0.300 ns`
+    vs ~0.035 ns on production UltraScale+ parts, costing ~0.25 ns of
+    WNS purely from characterisation conservatism)
 - Target clock: 250 MHz (`PERIOD_NS=4.0` default; override for other targets)
 - Directive: `default` (was `AreaOptimized_high` pre-2026-05 — that variant
   costs ~1.3 ns of WNS on the big SDP+URAM databank critical path and is
@@ -167,6 +174,55 @@ URAM cascade write-data input (`CAS_IN_DIN_B[*]`).
   already broken by smarter synth). Kept as a defensive knob for
   configurations where the chain re-emerges (e.g. wider WAYS,
   alternative synthesis tools).
+
+## V80 (Versal Premium) preset — `v80_synth.sh`
+
+Wraps `run_synth.sh` with the V80 PART and the URAM-deployment knobs
+we validated for this target (`POLICY=GRASP`, `INCLUDE_VICTIM=0`,
+`DATABANK_SDP=1`, `DB_LATENCY=2`, `DIRECTIVE=default`).
+
+```bash
+cd syn/vivado
+
+# 512 KB / 8-way V80 synth (default)
+./v80_synth.sh
+
+# 1 MB or 2 MB build
+SIZE=1M ./v80_synth.sh
+SIZE=2M ./v80_synth.sh
+
+# 300 MHz target (3.333 ns clock)
+PERIOD_NS=3.333 ./v80_synth.sh
+
+# Full place + route closure (uses v80_synth_pnr.tcl)
+PNR=1 ./v80_synth.sh                  # post-route WNS, ~15-30 min
+PNR=1 SIZE=1M ./v80_synth.sh
+
+# SRRIP instead of GRASP
+POLICY=4 ./v80_synth.sh
+```
+
+**V80 vs U250 headline** (512 KB / 8-way / SDP+URAM / GRASP, post-synth):
+
+| Part | LUT | URAM | Data delay | Clock uncertainty | WNS (4 ns) |
+|---|---:|---:|---:|---:|---:|
+| U250 (`-2L`)          | 1493 | 16 | 4.872 ns | 0.035 ns | **+0.186 ns** |
+| V80 (`-2MHP-e-S` ES)  | 1458 | 16 | **3.528 ns** | **0.300 ns** | -0.321 ns |
+
+V80's combinational logic is actually 1.34 ns faster than U250's (Versal's
+`URAM288E5` cascade is shorter than `URAM288`; only 11 LUT levels vs 18).
+The post-synth WNS deficit comes entirely from the engineering-sample
+silicon's conservative 0.300 ns clock uncertainty — production V80 speed
+files will likely cut this to ~0.05 ns. PnR-closed numbers are the
+deciding data; run `PNR=1 ./v80_synth.sh` to measure.
+
+**V80 capacity** (`lsva4737`: 1925 URAMs, 3741 BRAM tiles):
+
+| Cache size | URAM / cache | 16 CUs | 32 CUs | V80 budget |
+|---|---:|---:|---:|---:|
+| 512 KB | 16 |  256 (13 %) |  512 (27 %) | 1925 |
+| 1 MB   | 34 |  544 (28 %) | 1088 (57 %) | 1925 |
+| 2 MB   | 66 | 1056 (55 %) | --          | 1925 |
 
 ## Known issues
 

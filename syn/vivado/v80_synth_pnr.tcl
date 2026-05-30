@@ -1,0 +1,78 @@
+# Vivado OOC synth + place + route for Alveo V80.
+#
+# Used by v80_synth.sh with PNR=1. The synth phase reads the same env
+# vars as run_synth.tcl (POLICY, WAYS, LINES, LINE_W, INCLUDE_VICTIM,
+# DATABANK_SDP, DB_LATENCY, DIRECTIVE, PERIOD_NS) and then runs full
+# place_design + route_design + phys_opt_design and re-reports timing.
+#
+# The post-PnR WNS is what real silicon will see; post-synth WNS is
+# typically 0.5-1.5 ns more pessimistic than post-route.
+
+set top       [lindex $argv 0]
+set repo_root [lindex $argv 1]
+set out       [lindex $argv 2]
+
+set part [expr {[info exists ::env(PART)] ? $::env(PART) : "xcv80-lsva4737-2MHP-e-S"}]
+set period_ns [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : "4.0"}]
+set dir [expr {[info exists ::env(DIRECTIVE)] ? $::env(DIRECTIVE) : "default"}]
+
+puts "==== part=$part top=$top period=${period_ns}ns directive=$dir ===="
+
+create_project -in_memory -part $part
+
+foreach f [glob -nocomplain $repo_root/src/*.sv] {
+    read_verilog -sv $f
+}
+set_property top $top [current_fileset]
+
+# Match the env-var generic plumbing in run_synth.tcl.
+set generics [list]
+if {$top eq "l2_cache" || $top eq "l2_top"} {
+    foreach v {WAYS LINES LINE_W POLICY REPLACEMENT_POLICY INCLUDE_VICTIM \
+               VICTIM_LINES DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG} {
+        if {[info exists ::env($v)]} {
+            lappend generics "$v=$::env($v)"
+            puts "==== override $v=$::env($v)"
+        }
+    }
+}
+
+# Synthesis
+if {[llength $generics] > 0} {
+    synth_design -top $top -part $part -mode out_of_context \
+        -directive $dir -generic $generics
+} else {
+    synth_design -top $top -part $part -mode out_of_context \
+        -directive $dir
+}
+create_clock -name clk -period $period_ns [get_ports clk]
+report_utilization        -file $out/utilization_postsynth.rpt
+report_timing_summary     -file $out/timing_summary_postsynth.rpt
+
+# Place + route. Use 'Default' directives at first to keep the run
+# bounded; flip to ExtraNetDelay_high or AggressiveExplore if timing
+# is binding.
+puts "==== place_design ===="
+place_design -directive Default
+
+puts "==== phys_opt_design (post-place) ===="
+phys_opt_design -directive Default
+
+puts "==== route_design ===="
+route_design -directive Default
+
+puts "==== phys_opt_design (post-route) ===="
+phys_opt_design -directive Default
+
+# Final reports under the canonical names so v80_synth.sh's parser
+# picks them up. Keep the post-synth snapshots for delta inspection.
+report_utilization        -file $out/utilization.rpt
+report_utilization -hierarchical -file $out/utilization_hier.rpt
+report_timing_summary     -file $out/timing_summary.rpt
+report_methodology        -file $out/methodology.rpt
+report_drc                -file $out/drc.rpt
+
+puts "==== POST-ROUTE TIMING SUMMARY ===="
+puts [exec grep -E "(WNS|TNS|WHS|THS)" $out/timing_summary.rpt | head -10]
+
+exit 0
