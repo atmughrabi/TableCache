@@ -146,7 +146,14 @@ module dut_cocotb
         input  logic                        m_bvalid,
         input  logic [1:0]                  m_bresp,
         input  logic [WRITE_ID_WIDTH:0]     m_bid,
-        output logic                        m_bready
+        output logic                        m_bready,
+
+        // Runtime-configurable GRASP address region bounds.
+        // Drive to 32'h0 when not in use (SRRIP-FP fallback).
+        input  logic [31:0]  grasp_high_addr_l,
+        input  logic [31:0]  grasp_high_addr_h,
+        input  logic [31:0]  grasp_moderate_addr_l,
+        input  logic [31:0]  grasp_moderate_addr_h
     );
 
     // -- Slave-side: pack flat signals into ar_t/aw_t/w_t structs --
@@ -224,6 +231,10 @@ module dut_cocotb
         .DATABANK_SDP   (DATABANK_SDP)
     ) dut (
         .clk(clk), .rst(rst),
+        .grasp_high_addr_l(grasp_high_addr_l),
+        .grasp_high_addr_h(grasp_high_addr_h),
+        .grasp_moderate_addr_l(grasp_moderate_addr_l),
+        .grasp_moderate_addr_h(grasp_moderate_addr_h),
         .req_ar(s_ar), .req_arid(s_arid), .req_arready(s_arready),
         .req_r(s_r),  .req_rdata(s_rdata), .req_rid(s_rid), .req_rready(s_rready),
         .req_aw(s_aw), .req_awid(s_awid), .req_awready(s_awready),

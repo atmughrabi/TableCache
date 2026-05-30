@@ -20,11 +20,25 @@ module l2_tagbank
         parameter int unsigned ID_W,
         parameter int unsigned TAG_W,
         parameter int unsigned LINES,
-        parameter int unsigned LINE_W
+        parameter int unsigned LINE_W,
+        parameter logic RANDOM_USE_EVICT = 1,
+        parameter logic RRIP_HP = 1,
+        parameter int unsigned RRIP_WIDTH = 2,
+        parameter int unsigned ADDR_W = 32,
+        // Upper-bit constant that the cache strips out of every address before
+        // tagging.  We OR it back into policy_addr so address-aware policies
+        // (GRASP) see real addresses, not the tag-projected view.
+        parameter logic[ADDR_W-1:0] ADDR_BASE = '0
     )
     (
         input logic clk,
         input logic rst,
+
+        // Runtime-configurable GRASP address region bounds (0 = disabled)
+        input logic[ADDR_W-1:0] grasp_high_addr_l,
+        input logic[ADDR_W-1:0] grasp_high_addr_h,
+        input logic[ADDR_W-1:0] grasp_moderate_addr_l,
+        input logic[ADDR_W-1:0] grasp_moderate_addr_h,
 
         //Request port
         input logic in_valid,
@@ -178,15 +192,19 @@ module l2_tagbank
     way_entry_t evict_entry;
     way_t policy_replacement_way_int;
     logic[WAYS-1:0] policy_replacement_way;
-    logic[31:0] policy_addr;
+    logic[ADDR_W-1:0] policy_addr;
 
-    assign policy_addr = 32'({stage2.tag, stage2.line, {LOG2_BLOCK_BYTES{1'b0}}});
+    assign policy_addr = ADDR_BASE | ADDR_W'({stage2.tag, stage2.line, {LOG2_BLOCK_BYTES{1'b0}}});
     assign evict_entry = tb_rdata_r[policy_replacement_way_int];
 
     replacement_policy #(
         .POLICY(POLICY),
         .WAYS(WAYS),
-        .LINES(LINES)
+        .LINES(LINES),
+        .RANDOM_USE_EVICT(RANDOM_USE_EVICT),
+        .RRIP_HP(RRIP_HP),
+        .RRIP_WIDTH(RRIP_WIDTH),
+        .ADDR_W(ADDR_W)
     ) policy_inst (
         .init_lookup(in_valid),
         .lookup_line_addr(in_request.line),

@@ -20,6 +20,10 @@ module l2_cache
         parameter logic[31:0] ADDR_RANGE_H = 32'hFFFFFFFF, //Cache address space;
         parameter logic[31:0] ADDR_RANGE_L = 32'h80000000, //Must be NAPOT
         parameter int unsigned WAYS = 4, //Also known as sets
+        parameter logic RANDOM_USE_EVICT = 1,
+        parameter logic RRIP_HP = 1,
+        parameter int unsigned RRPV_WIDTH = 2,
+        parameter int unsigned ADDR_W = 32,
         parameter logic INCLUDE_CBOM = 1, //Whether ACE cache block management operations (CleanInvalid, CleanShared, MakeInvalid) are supported
         parameter logic INCLUDE_VICTIM = 1, //Victim cache
         parameter int unsigned VICTIM_LINES = 8, //Victim cache capacity
@@ -32,6 +36,12 @@ module l2_cache
     (
         input logic clk,
         input logic rst,
+
+        // Runtime-configurable GRASP address region bounds (0 = disabled)
+        input logic[ADDR_W-1:0] grasp_high_addr_l,
+        input logic[ADDR_W-1:0] grasp_high_addr_h,
+        input logic[ADDR_W-1:0] grasp_moderate_addr_l,
+        input logic[ADDR_W-1:0] grasp_moderate_addr_h,
 
         input ar_t req_ar,
         input logic[READ_ID_WIDTH-1:0] req_arid,
@@ -642,7 +652,12 @@ module l2_cache
         .ID_W(ID_W),
         .TAG_W(TAG_W),
         .LINES(LINES),
-        .LINE_W(LINE_W)
+        .LINE_W(LINE_W),
+        .RANDOM_USE_EVICT(RANDOM_USE_EVICT),
+        .RRIP_HP(RRIP_HP),
+        .RRIP_WIDTH(RRPV_WIDTH),
+        .ADDR_W(ADDR_W),
+        .ADDR_BASE(ADDR_RANGE_L)
     ) tb_inst (
         .in_valid(tb_advance),
         .in_request_id(in_id),

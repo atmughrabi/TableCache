@@ -16,11 +16,21 @@ module replacement_policy
     #(
         parameter replacement_policy_t POLICY,
         parameter int unsigned WAYS,
-        parameter int unsigned LINES
+        parameter int unsigned LINES,
+        parameter logic RANDOM_USE_EVICT = 1,
+        parameter logic RRIP_HP = 1,
+        parameter int unsigned RRIP_WIDTH = 2,
+        parameter int unsigned ADDR_W = 32
     )
     (
         input logic clk,
         input logic rst,
+
+        // Runtime-configurable GRASP address region bounds (0 = disabled)
+        input logic[ADDR_W-1:0] grasp_high_addr_l,
+        input logic[ADDR_W-1:0] grasp_high_addr_h,
+        input logic[ADDR_W-1:0] grasp_moderate_addr_l,
+        input logic[ADDR_W-1:0] grasp_moderate_addr_h,
 
         //Initial metadata lookup
         input logic init_lookup,
@@ -32,7 +42,7 @@ module replacement_policy
         input logic[WAYS-1:0] cache_way_used_one_hot, //Hit one hot
         input logic[WAYS == 1 ? 0 : $clog2(WAYS)-1 : 0] cache_way_used_int, //Hit way
         input logic cache_eviction, //Otherwise a hit and the accounting needs to be updated
-        input logic[31:0] cache_addr, //Address of request, if needed by replacement policy
+        input logic[ADDR_W-1:0] cache_addr, //Address of request, if needed by replacement policy
 
         output logic[WAYS-1:0] cache_replacement_way, //Which way will be evicted
         output logic[WAYS == 1 ? 0 : $clog2(WAYS)-1 : 0] cache_replacement_way_int //Integer of the replacement way
@@ -44,16 +54,15 @@ module replacement_policy
     //Also manages replacement policy metadata
 
     //These parameters can be customized
-    localparam logic RANDOM_USE_EVICT = 1; //Whether the randomly evicted way should change after each eviction or constantly
-    localparam logic RRIP_HP = 1; //1 for Hit Priority, 0 for Frequency Priority. The paper authors found HP to be superior in their tests
-    localparam int unsigned RRIP_WIDTH = 2; //Number of bits per way. The paper authors found 2-3 to be optimal
+    localparam int unsigned GRASP_RRPV_WIDTH = 3;
 
     localparam int unsigned POLICY_W =
         POLICY == RANDOM ? 0 :
         POLICY == LRU ? (WAYS <= 4 ? 2*(WAYS-1)-1 : WAYS*$clog2(WAYS)) :
         POLICY == FRQ ? $clog2(WAYS) :
         POLICY == SECOND_CHANCE ? $clog2(WAYS)+WAYS :
-        RRIP_WIDTH*WAYS; //RRIP
+        POLICY == SRRIP ? RRIP_WIDTH*WAYS :
+        GRASP_RRPV_WIDTH*WAYS;
 
     //When POLICY=RANDOM the policy_t-typed signals (cache_original_status,
     //cache_new_status, INIT_POLICY) are declared but unused (gen_policy_storage
@@ -78,6 +87,8 @@ module replacement_policy
         end
         else if (POLICY == SRRIP)
             INIT_POLICY = 'x;
+        else if (POLICY == GRASP)
+            INIT_POLICY = '1;
         //Technically only the pointer bits need to be set for second chance
     end
 
@@ -104,6 +115,13 @@ module replacement_policy
         end
         else if (POLICY == SRRIP) begin : gen_srrip
             SRRIP #(.RRPV_HP(RRIP_HP), .RRPV_WIDTH(RRIP_WIDTH), .POLICY_W(POLICY_W), .WAYS(WAYS)) srrip(.*);
+        end
+        else if (POLICY == GRASP) begin : gen_grasp
+            GRASP #(
+                .POLICY_W(POLICY_W),
+                .WAYS(WAYS),
+                .ADDR_W(ADDR_W)
+            ) grasp(.*);  // runtime ports connected by name via .*
         end
     end endgenerate
 

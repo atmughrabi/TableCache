@@ -24,7 +24,8 @@ package cache_config;
         FRQ,
         SECOND_CHANCE,
         RANDOM,
-        SRRIP //Equivalent to NRU when RRPV_WIDTH = 1
+        SRRIP, //Equivalent to NRU when RRPV_WIDTH = 1
+        GRASP
     } replacement_policy_t;
 
     //AXI typedefs

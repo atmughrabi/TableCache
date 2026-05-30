@@ -19,7 +19,7 @@ from pathlib import Path
 HERE     = Path(__file__).parent
 OUT      = Path(os.environ.get("OUT", "/tmp/tc_perf_sweep"))
 POLICIES = os.environ.get("POLICIES",
-    "LRU,SRRIP,FRQ,SECOND_CHANCE,RANDOM").split(",")
+    "LRU,SRRIP,GRASP,FRQ,SECOND_CHANCE,RANDOM").split(",")
 WAYS_LIST= [int(w) for w in os.environ.get("WAYS_LIST", "2,4,8").split(",")]
 NTXN     = os.environ.get("NTXN", "3000")
 LINES    = os.environ.get("LINES", "64")

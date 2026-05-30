@@ -36,6 +36,10 @@ async def reset_dut(dut, cycles: int = None):
         ("s_arvalid", 0), ("s_awvalid", 0), ("s_wvalid", 0),
         ("s_rready", 1), ("s_bready", 1),
         ("s_arsnoop", 0), ("s_awsnoop", 0),
+        # GRASP region ports default to 0 = "not in use" (SRRIP fallback).
+        # Tests that want hot/warm classification override these after reset.
+        ("grasp_high_addr_l", 0), ("grasp_high_addr_h", 0),
+        ("grasp_moderate_addr_l", 0), ("grasp_moderate_addr_h", 0),
     ]:
         if hasattr(dut, sig):
             getattr(dut, sig).value = val

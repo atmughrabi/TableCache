@@ -134,6 +134,20 @@ async def test_graph_workload(dut):
     n_hot       = max(1, (POOL_LINES * HOT_PCT) // 100)
     hot_pool    = pool[:n_hot]
     cold_pool   = pool[n_hot:]
+
+    # For POLICY=GRASP, configure the runtime hot-region ports to match the
+    # workload's hot pool (a contiguous range [BASE, BASE + n_hot*LINE_BYTES)).
+    # For any other policy these ports are unused. Driving them is harmless.
+    # NOTE: env var is POLICY (set by Makefile/perf scripts); TC_POLICY is the
+    # Verilog +define and is NOT visible to Python.
+    _policy = os.environ.get("POLICY", os.environ.get("TC_POLICY", ""))
+    if _policy == "GRASP" and hasattr(dut, "grasp_high_addr_l"):
+        hot_l = hot_pool[0]
+        hot_h = hot_pool[-1] + LINE_BYTES - 1
+        dut.grasp_high_addr_l.value = hot_l
+        dut.grasp_high_addr_h.value = hot_h
+        dut._log.info(f"[wl] GRASP hot region: [0x{hot_l:08x}, 0x{hot_h:08x}]")
+
     dut._log.info(
         f"[wl] config: LINES={LINES} WAYS={WAYS} POLICY={os.environ.get('TC_POLICY','?')} "
         f"NTXN={NTXN} pool={POOL_LINES} hot={n_hot} ({HOT_PCT}%) "

@@ -126,7 +126,7 @@ line. Sweep table at [`syn/vivado/sweep_results.md`](../syn/vivado/sweep_results
 
 | Param | Meaning | Tested values | Default |
 |---|---|---|---|
-| `POLICY` | Replacement | `LRU`, `RR` (RANDOM), `SRRIP`, `2ND` (SECOND_CHANCE), `FRQ`, `RRIP_TREE` | `LRU` |
+| `POLICY` | Replacement | `LRU`, `RR` (RANDOM), `SRRIP`, `GRASP`, `2ND` (SECOND_CHANCE), `FRQ`, `RRIP_TREE` | `LRU` |
 | `INCLUDE_CBOM` | ACE snoop support (CleanShared/Inval, MakeInval) | 0/1 | 1 |
 | `INCLUDE_VICTIM` | Small fully-associative victim cache between L2 and mem | 0/1 | 1 |
 | `VICTIM_LINES` | Capacity of the victim cache | 4, 8, 16 | 8 |

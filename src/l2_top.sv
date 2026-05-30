@@ -132,7 +132,14 @@ module l2_top
         input logic[1:0] m00_axi_rresp,
         input logic m00_axi_rlast,
         input logic m00_axi_rvalid,
-        output logic m00_axi_rready
+        output logic m00_axi_rready,
+
+        // Runtime-configurable GRASP address region bounds (all-zero = disabled).
+        // Width follows the cache address bus so external register banks size cleanly.
+        input logic[C_S00_AXI_ADDR_WIDTH-1:0] grasp_high_addr_l,
+        input logic[C_S00_AXI_ADDR_WIDTH-1:0] grasp_high_addr_h,
+        input logic[C_S00_AXI_ADDR_WIDTH-1:0] grasp_moderate_addr_l,
+        input logic[C_S00_AXI_ADDR_WIDTH-1:0] grasp_moderate_addr_h
     );
 
     //Input packing
@@ -283,6 +290,10 @@ module l2_top
         .ADDR_RANGE_H(ADDR_H),
         .ADDR_RANGE_L(ADDR_L),
         .WAYS(WAYS),
+        .RANDOM_USE_EVICT(RANDOM_USE_EVICT),
+        .RRIP_HP(RRIP_HP),
+        .RRPV_WIDTH(RRPV_WIDTH),
+        .ADDR_W(C_S00_AXI_ADDR_WIDTH),
         .INCLUDE_CBOM(0),
         .INCLUDE_VICTIM(INCLUDE_VICTIM),
         .VICTIM_LINES(VICTIM_LINES),
