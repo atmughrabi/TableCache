@@ -24,6 +24,9 @@ covering it with Xilinx-supplied AXI4 Verification IP under Vivado xsim.
 | A13 | latches / Fmax regression at synth | 2 | 4 | no synth in CI |
 | A14 | post-route SDF mismatch | 1 | 4 | no post-route sim |
 | A15 | `{AxSIZE, AWLEN, WSTRB}` cross product (bug #7 was in this class) | 3 | 4 | only sparse points tested |
+| A16 | `l2_top` AXI wrapper not directly exercised | 2 | 3 | all cocotb tests instantiate `l2_cache` via `dut_*.sv` wrappers; `l2_top` parameter casting + port forwarding only covered by the `.*` connection at synth time. Mutations on `l2_top.sv` are documented as no-op in `mutation_test.sh`. Adding a `test_l2top_smoke.py` against `l2_top` directly would close this (half-day effort). |
+| A17 | RMW-then-CBOM race window | 3 | 3 | `test_cbom_stress::test_cbom_burst_eight_addresses` exposed this in 2026-05 (originally failed; works after warming the line with a read first). Real concern for integrators that issue snoops back-to-back with partial writes. Mitigation today: pre-warm or quiesce. Fix would be cache-side: stall CBOM in WRITING-state until the writeback drains. |
+| A18 | post-PnR functional sim against the routed netlist | 2 | 4 | post-PnR timing is verified (B3/B4 in 2026-05 closed 512KB@250 MHz on U250 silicon model), but the cocotb regression has never been run against the route-DB netlist. A real PnR bug (e.g., timing-induced race in `phys_opt_design` retiming) could pass synth + meet timing + still corrupt data at runtime. Half-day to set up the netlist-sim flow under Vivado xsim or a netlist→Verilator pipeline. |
 
 Highest yield to address: A1, A7, A8, A9 (graph-accelerator critical),
 A10 (mechanical), A12-A14 (need non-Verilator sim).
