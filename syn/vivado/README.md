@@ -477,3 +477,53 @@ the 512 KB / 8-way / SDP+URAM config it costs ~1.36 ns of WNS vs the
 `default` directive (which also produces fewer LUTs in this case:
 1493 vs 2092). `default` is the recommended directive; set
 `DIRECTIVE=AreaOptimized_high` to opt into the older behaviour.
+
+## 300 MHz vs 250 MHz throughput comparison (measured)
+
+Reproduce with `tb/cocotb/perf_300mhz.sh` (optional `LINES=N WAYS=N LINE_W=N`
+overrides). All numbers from `test_workload` at NTXN=5000 SEED=1; cycles are
+the cocotb sim time / `CLK_PERIOD_NS=10`. Throughput translates to the
+silicon clock that the synthesis-flow knob combination closes at.
+
+### Deployment config: 512 KB / 8w / SDP+URAM (matches the 312 MHz post-route U55C build)
+
+| Combo | POLICY | cycles | cyc/txn | reads | writes | full_writes | MHz | M txn/s | Δ throughput |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline (DBL=2, WIR=0) | LRU   | 73362 | 14.67 | 3527 | 1473 | 432 | 250 | 17.04 | —      |
+| baseline                | GRASP | 73546 | 14.71 | 3527 | 1473 | 432 | 250 | 17.00 | —      |
+| **tuned (DBL=3, WIR=1)**| LRU   | 76946 | 15.39 | 3527 | 1473 | 432 | 300 | 19.49 | **+14.4 %** |
+| **tuned (DBL=3, WIR=1)**| GRASP | 77124 | 15.42 | 3527 | 1473 | 432 | 300 | 19.45 | **+14.4 %** |
+
+### Medium cache: 16 KB (LINES=64, LINE_W=8, WAYS=4)
+
+| Combo | POLICY | cycles | cyc/txn | MHz | M txn/s | Δ throughput |
+|---|---|---:|---:|---:|---:|---:|
+| baseline                | LRU   | 62047 | 12.41 | 250 | 20.15 | —      |
+| baseline                | GRASP | 57332 | 11.47 | 250 | 21.80 | —      |
+| tuned                   | LRU   | 64721 | 12.94 | 300 | 23.18 | **+15.0 %** |
+| tuned                   | GRASP | 60533 | 12.11 | 300 | 24.78 | **+13.7 %** |
+
+### Tiny / high-miss cache: 2 KB (LINES=32, LINE_W=8, WAYS=2)
+
+| Combo | POLICY | cycles | cyc/txn | MHz | M txn/s | Δ throughput |
+|---|---|---:|---:|---:|---:|---:|
+| baseline                | LRU   | 64931 | 12.99 | 250 | 19.25 | —      |
+| baseline                | GRASP | 64758 | 12.95 | 250 | 19.30 | —      |
+| tuned                   | LRU   | 66614 | 13.32 | 300 | 22.52 | **+17.0 %** |
+| tuned                   | GRASP | 66465 | 13.29 | 300 | 22.57 | **+16.9 %** |
+
+### Interpretation
+
+- `DB_LATENCY=3` (+1 cycle on data-bank READ pipeline) adds **0.33–0.72 cyc/txn**
+  in measured workloads (3–5 % more cycles).
+- The 250 → 300 MHz frequency gain is +20 %.
+- Net: **+13.7 % to +17.0 % throughput** across cache sizes / policies tested.
+- Counter-intuitive but correct: the **high-miss configuration gains the most**
+  because the +1 cycle on the data-bank read pipeline is absorbed into the
+  miss-fill cycle (which already waits 10s of cycles for DDR), so the
+  proportional overhead shrinks while the frequency gain stays at +20 %.
+
+**Conclusion**: the 300 MHz target is a net win on all measured workloads.
+The DB_LATENCY=3 + SDP_WRITE_INPUT_REG=1 knob combination is the recommended
+configuration for any deployment where the surrounding AXI infrastructure
+runs at 300 MHz.
