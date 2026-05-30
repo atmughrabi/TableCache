@@ -195,58 +195,120 @@ tb_inst  (l2_tagbank):  4 × RAMB36E2 + 2 × RAMB18E2 + 0 × URAM   (BRAM)
 db_inst  (l2_databank): 0 × RAMB36E2 + 0 × RAMB18E2 + 16 × URAM  (URAM)
 ```
 
-If `DATABANK_SDP=0` the data array also becomes BRAM (TDP, 133 BRAM
-tiles for the same 512 KB), and the trade-off flips:
+### Is the hybrid worth it? (all-BRAM vs hybrid vs all-URAM)
 
-| Mode | LUT  | BRAM | URAM | WNS (4 ns) | MHz |
-|---|---:|---:|---:|---:|---:|
-| SDP+URAM (recommended for multi-cache) | 1543 |   5 | 16 | +0.186 | ~262 |
-| TDP+BRAM (single cache, BRAM-rich part) | 2654 | 133 |  0 | +0.348 | ~273 |
+Measured side-by-side on U55C 512 KB / 8w / GRASP @ 4 ns target
+(post-synth):
 
-TDP+BRAM has slightly better timing (BRAM cascade is shorter than
-URAM288), but the BRAM budget binds at 16+ caches: 32 × 512 KB BRAM
-= 4256 BRAM (211 % of U55C) vs 160 BRAM (8 %) + 512 URAM (26 %) in
-SDP mode.
+| Topology                                | LUT  | BRAM | URAM | WNS (ns) | MHz post-synth | How to reproduce |
+|---|---:|---:|---:|---:|---:|---|
+| **All-BRAM** (TDP, `DATABANK_SDP=0`)    | 2654 | 133  |   0  | +0.348   | ~273 | `DATABANK_SDP=0 ./u55c_synth.sh` |
+| **Hybrid** (BRAM tag + URAM data, SDP=1, default) | 1543 |  5   |  16  | +0.186   | ~262 | `./u55c_synth.sh` |
+| All-URAM (force tag → URAM via `ram_style="ultra"` on `sdp_ram`)¹ | 1530 |  0   |  19  | +0.186   | ~262 | source-edit only; not exposed as a knob |
+
+¹ Force-URAM is a one-line experimental hack to `src/sdp_ram.sv`:
+adding `, ram_style = "ultra"` to the `(* cascade_height = ... *)`
+attribute on line 46. Not shipped as a parameter because URAM is
+intrinsically a poor fit for the tag aspect ratio (1024-deep × 240-wide
+fills ~16 % of 4 URAM blocks).
+
+**Per-CU device-utilization arithmetic for 32 caches on U55C**
+(1936 URAM / 2016 BRAM):
+
+| Topology   | Total LUT | URAM (% of 1936) | BRAM (% of 2016) | Verdict |
+|---|---:|---:|---:|---|
+| All-BRAM   | 84 928 |   0 ( 0 %)  | **4 256 (211 %)** | ✗ INFEASIBLE — BRAM-bound past ~6 caches |
+| **Hybrid** | 49 376 | 512 (26 %)  | **160 (8 %)**     | ✓ comfortable; uses BOTH memory pools |
+| All-URAM   | 48 960 | 608 (31 %)  |   0 ( 0 %)        | ✓ works; concentrates pressure on URAM only |
+
+**Recommendation**: hybrid is the default for multi-CU deployments
+because it spreads memory pressure across both pools (leaving budget
+for other accelerator memories — interconnect FIFOs, scratchpads,
+weight tables, etc.). All-URAM is acceptable if BRAM is needed elsewhere
+and URAM is plentiful. All-BRAM is only viable for single-cache
+designs on BRAM-rich parts (e.g., U250 at 256-512 KB).
+
+The post-synth timing is **identical between hybrid and all-URAM**
+(+0.186 ns at 4 ns target on U55C). The LUT/FF count is also within
+~1 %. So the choice is purely a question of which memory pool you
+want to draw from.
+
+### TDP+BRAM is faster, but doesn't scale
+
+| Mode | LUT  | BRAM | URAM | WNS (4 ns) | MHz | Scales to 32 CUs? |
+|---|---:|---:|---:|---:|---:|---|
+| SDP+URAM (recommended) | 1543 |   5 | 16 | +0.186 | ~262 | yes |
+| TDP+BRAM | 2654 | 133 |  0 | +0.348 | ~273 | **no** (BRAM-bound) |
+
+TDP+BRAM has slightly better post-synth WNS because the BRAM cascade
+is shorter than URAM288, but the BRAM budget binds at 16+ caches.
+The +0.162 ns of slack is not worth the 27× BRAM expansion.
 
 ## 300 MHz push (`PERIOD_NS=3.333`)
 
 The default deployment closes 250 MHz comfortably. Pushing to 300 MHz
-needs the knobs below. Measured on U55C 512 KB / 8w / GRASP /
-SDP+URAM:
+needs the knobs below.
+
+### What the knobs change (and what they DON'T)
+
+These are existing-pipeline-depth knobs, not new RTL structure:
+
+| Knob | Default | 300 MHz value | Effect | Functional cost |
+|---|---:|---:|---|---|
+| `DB_LATENCY` | 2 | **3** | +1 stage on data-bank READ pipeline | Every miss-fill + every data read takes 1 more cycle |
+| `SDP_WRITE_INPUT_REG` | 0 | **1** | +1 register on the URAM write port | Writes commit at cycle N+2 instead of N+1; FSM `WRITING → READY → READING` absorbs it |
+| `PLACE_DIRECTIVE` | `Default` | `ExtraNetDelay_high` | timing-driven placer | none (PnR-only) |
+| `PHYS_DIRECTIVE` | `Default` | `AggressiveExplore` | post-place / post-route opt | none (PnR-only) |
+| `ROUTE_DIRECTIVE` | `Default` | `AggressiveExplore` | aggressive route exploration | none (PnR-only) |
+
+No new RTL pipeline stages are added; we use what's already parameterised.
+The tag/data BRAM/URAM topology is unchanged — see "Tag/data RAM-primitive
+split" above for its breakdown.
+
+### Sweep on U55C (post-synth WNS @ 3.333 ns target)
 
 | `DB_LATENCY` | `SDP_WRITE_INPUT_REG` | WNS @ 3.333 ns | Effective MHz |
 |---:|---:|---:|---:|
 | 2 | 0 | -0.481 | ~262 |
-| 2 | 1 | -0.411 | ~267 |
-| 3 | 0 | -0.372 | ~270 |
-| 3 | 1 | -0.372 | ~270 (post-synth) |
+| 2 | 1 | -0.411 | ~267 (+5 MHz from WIR) |
+| 3 | 0 | -0.372 | ~270 (+8 MHz from DBL=3) |
+| **3** | **1** | **-0.372** | **~270 (post-synth)** |
 
-At `DB_LATENCY=3 + SDP_WRITE_INPUT_REG=1` the binding path moves
-from the databank URAM-input chain (broken by `WIR=1`) to the
-tagbank BRAM-enable path (`saved_arvalid` → 13 LUTs →
-`tb_inst/tagbank BRAM ENARDEN`). This path is 75 % route-bound at
-the post-synth stage, so placement strategy recovers it during PnR.
+At `DB_LATENCY=3 + SDP_WRITE_INPUT_REG=1` the binding path moves from
+the databank URAM-input chain (broken by `WIR=1`) to the tagbank
+BRAM-enable path: `saved_arvalid` → 13 LUTs → `tb_inst/tagbank BRAM
+ENARDEN`. This path is 75 % route-bound at the post-synth stage, so
+placement strategy recovers it during PnR.
 
-### Post-route closure at 300 MHz
+### Post-route results across all three target boards
 
 ```bash
-PERIOD_NS=3.333 \
-  DB_LATENCY=3 \
-  SDP_WRITE_INPUT_REG=1 \
+# Use ./u55c_synth.sh with PART= override for portability, or use the
+# board-specific wrapper. Same RTL knobs apply.
+PERIOD_NS=3.333 DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 \
   PLACE_DIRECTIVE=ExtraNetDelay_high \
   PHYS_DIRECTIVE=AggressiveExplore \
   ROUTE_DIRECTIVE=AggressiveExplore \
   PNR=1 ./u55c_synth.sh
 ```
 
-| Stage      | WNS (ns) | Effective MHz | Notes |
-|---|---:|---:|---|
-| post-synth | -0.372   | ~270 | binding: `saved_arvalid` → tagbank BRAM enable (75 % route) |
-| **post-route** | **+0.127** | **~312** | **MET — 0 failing endpoints, hold +0.020 ns, pulse-width +0.966 ns** |
+| Board | Part | Silicon | LUT  | BRAM | URAM | WNS (ns) | Effective MHz |
+|---|---|---|---:|---:|---:|---:|---:|
+| **U55C** | `xcu55c-fsvh2892-2L-e`     | production | 1543 | 5 | 16 | **+0.127** | **~312** ✓ |
+| **U250** | `xcu250-figd2104-2L-e`     | production | 1567 | 5 | 16 | **+0.064** | **~305** ✓ |
+| V80      | `xcv80-lsva4737-2MHP-e-S`  | ES         | 1666 | 5 | 16 | -0.524 | ~287 (clock-uncertainty bound; production silicon should close) |
 
-Functional regression at this knob combo (`POLICY=GRASP DB_LATENCY=3
-SDP_WRITE_INPUT_REG=1 DATABANK_SDP=1`): test_smoke + test_random +
-test_grasp + test_workload all PASS (8 tests / 4 modules).
+Both production-silicon UltraScale+ HBM boards close 300 MHz with
+margin. V80 misses by ~15 MHz because the ES speed file reports
+`clock_uncertainty = 0.300 ns` (vs ~0.035 ns on UltraScale+) — the
+same penalty seen at the 250 MHz target. Production V80 silicon
+should close 300 MHz cleanly.
+
+Functional regression at the 300 MHz knob combo (`POLICY=GRASP
+DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 DATABANK_SDP=1`): test_smoke +
+test_random + test_grasp + test_workload all PASS (8 tests / 4
+modules).
+
 
 The PnR run takes ~10–15 minutes on a typical workstation. The
 `ExtraNetDelay_high` placement directive and `AggressiveExplore`
