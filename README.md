@@ -19,7 +19,7 @@ A configurable, ACE-Lite-snoopable L2 data cache for FPGA accelerators,
 with a narrow-port shim, a flush sequencer, and a verification campaign
 that pins it at:
 
-- **21 cocotb modules / 67 tests** all PASS, AXI4 protocol-checker clean
+- **29 cocotb modules / 85 tests** all PASS, AXI4 protocol-checker clean
 - **88% Verilator** line+toggle coverage (98.7% on `l2_cache.sv`)
 - **100% of reachable** functional coverage (covergroups + crosses)
 - **100%** mutation score on **all 18** mutation-instrumented RTL files
@@ -74,7 +74,7 @@ that pins it at:
 
 ```
 src/                  RTL (cache + narrow-port shim + flush controller)
-tb/cocotb/            cocotb regression (21 modules, 67 tests)
+tb/cocotb/            cocotb regression (29 modules, 85 tests)
 tb/formal/            yosys+z3 SMTBMC harnesses (fifo.sv proofs)
 tb/{Makefile,*.sv}    legacy SV directed TB (upstream)
 syn/vivado/           OOC synthesis flow (U250 default; V80 preset)
@@ -108,7 +108,7 @@ cd tb/cocotb && source .venv/bin/activate
 # single test
 make MODULE=test_smoke
 
-# full regression (21 modules)
+# full regression (29 modules)
 for mod in test_smoke test_random test_scoreboard test_strobe test_latency \
            test_lru_sanity test_workload test_cbom test_reset_recovery \
            test_graph_patterns test_backpressure test_realism \
