@@ -168,10 +168,94 @@ URAM cascade write-data input (`CAS_IN_DIN_B[*]`).
   test_smoke / test_random / test_scoreboard / test_workload /
   test_reset_recovery / test_backpressure / test_strobe / test_latency
   × {LRU, GRASP} with `+define+TC_SDP_WRITE_INPUT_REG=1`.
-- **WNS impact**: ~0 ns under the new `default` directive (the path was
-  already broken by smarter synth). Kept as a defensive knob for
-  configurations where the chain re-emerges (e.g. wider WAYS,
-  alternative synthesis tools).
+- **WNS impact at 4.0 ns**: ~0 ns under the `default` directive (the
+  path is already broken by smarter synth).
+- **WNS impact at 3.333 ns (300 MHz)**: +0.070 ns on U55C
+  512KB / 8w / GRASP / SDP+URAM. Kept as a knob for any configuration
+  where the chain re-emerges (wider WAYS, alternative synthesis tools).
+
+## Tag / data RAM-primitive split
+
+The cache uses different RAM primitives for the tag and data arrays.
+This is automatic — set `DATABANK_SDP=1` for URAM-rich deployments
+and the topology is:
+
+| Array       | Module                  | Primitive    | Rationale                              |
+|-------------|-------------------------|--------------|----------------------------------------|
+| **Tag**     | `l2_tagbank.sv`         | **BRAM**     | Small (`LINES × WAYS × ~30b`); auto-inferred by Vivado via `sdp_ram_padded_rst`. Padding aligns to 8/9-bit boundaries to reduce BRAM count. |
+| **Data**    | `l2_databank.sv`        | **URAM**     | Large (`LINES × LINE_W × WAYS × BLOCK_W` ≥ 256 KB); forced via `sdp_ram_uram` (hardcoded `ram_style="ultra"`). |
+| Output FIFO | `l2_cache.sv`           | LUTRAM       | Small, deep ~16-32 entries. |
+| Victim cache (if enabled) | `victim_cache.sv` | LUTRAM | Small fully-associative; LUTs only. |
+
+Measured on U55C `xcu55c-fsvh2892-2L-e`, 512 KB / 8w / SDP+URAM
+(see `build/u55c_512K_w8_p5_period4.0_pnr1/utilization_hier.rpt`):
+
+```
+tb_inst  (l2_tagbank):  4 × RAMB36E2 + 2 × RAMB18E2 + 0 × URAM   (BRAM)
+db_inst  (l2_databank): 0 × RAMB36E2 + 0 × RAMB18E2 + 16 × URAM  (URAM)
+```
+
+If `DATABANK_SDP=0` the data array also becomes BRAM (TDP, 133 BRAM
+tiles for the same 512 KB), and the trade-off flips:
+
+| Mode | LUT  | BRAM | URAM | WNS (4 ns) | MHz |
+|---|---:|---:|---:|---:|---:|
+| SDP+URAM (recommended for multi-cache) | 1543 |   5 | 16 | +0.186 | ~262 |
+| TDP+BRAM (single cache, BRAM-rich part) | 2654 | 133 |  0 | +0.348 | ~273 |
+
+TDP+BRAM has slightly better timing (BRAM cascade is shorter than
+URAM288), but the BRAM budget binds at 16+ caches: 32 × 512 KB BRAM
+= 4256 BRAM (211 % of U55C) vs 160 BRAM (8 %) + 512 URAM (26 %) in
+SDP mode.
+
+## 300 MHz push (`PERIOD_NS=3.333`)
+
+The default deployment closes 250 MHz comfortably. Pushing to 300 MHz
+needs the knobs below. Measured on U55C 512 KB / 8w / GRASP /
+SDP+URAM:
+
+| `DB_LATENCY` | `SDP_WRITE_INPUT_REG` | WNS @ 3.333 ns | Effective MHz |
+|---:|---:|---:|---:|
+| 2 | 0 | -0.481 | ~262 |
+| 2 | 1 | -0.411 | ~267 |
+| 3 | 0 | -0.372 | ~270 |
+| 3 | 1 | -0.372 | ~270 (post-synth) |
+
+At `DB_LATENCY=3 + SDP_WRITE_INPUT_REG=1` the binding path moves
+from the databank URAM-input chain (broken by `WIR=1`) to the
+tagbank BRAM-enable path (`saved_arvalid` → 13 LUTs →
+`tb_inst/tagbank BRAM ENARDEN`). This path is 75 % route-bound at
+the post-synth stage, so placement strategy recovers it during PnR.
+
+### Post-route closure at 300 MHz
+
+```bash
+PERIOD_NS=3.333 \
+  DB_LATENCY=3 \
+  SDP_WRITE_INPUT_REG=1 \
+  PLACE_DIRECTIVE=ExtraNetDelay_high \
+  PHYS_DIRECTIVE=AggressiveExplore \
+  ROUTE_DIRECTIVE=AggressiveExplore \
+  PNR=1 ./u55c_synth.sh
+```
+
+| Stage      | WNS (ns) | Effective MHz | Notes |
+|---|---:|---:|---|
+| post-synth | -0.372   | ~270 | binding: `saved_arvalid` → tagbank BRAM enable (75 % route) |
+| **post-route** | **+0.127** | **~312** | **MET — 0 failing endpoints, hold +0.020 ns, pulse-width +0.966 ns** |
+
+Functional regression at this knob combo (`POLICY=GRASP DB_LATENCY=3
+SDP_WRITE_INPUT_REG=1 DATABANK_SDP=1`): test_smoke + test_random +
+test_grasp + test_workload all PASS (8 tests / 4 modules).
+
+The PnR run takes ~10–15 minutes on a typical workstation. The
+`ExtraNetDelay_high` placement directive and `AggressiveExplore`
+route directive together recover ~0.5 ns by placing the
+`saved_arvalid` register physically adjacent to the tagbank BRAM
+column, reducing the 2.5 ns post-synth routing estimate to <0.5 ns
+of actual track delay.
+
+
 
 ## V80 (Versal Premium) preset — `v80_synth.sh`
 
