@@ -17,9 +17,9 @@ without committing to a full IO ring / shell context.
     vs ~0.035 ns on production UltraScale+ parts, costing ~0.25 ns of
     WNS purely from characterisation conservatism)
 - Target clock: 250 MHz (`PERIOD_NS=4.0` default; override for other targets)
-- Directive: `default` (was `AreaOptimized_high` pre-2026-05 — that variant
-  costs ~1.3 ns of WNS on the big SDP+URAM databank critical path and is
-  no longer the default. Set `DIRECTIVE=AreaOptimized_high` to restore.)
+- Directive: `default` (the `AreaOptimized_high` variant costs ~1.3 ns of
+  WNS on the big SDP+URAM databank critical path; set
+  `DIRECTIVE=AreaOptimized_high` to opt into it.)
 
 ## Usage
 
@@ -54,11 +54,11 @@ Supported env-var parameter overrides:
   (0=LRU, 1=FRQ, 2=SECOND_CHANCE, 3=RANDOM, 4=SRRIP, 5=GRASP).
 - `REPLACEMENT_POLICY` — equivalent name for `l2_top` (which has an
   integer wrapper parameter cast to `POLICY` internally). **Setting
-  `REPLACEMENT_POLICY` on `TOP=l2_cache` is a no-op** — pre-fix runs
-  silently defaulted to LRU. Use `POLICY` for `l2_cache`.
+  `REPLACEMENT_POLICY` on `TOP=l2_cache` is a no-op** and silently
+  defaults to LRU. Use `POLICY` for `l2_cache`.
 - `WAYS`, `LINES`, `LINE_W`, `INCLUDE_VICTIM`, `VICTIM_LINES`,
   `DATABANK_SDP`, `DB_LATENCY`, `SDP_WRITE_INPUT_REG`.
-- `DIRECTIVE` (default `default`; tried `AreaOptimized_high`,
+- `DIRECTIVE` (default `default`; alternatives `AreaOptimized_high`,
   `PerformanceOptimized`).
 - `PERIOD_NS` (default `4.0` ns for 250 MHz; `3.333` for 300 MHz).
 
@@ -71,11 +71,7 @@ build/<TOP>/methodology.rpt
 build/<TOP>/synth.log              full stdout (Vivado warnings + INFO)
 ```
 
-## Headline results on U250 @ 250 MHz target (post-fix, `default` directive)
-
-The pre-fix numbers used `AreaOptimized_high` and `REPLACEMENT_POLICY=4`
-(silently dropped → LRU under `TOP=l2_cache`). Cross-check against the
-older `sweep_results.md` for the comparison.
+## Headline results on U250 @ 250 MHz target (`default` directive)
 
 ### `l2_cache` defaults (4-way / 512 sets / 8-block line, victim cache on, LRU)
 | Resource    | Used | %device |
@@ -84,8 +80,6 @@ older `sweep_results.md` for the comparison.
 | CLB FFs     | 930  | 0.03 %  |
 | BRAM tiles  | 18   | 0.67 %  |
 | URAM        | 0    | 0.00 %  |
-| WNS (pre-fix)  | -0.974 ns @ 4.0 ns (~201 MHz) |
-| WNS (post-fix) | TBD — re-run with `./sweep.sh` |
 
 ### `l2_cache` 512 KB / 8-way / 16-block line / **GRASP** / **SDP+URAM** databank / no victim / DB_LATENCY=2
 | Resource    | Used  | %device |
@@ -323,19 +317,17 @@ absolute number in SDP mode reflects demand-as-if-TDP, not actual port
 usage. The throughput delta is most reliably measured by sim cycle
 count, not by the in-RTL counters.
 
-### `REPLACEMENT_POLICY` vs `POLICY` (fixed 2026-05)
-Pre-fix `run_synth.tcl` only accepted `REPLACEMENT_POLICY` as a generic.
+### `REPLACEMENT_POLICY` vs `POLICY`
 `l2_cache` declares the parameter as `POLICY` (typed
 `replacement_policy_t`); `l2_top` declares an integer
 `REPLACEMENT_POLICY` that it casts. Setting `REPLACEMENT_POLICY` when
-`TOP=l2_cache` produced `WARNING: [Synth 8-3301] Unused top level
-parameter/generic REPLACEMENT_POLICY` and silently fell back to LRU.
-Every "policy sweep" run targeting `l2_cache` was therefore a LRU run.
-Post-fix the script accepts both names; use `POLICY` for `l2_cache`.
+`TOP=l2_cache` produces `WARNING: [Synth 8-3301] Unused top level
+parameter/generic REPLACEMENT_POLICY` and silently falls back to LRU.
+`run_synth.tcl` accepts both names; use `POLICY` for `l2_cache`.
 
-### `AreaOptimized_high` directive (changed default 2026-05)
-The legacy default directive prioritises LUT count over WNS. On the
-512 KB / 8-way / SDP+URAM config it costs ~1.36 ns of WNS vs the
+### `AreaOptimized_high` directive
+The `AreaOptimized_high` directive prioritises LUT count over WNS. On
+the 512 KB / 8-way / SDP+URAM config it costs ~1.36 ns of WNS vs the
 `default` directive (which also produces fewer LUTs in this case:
-1493 vs 2092). The new default is `default`; set
-`DIRECTIVE=AreaOptimized_high` to restore the old behaviour.
+1493 vs 2092). `default` is the recommended directive; set
+`DIRECTIVE=AreaOptimized_high` to opt into the older behaviour.

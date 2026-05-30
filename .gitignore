@@ -43,12 +43,15 @@ webtalk*.log
 
 # Out-of-context synth flow under syn/vivado/ leaves per-run artefacts.
 # Only the run scripts (run_synth.sh, run_synth.tcl, sweep.sh,
-# v80_synth.sh, v80_synth_pnr.tcl) and the curated results markdown
-# (README.md, sweep_results.md) are versioned.
+# v80_synth.sh, v80_synth_pnr.tcl, u55c_synth.sh, u55c_synth_pnr.tcl)
+# and the curated results markdown (README.md, sweep_results.md) are
+# versioned.
 syn/vivado/build/
 syn/vivado/build_v80/
+syn/vivado/build_u55c/
 syn/vivado/sweep_logs/
 syn/vivado/sweep_main.log
+syn/build_post_pnr/
 
 # ---- Editor / OS ----------------------------------------------------------
 .vscode/
@@ -66,5 +69,3 @@ research/
 # Verilator coverage outputs (per-run; merged data goes to /tmp)
 coverage.dat
 **/coverage.dat
-syn/build_post_pnr/
-syn/vivado/build_u55c/

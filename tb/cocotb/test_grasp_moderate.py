@@ -2,26 +2,26 @@
 
 The mutation flips `updated_RRPV[j] -= 1'b1` to `+= 1'b1` in the
 SRRIP-FP-fallback hit-promotion branch of GRASP.sv (the `else` after
-`if (high_reuse)`). It survived the initial mutation matrix because:
+`if (high_reuse)`). Detecting it requires a workload that exposes the
+RRPV-drift differential between correct (decrement, saturate at 0)
+and mutant (increment toward MAX_RRPV) behavior.
 
-  - In pure SRRIP-FP fallback (no GRASP region configured), cold inserts
-    land at RRPV=MAX_RRPV. The mutant immediately wraps MAX+1 -> 0 on
-    the first hit, then the `!= 0` guard stalls it there -- same end
-    state as correct after 3 hits.
-  - The existing hot/cold workloads only configure the HOT region;
-    HOT_HIT_RRPV always pins to 0 (line 88), so the mutated branch
-    never fires.
+Pure SRRIP-FP fallback doesn't work: cold inserts land at RRPV=MAX,
+so the mutant's `+= 1` immediately wraps to 0 on the first hit (the
+`!= 0` guard then stalls it there), matching the correct end state.
+HOT-region tests don't work either: `if (high_reuse)` short-circuits
+to `HOT_HIT_RRPV` and never reaches the mutated branch.
 
-The crack: configure the MODERATE region to cover ONLY the target line
-A (inserts at RRPV=1), and put the conflicting lines OUTSIDE moderate
-(SRRIP-FP fallback -> inserted at MAX_RRPV=7 with the 3-bit GRASP RRPV).
-Hit A six times -- mutant climbs 1->2->3->4->5->6->7=MAX, correct stays
-at 0. Then issue ONE set-aliased conflicting miss: mutant has A at MAX,
-so A is the victim and gets evicted; correct has A at 0 and evicts one
-of the other (MAX-RRPV) ways.
+Configuring ONLY the MODERATE region (RRPV=1 insert) and hitting the
+target line six times pushes the mutant 1 -> 2 -> ... -> 7 (MAX_RRPV
+with the 3-bit GRASP RRPV) while correct decrements to 0 and
+saturates. A single set-conflicting miss outside the moderate region
+(which goes through SRRIP-FP -> RRPV=MAX_RRPV) then evicts A on the
+mutant (A at MAX, leftmost tie-break picks it) and keeps A on correct
+(A unique at 0, other ways evicted first).
 
 Lives in its own module so cocotb gives a fresh sim/cache state
-(test-isolation within a module is imperfect, see test_grasp.py
+(test-isolation within a single MODULE is imperfect, see test_grasp.py
 preamble).
 """
 from __future__ import annotations

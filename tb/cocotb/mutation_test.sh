@@ -294,8 +294,8 @@ case "$FILE" in
         # modules so cocotb gives a fresh sim/cache state; isolation
         # within a single MODULE is imperfect because the sdp_ram_rst
         # LFSR sweep doesn't fully clear all cache state under back-
-        # to-back tests, and that contamination originally masked 2 of
-        # the GRASP mutations during the first sweep.
+        # to-back tests. That contamination can mask hit-promotion
+        # mutations whose discriminator is cumulative RRPV state.
         DEFAULT_TESTS="test_smoke test_grasp test_grasp_pressure test_grasp_moderate test_workload test_random"
         export POLICY=GRASP
         MUTATIONS=(

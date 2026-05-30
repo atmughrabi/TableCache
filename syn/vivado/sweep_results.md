@@ -1,9 +1,7 @@
-# TableCache OOC sweep — U250, post-2026-05 timing-closure work
+# TableCache OOC sweep — U250
 
 Vivado 2025.2, `xcu250-figd2104-2L-e`, 250 MHz target (4.0 ns clock),
-**`default` directive** (was `AreaOptimized_high` until 2026-05; the new
-default is both faster and uses fewer LUTs — see "Synth-flow fixes"
-below). Out-of-context (no IO ring, no PnR).
+`default` directive. Out-of-context (no IO ring, no PnR).
 
 Per-run reports under `sweep_logs/`. Re-run with `./sweep.sh` from this
 directory.
@@ -11,11 +9,6 @@ directory.
 ---
 
 ## Baseline sweep — `POLICY=4 (SRRIP)`, `INCLUDE_VICTIM=1`, `VICTIM_LINES=16`, `DB_LATENCY=1`
-
-This is the closest equivalent to the pre-2026-05 numbers. It now also
-reflects the actual SRRIP policy (the pre-fix sweep silently dropped the
-policy override and synthesised LRU everywhere — see "Synth-flow fixes"
-section below).
 
 | Config        | Mode | LUT  | FF   | BRAM  | URAM | WNS (ns) | Effective MHz* |
 |---------------|------|-----:|-----:|------:|-----:|---------:|---------------:|
@@ -27,25 +20,6 @@ section below).
 | 512 KB / 8-way | SDP | 1985 | 1180 |   4.5 |  16  |   -0.612 |  ~217          |
 | 1 MB / 8-way   | TDP | 3594 | 1219 | 257   |   2  |   -0.006 |  ~250 (just under) |
 | 1 MB / 8-way   | SDP | 1966 | 1176 |   1   |  34  |   -1.398 |  ~185          |
-
-Recovery vs pre-2026-05 (same configs, AreaOptimized_high, LRU):
-
-| Config         | Mode | Old WNS  | New WNS | Δ (ns)  |
-|----------------|------|---------:|--------:|--------:|
-| 256 KB / 4-way | TDP  |  -1.018  | +0.272  | **+1.29** |
-| 256 KB / 4-way | SDP  |  -1.000  | +0.202  | +1.20   |
-| 256 KB / 8-way | TDP  |  -1.390  | +0.277  | +1.67   |
-| 256 KB / 8-way | SDP  |  -1.740  | +0.100  | +1.84   |
-| 512 KB / 8-way | TDP  |  -2.016  | +0.059  | +2.08   |
-| 512 KB / 8-way | SDP  |  -2.543  | -0.612  | +1.93   |
-| 1 MB / 8-way   | TDP  |  -2.042  | -0.006  | +2.04   |
-| 1 MB / 8-way   | SDP  |  -3.321  | -1.398  | +1.92   |
-
-The `default` directive alone recovers 1.2-2.0 ns of WNS on every
-configuration. Some of the apparent gain comes from the fix to the
-**POLICY vs REPLACEMENT_POLICY** silent-drop bug too — the pre-fix
-"SRRIP" numbers were actually LRU, which is simpler logic; the new
-SRRIP/GRASP numbers compare like-for-like.
 
 \*Effective MHz = 1000 / (4.0 ns - WNS). For WNS ≥ 0 it's a lower bound
 (timing met → no constraint from this slack), for WNS < 0 it's the
@@ -131,8 +105,7 @@ At `PERIOD_NS=3.333` (300 MHz) the same tuned configuration:
 
 The remaining ~0.4 ns gap is structural: the cache controller's
 combinational reductions across FIFO-state LFSRs would need
-multi-stage pipelining to clear. Out of scope for this work cycle —
-see "Open follow-ups" below.
+multi-stage pipelining to clear. See "Open follow-ups" below.
 
 ---
 
@@ -171,44 +144,35 @@ memories.
 
 ---
 
-## Synth-flow fixes (this cycle)
+## Synth-flow notes
 
-Two pre-existing bugs in the synth flow corrupted the prior sweep
-numbers and are fixed here:
-
-### 1. `REPLACEMENT_POLICY` silently dropped for `TOP=l2_cache`
+### 1. `POLICY` vs `REPLACEMENT_POLICY`
 The `l2_top` wrapper declares an integer `REPLACEMENT_POLICY` parameter
 that gets cast to `replacement_policy_t POLICY` for its internal
 `l2_cache` instance. The `l2_cache` module itself declares the parameter
 as `POLICY`.
 
-Pre-fix `run_synth.tcl` only forwarded `REPLACEMENT_POLICY` via
-`-generic`. When `TOP=l2_cache`, Vivado emitted
+`run_synth.tcl` accepts both names. Use `POLICY=4` (SRRIP) or `POLICY=5`
+(GRASP) for `TOP=l2_cache`; use `REPLACEMENT_POLICY=N` for `TOP=l2_top`.
+If only `REPLACEMENT_POLICY` is set with `TOP=l2_cache`, Vivado emits
 `WARNING: [Synth 8-3301] Unused top level parameter/generic
-REPLACEMENT_POLICY` and synthesised LRU regardless of the user's
-intent. Every "SRRIP sweep" run targeting `l2_cache` was an LRU sweep.
+REPLACEMENT_POLICY` and silently synthesises LRU.
 
-Fix: `run_synth.tcl` now accepts both `POLICY` and `REPLACEMENT_POLICY`.
-Use `POLICY=4` (SRRIP) or `POLICY=5` (GRASP) for `TOP=l2_cache`; use
-`REPLACEMENT_POLICY=N` for `TOP=l2_top`.
+### 2. `AreaOptimized_high` directive cost
+The `AreaOptimized_high` directive prioritises LUT count over WNS. On
+the 512 KB / 8-way / SDP+URAM config it costs ~1.36 ns of WNS vs the
+`default` directive (which also produces fewer LUTs in the tuned
+configuration: 1493 vs 2092). `default` is the recommended directive;
+set `DIRECTIVE=AreaOptimized_high` to opt into the older behaviour.
 
-### 2. `AreaOptimized_high` directive sabotaged WNS
-The hardcoded `AreaOptimized_high` directive prioritises LUT count
-over WNS. On the 512 KB / 8-way / SDP+URAM config it cost ~1.36 ns of
-WNS vs the `default` directive (which also produced fewer LUTs in the
-tuned configuration: 1493 vs 2092). The new default directive is
-`default`; set `DIRECTIVE=AreaOptimized_high` to restore the old
-behaviour.
-
-### 3. `SDP_WRITE_INPUT_REG` parameter added
-New optional 1-cycle register on the SDP URAM write port (en / wbe /
-data / addr). Targets the residual critical path when the wide LUT
-chain from cache-FSM/FIFO LFSRs into `URAM CAS_IN_DIN_B[*]` reappears
-(e.g. under aggressive directive variants or wider WAYS). Off by
-default; functionally verified (32/32 regression PASS) for both LRU
-and GRASP. Costs 1 cycle of write commit latency, safe under the
-cache FSM's `WRITING → READY → READING` serialisation. See
-[`syn/vivado/README.md`](README.md) for usage.
+### 3. `SDP_WRITE_INPUT_REG` parameter
+Optional 1-cycle register on the SDP URAM write port (en / wbe / data /
+addr). Targets the residual critical path when the wide LUT chain from
+cache-FSM / FIFO LFSRs into `URAM CAS_IN_DIN_B[*]` reappears (e.g. under
+aggressive directive variants or wider WAYS). Off by default;
+functionally verified for both LRU and GRASP. Costs 1 cycle of write
+commit latency, safe under the cache FSM's `WRITING → READY → READING`
+serialisation. See [`syn/vivado/README.md`](README.md) for usage.
 
 ---
 
@@ -221,11 +185,11 @@ cache FSM's `WRITING → READY → READING` serialisation. See
 - **300 MHz**: needs structural pipelining of the cache controller's
   combinational reductions (output-FIFO `lfsr_read_index` →
   `unpacked_wbe[0]` chain is the residual binding path at 3.333 ns).
-  Best post-fix at 3.333 ns is -0.37 ns (~228 MHz) on 512K/8w SDP+URAM
+  Best at 3.333 ns is -0.37 ns (~228 MHz) on 512K/8w SDP+URAM
   GRASP with DB_LATENCY=3, no victim.
-- **U280 / V80 ports**: `PART=xcu280-fsvh2892-2L-e ./sweep.sh` should
-  produce a comparable table on U280. V80 needs Vivado 2024.x+ with
-  Versal support.
+- **U280 / V80 / U55C ports**: `PART=xcu280-fsvh2892-2L-e ./sweep.sh`
+  produces a comparable table on U280. V80 and U55C presets live in
+  [`v80_synth.sh`](v80_synth.sh) and [`u55c_synth.sh`](u55c_synth.sh).
 - **Bank-balanced SDP**: see
   [doc/DESIGN_BANKED_SDP_DATABANK.md](../../doc/DESIGN_BANKED_SDP_DATABANK.md)
   for a proposal to recover the 6.3 % SDP throughput cost at ~2 weeks
