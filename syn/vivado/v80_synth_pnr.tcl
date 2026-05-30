@@ -69,6 +69,15 @@ report_timing_summary     -file $out/timing_summary.rpt
 report_methodology        -file $out/methodology.rpt
 report_drc                -file $out/drc.rpt
 
+# Routed netlist for post-PnR functional sim. The Verilog form keeps
+# UNISIM primitives (LUT6, FDRE, URAM288E5, ...) and references the
+# implicit `glbl` module; downstream consumers need a UNISIM-aware
+# simulator (Vivado xsim, VCS, ModelSim with the Xilinx libs) -- this
+# is OUT OF REACH of Verilator. The SDF gives back-annotated delays
+# for timing-aware sim. See post_pnr_sim.sh for the consumer skeleton.
+write_verilog -mode timesim -sdf_anno true -force $out/routed_netlist.v
+write_sdf -force $out/routed_netlist.sdf
+
 puts "==== POST-ROUTE TIMING SUMMARY ===="
 puts [exec grep -E "(WNS|TNS|WHS|THS)" $out/timing_summary.rpt | head -10]
 
