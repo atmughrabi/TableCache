@@ -32,9 +32,11 @@ for seed in $(seq 1 $N_SEEDS); do
     EXTRA_ARGS="+define+TC_DATABANK_SDP=1" POLICY=GRASP SEED=$seed NTXN=$NTXN \
         timeout 90 make MODULE=test_random > "$OUT/seed_${seed}.log" 2>&1
     rc=$?
-    pc=$(grep -c AXI_PC_VIOLATION "$OUT/seed_${seed}.log" 2>/dev/null || echo 0)
-    fail_n=$(grep -oE 'FAIL=[0-9]+' "$OUT/seed_${seed}.log" | head -1 | grep -oE '[0-9]+' || echo 0)
-    if [[ $rc -ne 0 || ${fail_n:-0} -ne 0 || ${pc:-0} -ne 0 ]]; then
+    pc=$(grep -c AXI_PC_VIOLATION "$OUT/seed_${seed}.log" 2>/dev/null)
+    pc=${pc:-0}
+    fail_n=$(grep -oE 'FAIL=[0-9]+' "$OUT/seed_${seed}.log" 2>/dev/null | head -1 | grep -oE '[0-9]+')
+    fail_n=${fail_n:-0}
+    if [[ $rc -ne 0 || $fail_n -ne 0 || $pc -ne 0 ]]; then
         fail=$((fail+1))
         log "  seed $seed FAIL rc=$rc fail=$fail_n pc=$pc"
         [[ -z $first_fail ]] && first_fail=$seed
