@@ -319,6 +319,92 @@ of actual track delay.
 
 
 
+## 8-way deployment matrix (validated)
+
+The cross-board, cross-size, cross-target reference for an 8-way
+SDP+URAM/GRASP deployment. All numbers are **post-route** (place +
+route + phys_opt), `WAYS=8`, `LINES=1024` (512 KB) or `LINES=2048`
+(1 MB), `LINE_W=16`, `BLOCK_W=32`, `POLICY=GRASP`, `INCLUDE_VICTIM=0`,
+`DATABANK_SDP=1`. The "tuned" rows add `DB_LATENCY=3 +
+SDP_WRITE_INPUT_REG=1 + PLACE/PHYS/ROUTE_DIRECTIVE=ExtraNetDelay_high/
+AggressiveExplore/AggressiveExplore`.
+
+### 512 KB / 8-way (LINES=1024 LINE_W=16)
+
+| Board | Silicon | Knobs | Target MHz | LUT | BRAM | URAM | WNS post-route (ns) | Achievable MHz | Status |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| U250    | production | baseline | 250 | 1493 | 5 | 16 | +0.088 |  256 | ✓ MET |
+| **U250**| production | **tuned** | **300** | 1567 | 5 | 16 | **+0.064** |  **305** | **✓ MET** |
+| U55C    | production | baseline | 250 | 1547 | 5 | 16 | -0.022 |  249 | ✓ (essentially MET; one route reseed closes) |
+| **U55C**| production | **tuned** | **300** | 1563 | 5 | 16 | **+0.127** |  **312** | **✓ MET** |
+| V80     | ES (-S)    | baseline | 200 | 1516 | 5 | 16 | +0.062 |  203 | ✓ MET |
+| V80     | ES (-S)    | tuned   | 250 | 1596 | 5 | 16 | -0.090 |  244 | misses by ~6 MHz |
+| V80     | ES (-S)    | tuned   | 300 | 1666 | 5 | 16 | -0.524 |  259 | ES clock-uncertainty bound; production silicon should lift this |
+
+### 1 MB / 8-way (LINES=2048 LINE_W=16)
+
+| Board | Silicon | Knobs | Target MHz | LUT | BRAM | URAM | WNS post-route (ns) | Achievable MHz | Status |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| U250    | production | baseline | 250 | 1493 | 2 | 34 | -0.122 |  243 | misses by ~7 MHz; baseline route reseed expected to close |
+| **U250**| production | **tuned** | **300** | 1578 | 2 | 34 | **+0.028** |  **302** | **✓ MET** |
+| U55C    | production | tuned    | 300 | 1585 | 2 | 34 | -0.140 |  288 | misses by 12 MHz; the 34-URAM cascade lengthens the critical path |
+
+### Per-cache resource scaling (8-way / SDP+URAM, post-route)
+
+| Cache size | LINES | LINE_W | BRAM | URAM | LUT  | FF  |
+|---|---:|---:|---:|---:|---:|---:|
+| 256 KB | 512  |  8 |  3 |   4 | ~1255 | ~640 |
+| 512 KB | 1024 | 16 |  5 |  16 | ~1547 | ~720 |
+| 1 MB   | 2048 | 16 |  2 |  34 | ~1585 | ~800 |
+| 2 MB   | 4096 | 16 |  2 |  66 | ~1577 | ~880 |
+
+### Multi-CU deployment arithmetic
+
+| Board | URAM budget | BRAM budget | LUT budget | 8-way / 512 KB × 16 CU | × 32 CU |
+|---|---:|---:|---:|---|---|
+| U250 | 1280 | 2688 | 1.7 M  |  80 BRAM (3 %) +  256 URAM (20 %) | 160 BRAM (6 %) + **512 URAM (40 %)** |
+| U55C | 1936 | 2016 | 1.3 M  |  80 BRAM (4 %) +  256 URAM (13 %) | 160 BRAM (8 %) +  512 URAM (26 %) |
+| V80  | 1925 | 3741 | 2.6 M  |  80 BRAM (2 %) +  256 URAM (13 %) | 160 BRAM (4 %) +  512 URAM (27 %) |
+
+| Board | URAM budget | 1 MB × 16 CU | 1 MB × 32 CU | 2 MB × 16 CU |
+|---|---:|---|---|---|
+| U250 | 1280 |  32 BRAM (1 %) + 544 URAM (43 %) |  64 BRAM (2 %) + **1088 URAM (85 %)** | infeasible (1056 URAM × 2 = 2112) |
+| U55C | 1936 |  32 BRAM (2 %) + 544 URAM (28 %) |  64 BRAM (3 %) + 1088 URAM (56 %)  | 32 BRAM (2 %) + 1056 URAM (55 %) |
+| V80  | 1925 |  32 BRAM (1 %) + 544 URAM (28 %) |  64 BRAM (2 %) + 1088 URAM (57 %)  | 32 BRAM (1 %) + 1056 URAM (55 %) |
+
+### Recommendation matrix
+
+| If you want | Use this board × config |
+|---|---|
+| **16-32 CU × 512 KB at 300 MHz**         | U250 or U55C, tuned knobs |
+| **16-32 CU × 1 MB at 300 MHz**           | U250 (just MET); U55C (288 MHz; PnR reseed may close) |
+| **16 CU × 2 MB at 250 MHz**              | U55C or V80 (production); U250 infeasible at this scale |
+| **HBM-backed multi-cache deployment**    | U55C — HBM2 @ 460 GB/s sits behind the L2 array |
+| **Production silicon, 300 MHz today**    | U250 |
+| **Versal target with production silicon**| V80 production (when AMD ships non-`-S` speed file); ES limits to ~200 MHz |
+| **Maximum CU count**                     | V80 (largest LUT + URAM budget); U55C close second |
+
+Reproduce any cell with:
+
+```bash
+# 512 KB / 8w / GRASP @ 300 MHz, post-route:
+PERIOD_NS=3.333 DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 \
+  PLACE_DIRECTIVE=ExtraNetDelay_high \
+  PHYS_DIRECTIVE=AggressiveExplore \
+  ROUTE_DIRECTIVE=AggressiveExplore \
+  PNR=1 ./u55c_synth.sh                       # or ./v80_synth.sh
+
+# 1 MB variant: add SIZE=1M
+SIZE=1M PERIOD_NS=3.333 DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 \
+  PLACE_DIRECTIVE=ExtraNetDelay_high \
+  PHYS_DIRECTIVE=AggressiveExplore \
+  ROUTE_DIRECTIVE=AggressiveExplore \
+  PNR=1 ./u55c_synth.sh
+
+# Cross-port to U250 (the U55C wrapper accepts PART override)
+PART=xcu250-figd2104-2L-e PERIOD_NS=3.333 ... PNR=1 ./u55c_synth.sh
+```
+
 ## V80 (Versal Premium) preset — `v80_synth.sh`
 
 Wraps `run_synth.sh` with the V80 PART and the URAM-deployment knobs
