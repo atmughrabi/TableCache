@@ -417,6 +417,7 @@ for details.
 | 13 | `tdp_ram.sv` | `ram_style="ultra"` rejected by Vivado for TDP+byte-enable pattern; hard-coded to `"block"` |
 | 14 | `l2_databank.sv` | new `DATABANK_SDP=1` UltraRAM mode initially closed a combinational loop and lost write data; chosen fix disables databank port 1 in SDP mode |
 | 15 | `l2_tagbank.sv` | `policy_addr` projected from the tag-only view, hiding the `ADDR_RANGE_L` prefix from address-aware policies; GRASP silently degraded to RRIP-FP for every address ≥ `0x8000_0000`. Added `ADDR_BASE` parameter and OR it back in before passing to the policy. |
+| 16 | `l2_tagbank.sv` | `out_dirty` and `out_tag` were unconditionally read from the policy-chosen replacement way's entry, so a CBOM `CleanInvalid`/`CleanShared` HIT on a line that lived in a different way issued the writeback using the wrong way's (typically zero) tag, sending the dirty data to mem address 0 instead of the actual line address. Introduced `evicted_entry = hit ? tb_rdata_r[hit_index] : evict_entry`. Surfaced by `test_cbom_rmw_race` -- the existing CBOM tests pre-warmed the line with a full-line read which masked the wrong-way path. |
 
 A self-bug #11 in `axi_protocol_checker.sv` (`vcount` multi-driver race
 masking #10) was also fixed; see same section.
