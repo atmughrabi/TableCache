@@ -1,12 +1,9 @@
-# Vivado OOC synth + place + route for Alveo V80.
-#
-# Used by v80_synth.sh with PNR=1. The synth phase reads the same env
-# vars as run_synth.tcl (POLICY, WAYS, LINES, LINE_W, INCLUDE_VICTIM,
-# DATABANK_SDP, DB_LATENCY, DIRECTIVE, PERIOD_NS) and then runs full
-# place_design + route_design + phys_opt_design and re-reports timing.
-#
-# The post-PnR WNS is what real silicon will see; post-synth WNS is
-# typically 0.5-1.5 ns more pessimistic than post-route.
+# Vivado OOC synth + place + route + phys_opt for V80.
+# Driven by v80_synth.sh with PNR=1. Reads the same env-var generics as
+# run_synth.tcl (POLICY, WAYS, LINES, LINE_W, INCLUDE_VICTIM, DATABANK_SDP,
+# DB_LATENCY, SDP_WRITE_INPUT_REG, DIRECTIVE, PERIOD_NS). Reports the
+# post-route timing summary under the canonical filenames so the wrapper
+# parser picks them up.
 
 set top       [lindex $argv 0]
 set repo_root [lindex $argv 1]

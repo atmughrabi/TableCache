@@ -86,10 +86,7 @@ module tb_harness
     logic                           mem_bready;
 
     // ---- DUT ----
-    // GRASP region ports tied to 0 = SRRIP-FP fallback (regions
-    // disabled). Picked up by the .* connection on the l2_cache
-    // instance below; this legacy SV testbench doesn't exercise
-    // address-aware policy classification.
+    //GRASP region ports tied off (SRRIP-FP fallback); picked up via .* below.
     wire [31:0] grasp_high_addr_l     = 32'h0;
     wire [31:0] grasp_high_addr_h     = 32'h0;
     wire [31:0] grasp_moderate_addr_l = 32'h0;

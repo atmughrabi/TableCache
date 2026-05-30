@@ -27,13 +27,9 @@ module l2_databank
         // cycle) stall port 1 by one cycle; concurrent R+W is handled
         // natively by the SDP port pair.
         parameter DATABANK_SDP = 0,
-        // 1-cycle register on the SDP URAM write-port inputs. Only takes
-        // effect with DATABANK_SDP=1. Breaks the combinational chain into
-        // the URAM cascade write-data input (CAS_IN_DIN_B[*]) that
-        // dominates timing in big URAM configs. Adds 1 cycle of write
-        // commit latency; safe under the FSM (WRITING->READY->READING
-        // sequence guarantees a slack cycle between any write and a
-        // same-address read).
+        //1 = register SDP URAM write-port inputs (forwarded to sdp_ram_uram.
+        //WRITE_INPUT_REG). Only meaningful with DATABANK_SDP=1; adds 1 cycle
+        //of write commit latency.
         parameter logic SDP_WRITE_INPUT_REG = 0
     )
     (

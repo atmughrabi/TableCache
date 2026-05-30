@@ -19,7 +19,7 @@ A configurable, ACE-Lite-snoopable L2 data cache for FPGA accelerators,
 with a narrow-port shim, a flush sequencer, and a verification campaign
 that pins it at:
 
-- **20 cocotb modules / 62 tests** all PASS, AXI4 protocol-checker clean
+- **21 cocotb modules / 67 tests** all PASS, AXI4 protocol-checker clean
 - **88% Verilator** line+toggle coverage (98.7% on `l2_cache.sv`)
 - **100% of reachable** functional coverage (covergroups + crosses)
 - **100%** mutation score on **all 18** mutation-instrumented RTL files
@@ -30,6 +30,11 @@ that pins it at:
 - **500-seed nightly stress** sweep, **26-config matrix** sweep (3 of
   them VICTIM=1: LRU/4, LRU/8, SRRIP/4), X-prop sweep, **200k-op
   workload** -- all clean.
+- **Address-aware GRASP** replacement policy with runtime hot/moderate
+  region ports (5/5 directed cases + 32/32 SDP cross-product PASS).
+- **Vivado OOC closure on U250** at 250 MHz for 512 KB/8-way SDP+URAM
+  GRASP (WNS = +0.186 ns post-synth); V80 preset at
+  [`syn/vivado/v80_synth.sh`](syn/vivado/v80_synth.sh).
 
 ## Quick navigation
 
@@ -69,9 +74,10 @@ that pins it at:
 
 ```
 src/                  RTL (cache + narrow-port shim + flush controller)
-tb/cocotb/            cocotb regression (19 modules, 60 tests)
+tb/cocotb/            cocotb regression (21 modules, 67 tests)
 tb/formal/            yosys+z3 SMTBMC harnesses (fifo.sv proofs)
 tb/{Makefile,*.sv}    legacy SV directed TB (upstream)
+syn/vivado/           OOC synthesis flow (U250 default; V80 preset)
 doc/                  architecture, interfacing, integration, verification docs
 ```
 
@@ -102,11 +108,12 @@ cd tb/cocotb && source .venv/bin/activate
 # single test
 make MODULE=test_smoke
 
-# full regression (19 modules)
+# full regression (21 modules)
 for mod in test_smoke test_random test_scoreboard test_strobe test_latency \
            test_lru_sanity test_workload test_cbom test_reset_recovery \
            test_graph_patterns test_backpressure test_realism \
            test_finish_fifo_stress test_shim_prefill_race test_flush \
+           test_grasp test_victim \
            test_shim_cache test_narrow_shim test_shim_latency test_shim_throughput; do
   rm -rf sim_build sim_build_shim
   timeout 600 make MODULE=$mod
@@ -120,10 +127,12 @@ A test passes when (a) cocotb reports `FAIL=0`, and (b) the log contains
 zero `AXI_PC_VIOLATION` lines. The protocol checker output is summed into
 `dut.pc_violations_total`; tests assert it stays at 0.
 
-Knobs (set on the `make` command line): `POLICY={LRU,SRRIP,FRQ,SECOND_CHANCE,RANDOM}`,
+Knobs (set on the `make` command line): `POLICY={LRU,SRRIP,FRQ,SECOND_CHANCE,RANDOM,GRASP}`,
 `LINES`, `LINE_W`, `WAYS`, `DB_LATENCY`, `VICTIM={0,1}`, `CBOM={0,1}`.
 The bare-cocotb path only supports `BLOCK_W=32`; use `MODULE=test_shim_cache`
-for `BLOCK_W=512`.
+for `BLOCK_W=512`. `GRASP` uses runtime address-window ports
+(`grasp_high_addr_l/h`, `grasp_moderate_addr_l/h`) driven from the test;
+see [`tb/cocotb/test_grasp.py`](tb/cocotb/test_grasp.py).
 
 ## Coverage and seed sweep
 
@@ -183,9 +192,14 @@ test depends on uninit / pre-fill data.
 | `make MODULE=<test>` | Run a single cocotb test |
 | `make lint` | Verilator strict lint, all RTL |
 | `make vlint` | Verible bug-class lint (needs `verible-verilog-lint` in PATH or `~/.local/bin/`) |
-| `make perf` | Run 5-policy performance benchmark (`tb/cocotb/perf.py`) |
+| `make perf` | Run policy hit-rate benchmark (`tb/cocotb/perf.py`; default sweep includes GRASP) |
 | `make wave` | Open the latest `dump.vcd` in GTKWave (re-run with `TRACE=1` first) |
 | `make -C tb/formal all` | Run all 6 formal proof targets (yosys+z3, sv2v) |
+| `./tb/cocotb/grasp_stress.sh` | GRASP-path hardening sweep (vlint + perf + XPROP + WAYS + seed sweep + SDP cross-product); `QUICK=1` for ~5 min subset |
+| `./tb/cocotb/sdp_stress.sh` | DATABANK_SDP=1 random stress; default 100 seeds |
+| `./syn/vivado/run_synth.sh` | OOC synth on U250 default; env vars override target, period, directive, policy |
+| `./syn/vivado/sweep.sh` | 4-size × {TDP,SDP} U250 sweep; refreshes `sweep_results.md` |
+| `./syn/vivado/v80_synth.sh` | V80 (Versal Premium) preset; `PNR=1` for full place+route closure |
 
 ## Functional coverage
 
@@ -259,18 +273,21 @@ environment): `count <= DEPTH`, `valid == (count != 0)`,
 
 ```bash
 cd tb/cocotb && source .venv/bin/activate
-NTXN=5000 python3 perf.py            # ~4 min, all 5 policies
+NTXN=5000 python3 perf.py            # ~4 min, 6 policies (LRU,SRRIP,GRASP,FRQ,SECOND_CHANCE,RANDOM)
 make perf                            # same, default NTXN
-NTXN=3000 python3 perf_sweep.py      # ~12 min, 5 policies x 3 ways
-POLICIES=LRU,SRRIP NTXN=10000 python3 perf.py
+NTXN=3000 python3 perf_sweep.py      # ~15 min, 6 policies x 3 ways
+POLICIES=LRU,SRRIP,GRASP NTXN=10000 python3 perf.py
 ```
 
 Hit-rate ranking on a 5000-op hot/cold graph-shaped workload
-(`LINES=64 WAYS=4 LINE_W=8 SEED=1`):
+(`LINES=64 WAYS=4 LINE_W=8 SEED=1`, GRASP region ports tied to 0 so
+it runs in its SRRIP-FP fallback mode — `test_workload.py` is what
+exercises the configured-hot-region case):
 
 | Policy | Hit rate | p50 hit (cyc) | p95 hit |
 |---|---:|---:|---:|
 | **`SRRIP`** | **74.3%** | 7 | 14 |
+| `GRASP` (regions=0) | 73.7% | 7 | 14 |
 | `SECOND_CHANCE` | 70.4% | 7 | 14 |
 | `FRQ` | 67.2% | 7 | 14 |
 | `RANDOM` | 62.1% | 7 | 15 |
@@ -313,6 +330,7 @@ spec including what bug class it was designed to catch.
 | `test_finish_fifo_stress` | hot-set + heavy response back-pressure (drives `cp_*` cover points) |
 | `test_shim_prefill_race` | direct-driven shim test targeting `drop_prefill_check` mutation; marked `expect_fail` (artifactual under default `PROMOTE_WMISS_TO_RW=0`) |
 | `test_flush` | flush controller (4 scenarios): clean / dirty-writeback / idempotent / **cold-cache** (no pre-warm required) |
+| `test_grasp` | GRASP address-region policy (5 cases): hot-retention, SRRIP-FP fallback (regions=0), invalid region (`_h<_l`), runtime reconfig, hot/moderate overlap precedence |
 | `test_shim_cache` | shim + cache at `BLOCK_W=512`; RMW preservation tests for bug #7 |
 | `test_narrow_shim` | shim alone against `AxiRam`; 10 directed + 1 random pass |
 | `test_shim_latency` | shim cold/hot/write/merge cycle counts |
@@ -381,8 +399,8 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
 | [`doc/VERIFICATION_XILINX_VIP_ROADMAP.md`](doc/VERIFICATION_XILINX_VIP_ROADMAP.md) | residual-risk analysis + Xilinx VIP transition plan |
 | [`doc/DESIGN_BANKED_SDP_DATABANK.md`](doc/DESIGN_BANKED_SDP_DATABANK.md) | design proposal: 2-bank SDP databank successor to recover the 6.3 % throughput cost of `DATABANK_SDP=1` |
 | [`doc/wiki/URAM_Mode.md`](doc/wiki/URAM_Mode.md) | **wiki-ready page** on the `DATABANK_SDP=1` UltraRAM mode — when to use it, what it costs, how to verify it fired |
-| [`syn/vivado/README.md`](syn/vivado/README.md) | out-of-context synthesis driver, headline U250 numbers per top, URAM mode usage |
-| [`syn/vivado/sweep_results.md`](syn/vivado/sweep_results.md) | full multi-config TDP-vs-SDP synth comparison (4 sizes × 2 modes, LUT/FF/BRAM/URAM/WNS) |
+| [`syn/vivado/README.md`](syn/vivado/README.md) | out-of-context synthesis driver, headline U250 / V80 numbers, URAM mode usage, V80 preset |
+| [`syn/vivado/sweep_results.md`](syn/vivado/sweep_results.md) | full multi-config TDP-vs-SDP synth comparison (4 sizes × 2 modes, LUT/FF/BRAM/URAM/WNS); baseline + tuned sweeps; per-CU capacity for 16/32 CU deployments |
 
 ## Bug fixes in this fork
 
@@ -398,6 +416,7 @@ for details.
 | 12 | `l2_cache.sv` | mem-port VALIDs held one cycle into reset (sibling of #10) |
 | 13 | `tdp_ram.sv` | `ram_style="ultra"` rejected by Vivado for TDP+byte-enable pattern; hard-coded to `"block"` |
 | 14 | `l2_databank.sv` | new `DATABANK_SDP=1` UltraRAM mode initially closed a combinational loop and lost write data; chosen fix disables databank port 1 in SDP mode |
+| 15 | `l2_tagbank.sv` | `policy_addr` projected from the tag-only view, hiding the `ADDR_RANGE_L` prefix from address-aware policies; GRASP silently degraded to RRIP-FP for every address ≥ `0x8000_0000`. Added `ADDR_BASE` parameter and OR it back in before passing to the policy. |
 
 A self-bug #11 in `axi_protocol_checker.sv` (`vcount` multi-driver race
 masking #10) was also fixed; see same section.

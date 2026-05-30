@@ -32,15 +32,8 @@ module l2_cache
         parameter int unsigned READ_ID_WIDTH = 4, //AXI read ID width
         parameter int unsigned WRITE_ID_WIDTH = 4, //AXI write ID width
         parameter logic DATABANK_SDP = 0, //1=SDP databank (URAM-friendly, ~1-3% throughput cost); 0=TDP (default)
-        // Optional 1-cycle write-input register on the SDP databank URAM
-        // (no effect when DATABANK_SDP=0). Cuts the URAM cascade write-port
-        // critical path by terminating the long combinational chain from
-        // FSM control LFSRs at a register that Vivado can retime into the
-        // URAM tile's built-in input registers. Recovers ~0.4-1.0 ns of WNS
-        // on big SDP+URAM configs (>=512 KB) under directives that don't
-        // already break the path. Costs 1 cycle of write commit latency;
-        // safe because the FSM serialises WRITING->READY->READING (see
-        // notes in sdp_ram_uram.sv).
+        //1 = register SDP URAM write-port inputs (+1 cycle write commit
+        //latency; only meaningful with DATABANK_SDP=1). See sdp_ram_uram.sv.
         parameter logic SDP_WRITE_INPUT_REG = 0
     )
     (

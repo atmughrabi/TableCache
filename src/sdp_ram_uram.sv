@@ -28,21 +28,10 @@ module sdp_ram_uram
         parameter int unsigned COL_WIDTH = 16,
         parameter int unsigned PIPELINE_DEPTH = 1,
         parameter CASCADE_DEPTH = 8,
-        // Optional 1-cycle register on the WRITE port inputs (en/wbe/data/addr).
-        // Targets the URAM cascade write-data critical path: in big SDP+URAM
-        // configs the combinational chain from the cache FSM (FIFO control
-        // LFSRs etc.) into the URAM `CAS_IN_DIN_B[*]` cascade is 18-24 LUT
-        // levels deep with high routing share, costing ~1ns of WNS. With
-        // this register the LUT chain terminates at a flop and Vivado can
-        // retime backward into the URAM's built-in input registers.
-        //
-        // COST: a write asserted at cycle N commits to storage at cycle N+2
-        // instead of N+1. SAFE under the cache controller's FSM because
-        // port state transitions are WRITING -> READY -> READING (with a
-        // mandatory READY cycle between WRITING and any same-address read),
-        // which provides a 1-cycle slack that absorbs the extra latency.
-        // Do NOT enable without DATABANK_SDP=1; only the SDP URAM cascade
-        // exhibits the targeted critical path.
+        // 1 = register port-A inputs one cycle. Cuts the URAM cascade
+        // write-port path at the cost of +1 cycle of write commit
+        // latency. Safe under the cache FSM (WRITING -> READY -> READING
+        // serialisation absorbs the extra latency).
         parameter logic WRITE_INPUT_REG = 1'b0
     )
     (
@@ -64,8 +53,7 @@ module sdp_ram_uram
     (* cascade_height = CASCADE_DEPTH, ramstyle = "no_rw_check", ram_style = "ultra" *)
     logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0];
 
-    // Optional 1-cycle write-input register (see header). When disabled the
-    // _q signals are pure aliases of the inputs (no FFs, no latency).
+    //Optional 1-cycle write-input register (passthrough when WRITE_INPUT_REG=0)
     logic                        a_en_q;
     logic[NUM_COL-1:0]           a_wbe_q;
     logic[DATA_WIDTH-1:0]        a_wdata_q;

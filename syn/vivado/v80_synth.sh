@@ -1,33 +1,18 @@
 #!/usr/bin/env bash
-# Alveo V80 (Versal Premium VP1902) synthesis preset.
+# Alveo V80 (Versal Premium) OOC synth preset.
+# Wraps run_synth.tcl with the V80 PART + URAM-deployment knobs we
+# validated against U250 (GRASP, no victim, DATABANK_SDP=1, DB_LATENCY=2,
+# DIRECTIVE=default). Default config is 512 KB / 8-way / 250 MHz.
 #
-# Wraps run_synth.sh with the V80-specific PART number and the
-# URAM-deployment knobs we validated for this target:
+# Knobs: SIZE={256K,512K,1M,2M}, POLICY, PERIOD_NS, DB_LATENCY,
+#        INCLUDE_VICTIM, DATABANK_SDP, DIRECTIVE, PART, PNR (0=synth-only,
+#        1=synth+place+route via v80_synth_pnr.tcl).
 #
-#   POLICY=5  (GRASP, 0=LRU 1=FRQ 2=2ND 3=RANDOM 4=SRRIP 5=GRASP)
-#   INCLUDE_VICTIM=0  (the victim cache's pending_reads LFSR drives
-#                     the worst path on big SDP+URAM configs)
-#   DATABANK_SDP=1    (UltraRAM-eligible storage)
-#   DB_LATENCY=2      (Vivado-recommended pipeline_stages for the
-#                     URAM cascade)
-#   DIRECTIVE=default (AreaOptimized_high costs ~1+ ns of WNS on
-#                     SDP+URAM and is no longer the default)
-#
-# Defaults to 512 KB / 8-way; override SIZE=512K|1M|2M to switch.
-#
-# Usage:
-#   ./v80_synth.sh                         # 512KB / 8w / 250 MHz target
-#   SIZE=1M ./v80_synth.sh                 # 1 MB  / 8w / 250 MHz target
-#   SIZE=2M PERIOD_NS=4.5 ./v80_synth.sh   # 2 MB  / 8w / ~222 MHz target
-#   PNR=1 ./v80_synth.sh                   # include place_design + route_design
-#   POLICY=4 ./v80_synth.sh                # SRRIP instead of GRASP
-#
-# NOTE on the part: Vivado 2025.2 only ships `xcv80-lsva4737-2MHP-e-S`,
-# the engineering-sample speed file. It reports `clock uncertainty =
-# 0.300 ns` (vs ~0.035 ns on production UltraScale+ parts) which costs
-# ~0.25 ns of WNS post-synth purely from characterisation conservatism.
-# Production V80 speed files (when AMD ships them) will narrow the
-# U250-vs-V80 gap by ~0.25 ns.
+# The default PART xcv80-lsva4737-2MHP-e-S is the only V80 speed file
+# shipped with Vivado 2025.2 (engineering sample). It reports
+# clock_uncertainty=0.300 ns (vs ~0.035 ns on production UltraScale+),
+# which costs ~0.25 ns of post-synth WNS purely from characterisation
+# pessimism. Production V80 speed files should narrow the gap.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 

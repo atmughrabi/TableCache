@@ -298,9 +298,7 @@ module dut_shim_cache
         .VICTIM_LINES  (VICTIM_LINES)
     ) u_cache (
         .clk(clk), .rst(rst),
-        // GRASP region ports tied to 0 = SRRIP-FP fallback. The shim
-        // integration TB doesn't exercise address-aware policy
-        // classification.
+        //GRASP region ports tied off (SRRIP-FP fallback; this TB doesn't exercise them).
         .grasp_high_addr_l(32'h0), .grasp_high_addr_h(32'h0),
         .grasp_moderate_addr_l(32'h0), .grasp_moderate_addr_h(32'h0),
         .req_ar(c_ar), .req_arid(c_arid), .req_arready(c_arready),

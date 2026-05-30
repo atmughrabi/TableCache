@@ -1,17 +1,17 @@
-"""Directed hot/cold retention test for the GRASP replacement policy.
+"""Directed tests for the GRASP replacement policy.
 
-Methodology (latency-as-oracle, like test_latency.py):
-  1. Configure a HOT window via the runtime ports.
-  2. Warm the cache with hot lines (one access each).
-  3. Thrash the cache with COLD lines (>> WAYS distinct sets) to force
-     replacement pressure. GRASP should evict cold lines preferentially.
-  4. Re-read the hot lines and measure AR->first-R latency. Hits are
-     ~<=10 cycles, misses ~>=20 cycles (memory roundtrip).
-  5. Assert hot_hit_rate exceeds a high threshold.
+Latency-as-oracle: the cocotb harness measures cycles from AR to
+first R beat; hits land in ~<=10 cycles, misses in >=20 (memory
+roundtrip). HIT_LATENCY_THRESHOLD splits them at 15.
 
-A second test repeats step 1-5 with hot ports tied to 0 (SRRIP fallback).
-Both flavors must complete; the hot-configured case must hit measurably
-more often than the SRRIP-baseline case on the same hot addresses.
+Coverage:
+  - hot retention under cold thrash (with HOT region configured)
+  - SRRIP-FP fallback when all region ports are tied to 0
+  - invalid region (_h<_l, _h!=0) treated as disabled
+  - runtime reconfiguration between phases
+  - hot/moderate overlap precedence (hot must win)
+
+POLICY=GRASP is required (test asserts on TC_POLICY_NAME).
 """
 from __future__ import annotations
 import os
@@ -139,10 +139,8 @@ async def test_grasp_srrip_fallback(dut):
 
 @cocotb.test()
 async def test_grasp_invalid_region(dut):
-    """Region with _h < _l (and _h != 0) must be treated as DISABLED, not as a
-    wrap-around match. Bug-hunt: catches off-by-one in the active-region
-    predicate where (>= _l) & (<= _h) without the (_h >= _l) guard would
-    match nothing yet still gate the moderate path incorrectly."""
+    """Region with _h < _l (and _h != 0) must be treated as disabled, not
+    as wrap-around. The (_h >= _l) guard in GRASP.sv is what enforces this."""
     pol = os.environ.get("TC_POLICY_NAME", "GRASP")
     assert pol == "GRASP", f"This test requires POLICY=GRASP, got {pol}"
 
@@ -168,9 +166,8 @@ async def test_grasp_invalid_region(dut):
 
 @cocotb.test()
 async def test_grasp_runtime_reconfig(dut):
-    """Drive hot region differently between two workload phases. Catches
-    bugs where the policy latches the region bounds (it shouldn't \u2014 they are
-    combinational inputs that classify per access)."""
+    """Drive hot region differently between two workload phases; the
+    region inputs are classified per access (no internal latch)."""
     pol = os.environ.get("TC_POLICY_NAME", "GRASP")
     assert pol == "GRASP", f"This test requires POLICY=GRASP, got {pol}"
 
@@ -197,17 +194,16 @@ async def test_grasp_runtime_reconfig(dut):
 
 @cocotb.test()
 async def test_grasp_overlap_priority(dut):
-    """If hot and moderate regions overlap, hot must win (~high_reuse in the
-    moderate term). Bug-hunt: catches a missing precedence in the predicate."""
+    """When hot and moderate cover the same range, hot must win
+    (the ~high_reuse term in moderate_reuse enforces precedence)."""
     pol = os.environ.get("TC_POLICY_NAME", "GRASP")
     assert pol == "GRASP", f"This test requires POLICY=GRASP, got {pol}"
 
     await reset_dut(dut)
     attach_mem(dut, size_bytes=1 << 22)
 
-    # Hot and moderate cover identical range. Hot's promotion (HOT_HIT_RRPV=0)
-    # should keep hot lines through aggressive cold churn even though moderate
-    # alone (insert at RRPV=1) would let them age out fast.
+    # Identical hot/moderate range; HOT_HIT_RRPV=0 retains; moderate
+    # alone (insert at RRPV=1) would age the lines out fast.
     hot_addrs = [BASE + (i * LINE_BYTES) for i in range(8)]
     lo = hot_addrs[0]; hi = hot_addrs[-1] + LINE_BYTES - 1
     dut.grasp_high_addr_l.value     = lo

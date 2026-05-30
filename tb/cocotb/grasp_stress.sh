@@ -1,29 +1,9 @@
 #!/usr/bin/env bash
-# GRASP-path hardening sweep.
-#
-# Runs the same matrix used to gate the 2026-05 GRASP commit cycle:
-#   1.  vlint (verible bug-class rules) on the whole tree
-#   2.  perf-comparison hit-rate ordering (LRU < RANDOM < SRRIP ~= GRASP)
-#   3.  XPROP=1 on {test_grasp, test_workload, test_random} with GRASP
-#   4.  WAYS sweep ({2,4,8}) on {test_grasp, test_workload}
-#   5.  Seed sweep on test_random with POLICY=GRASP (N_SEEDS configurable)
-#   6.  Full functional regression with POLICY=GRASP across the standard
-#       module set, both with DATABANK_SDP=0 and DATABANK_SDP=1
-#       (the URAM-deployment configuration)
-#
+# GRASP-path hardening sweep. Mirrors sdp_stress.sh structure.
 # Drops a markdown summary at $OUT/summary.md.
 #
-# Env knobs:
-#   OUT          output directory (default: /tmp/tc_grasp_stress)
-#   N_SEEDS      number of seeds in phase 5 (default: 30)
-#   NTXN         transactions per seed in phase 5 (default: 100)
-#   PERF_NTXN    transactions for phase 2 perf comparison (default: 5000)
-#   QUICK=1      skip phases 4-6 (vlint + perf + xprop only, ~5 min)
-#
-# Launch:
-#   ./grasp_stress.sh
-# Or in background:
-#   nohup ./grasp_stress.sh > /tmp/tc_grasp_stress/main.log 2>&1 &
+# Knobs: OUT (default /tmp/tc_grasp_stress), N_SEEDS (30), NTXN (100),
+#        PERF_NTXN (5000), QUICK=1 (skip phases 4-6, ~5 min)
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${OUT:-/tmp/tc_grasp_stress}"
