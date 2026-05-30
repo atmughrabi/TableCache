@@ -225,10 +225,10 @@ module l2_tagbank
     //The entry that will be evicted from this set: for a normal miss
     //it's the policy-chosen replacement way; for a CBOM hit-evict
     //(CleanInvalid / CleanShared on a cached line) it's the hit way
-    //itself. Sourcing `out_dirty` / `out_tag` from the policy way (as
-    //the pre-fix RTL did) causes a CBOM that hits in a different way
-    //than the one the policy would pick to write the dirty line back
-    //to the wrong memory address (typically 0, from the invalid way's
+    //itself. Sourcing `out_dirty` / `out_tag` from the policy way
+    //unconditionally would cause a CBOM that hits in a way other than
+    //the one the policy would pick to write the dirty line back to
+    //the wrong memory address (typically 0, from the invalid way's
     //tag=0). See doc/ARCHITECTURE.md §7.5 bug #16.
     way_entry_t evicted_entry;
     assign evicted_entry = hit ? tb_rdata_r[hit_index] : evict_entry;

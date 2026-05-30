@@ -296,11 +296,11 @@ the worst-case miss stream without becoming the bottleneck.
 ## Known issues
 
 ### `tdp_ram` UltraRAM rejection
-Bug history (see VERIFICATION.md): originally `tdp_ram.sv` had the
-default `ram_style = "ultra"`. Vivado synth fails with
-"Unsupported RAM template" because TDP + per-byte-enable is not URAM-
-inferrable. Fixed by hard-coding `ram_style = "block"` on the TDP path
-(`#ifdef COCOTB_SIM` selects a masked single-NBA variant for Verilator).
+The AMD branch's `tdp_ram.sv` defaulted to `ram_style = "ultra"`.
+Vivado synth fails with "Unsupported RAM template" because TDP +
+per-byte-enable is not URAM-inferrable. `tdp_ram.sv` hardcodes
+`ram_style = "block"` on the TDP path; `#ifdef COCOTB_SIM` selects a
+masked single-NBA variant for Verilator.
 
 ### Vivado attribute parameter expressions
 Vivado synth rejects `(* ram_style = RAM_STYLE *)` even when `RAM_STYLE`
