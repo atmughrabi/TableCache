@@ -56,6 +56,12 @@ module smoke_tb
     logic                             mem_bready;
 
     // ---- DUT ----
+    // GRASP region ports tied to 0 = SRRIP-FP fallback. The smoke
+    // sanity TB doesn't exercise address-aware policy classification.
+    wire [31:0] grasp_high_addr_l     = 32'h0;
+    wire [31:0] grasp_high_addr_h     = 32'h0;
+    wire [31:0] grasp_moderate_addr_l = 32'h0;
+    wire [31:0] grasp_moderate_addr_h = 32'h0;
     l2_cache #(
         .POLICY(LRU),
         .LINES(LINES),

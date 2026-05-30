@@ -277,6 +277,11 @@ module dut_flush
         .VICTIM_LINES   (VICTIM_LINES)
     ) cache (
         .clk(clk), .rst(rst),
+        // GRASP region ports tied to 0 = "regions disabled" (SRRIP-FP
+        // fallback). This wrapper is used by test_flush, which doesn't
+        // exercise address-aware policy classification.
+        .grasp_high_addr_l(32'h0), .grasp_high_addr_h(32'h0),
+        .grasp_moderate_addr_l(32'h0), .grasp_moderate_addr_h(32'h0),
         .req_ar(cache_ar), .req_arid(cache_arid), .req_arready(cache_arready),
         .req_r(cache_r), .req_rdata(cache_rdata), .req_rid(cache_rid), .req_rready(cache_rready),
         .req_aw(cache_aw), .req_awid(cache_awid), .req_awready(cache_awready),
