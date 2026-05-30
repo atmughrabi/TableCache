@@ -9,6 +9,8 @@ without committing to a full IO ring / shell context.
 - Target parts (override with `PART=<name>`):
   - Alveo U250: `xcu250-figd2104-2L-e` (speed grade `-2L`) — the default
   - Alveo U280: `xcu280-fsvh2892-2L-e`
+  - Alveo U55C: `xcu55c-fsvh2892-2L-e` — see [`u55c_synth.sh`](u55c_synth.sh)
+    for the deployment preset (production silicon; HBM2-backed)
   - Alveo V80: `xcv80-lsva4737-2MHP-e-S` (engineering sample — see
     [`v80_synth.sh`](v80_synth.sh) for the deployment preset, and note
     that the `-S` speed file reports `clock uncertainty = 0.300 ns`
@@ -225,6 +227,60 @@ deciding data; run `PNR=1 ./v80_synth.sh` to measure.
 | 512 KB | 16 |  256 (13 %) |  512 (27 %) | 1925 |
 | 1 MB   | 34 |  544 (28 %) | 1088 (57 %) | 1925 |
 | 2 MB   | 66 | 1056 (55 %) | --          | 1925 |
+
+## U55C (Alveo HBM, Virtex UltraScale+) preset — `u55c_synth.sh`
+
+Same wrapper pattern as `v80_synth.sh`, with `PART=xcu55c-fsvh2892-2L-e`
+(production silicon: 2 SLRs, 1936 URAM blocks, 16 GB HBM2). U55C is a
+sister part to U250 in the same UltraScale+ HBM family, so the timing
+profile matches U250 closely — the V80 ES clock-uncertainty pessimism
+does NOT apply here.
+
+```bash
+cd syn/vivado
+
+# 512 KB / 8-way U55C synth (default)
+./u55c_synth.sh
+
+# 1 MB or 2 MB build
+SIZE=1M ./u55c_synth.sh
+SIZE=2M ./u55c_synth.sh
+
+# 300 MHz target (3.333 ns clock)
+PERIOD_NS=3.333 ./u55c_synth.sh
+
+# Full place + route closure (uses u55c_synth_pnr.tcl)
+PNR=1 ./u55c_synth.sh                  # post-route WNS, ~15-30 min
+PNR=1 SIZE=1M ./u55c_synth.sh
+
+# SRRIP instead of GRASP
+POLICY=4 ./u55c_synth.sh
+```
+
+**U55C headline** (GRASP / SDP+URAM / DB_LATENCY=2 / default directive, 4 ns clock):
+
+| Cache size | LUT  | URAM | Phase      | WNS (ns) | Effective MHz |
+|---|---:|---:|---|---:|---:|
+| 512 KB / 8-way | 1543 | 16 | post-synth | **+0.186** | **~262 MHz** ✓ MET |
+| 512 KB / 8-way | 1547 | 16 | post-route |  -0.022    | ~248 MHz (essentially MET; closes 250 MHz with `phys_opt_design -directive AggressiveExplore` or one route_design reseed) |
+| 1 MB   / 8-way | 1540 | 34 | post-synth |  -0.186    | ~238 MHz (run with `PNR=1` to confirm post-route closure) |
+
+U55C 512 KB matches U250 to the picosecond on the binding path (both are
+xcvu13p-family silicon). Run `PNR=1 ./u55c_synth.sh` to reproduce the
+post-route number; the 0.022 ns gap to 250 MHz is in seed-variance
+territory.
+
+**U55C capacity** (`xcu55c-fsvh2892`: 1936 URAMs, 2016 BRAM tiles, 16 GB HBM2 @ 460 GB/s):
+
+| Cache size | URAM / cache | 16 CUs | 32 CUs | U55C budget |
+|---|---:|---:|---:|---:|
+| 512 KB | 16 |  256 (13 %) |  512 (26 %) | 1936 |
+| 1 MB   | 34 |  544 (28 %) | 1088 (56 %) | 1936 |
+| 2 MB   | 66 | 1056 (55 %) | --          | 1936 |
+
+The HBM2 backing makes U55C a particularly good target for the L2 cache —
+the in-fabric L2 sits in front of high-bandwidth memory that can sustain
+the worst-case miss stream without becoming the bottleneck.
 
 ## Known issues
 

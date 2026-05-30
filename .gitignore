@@ -67,3 +67,4 @@ research/
 coverage.dat
 **/coverage.dat
 syn/build_post_pnr/
+syn/vivado/build_u55c/

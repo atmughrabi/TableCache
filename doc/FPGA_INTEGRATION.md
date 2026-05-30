@@ -346,8 +346,8 @@ upgrade to `SRRIP` if hit rate is the bottleneck.
 ### 10.1 UltraRAM packing mode (`DATABANK_SDP=1`)
 
 For BRAM-constrained, URAM-rich deployments — typically multi-cache
-designs on Alveo U250 / U280 / Versal V80 — set `DATABANK_SDP=1` on
-the `l2_cache` (or `l2_top`) instantiation to map the data array to
+designs on Alveo U250 / U280 / U55C / Versal V80 — set `DATABANK_SDP=1`
+on the `l2_cache` (or `l2_top`) instantiation to map the data array to
 UltraRAM instead of BRAM. This is the only way the data bank reaches
 UltraRAM; the default (TDP) topology is BRAM-only by primitive
 constraint.

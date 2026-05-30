@@ -33,7 +33,8 @@ that pins it at:
 - **Address-aware GRASP** replacement policy with runtime hot/moderate
   region ports (5/5 directed cases + 32/32 SDP cross-product PASS).
 - **Vivado OOC closure on U250** at 250 MHz for 512 KB/8-way SDP+URAM
-  GRASP (WNS = +0.186 ns post-synth); V80 preset at
+  GRASP (WNS = +0.186 ns post-synth); U55C + V80 deployment presets at
+  [`syn/vivado/u55c_synth.sh`](syn/vivado/u55c_synth.sh) and
   [`syn/vivado/v80_synth.sh`](syn/vivado/v80_synth.sh).
 
 ## Quick navigation
@@ -77,7 +78,7 @@ src/                  RTL (cache + narrow-port shim + flush controller)
 tb/cocotb/            cocotb regression (29 modules, 85 tests)
 tb/formal/            yosys+z3 SMTBMC harnesses (fifo.sv proofs)
 tb/{Makefile,*.sv}    legacy SV directed TB (upstream)
-syn/vivado/           OOC synthesis flow (U250 default; V80 preset)
+syn/vivado/           OOC synthesis flow (U250 default; U55C + V80 presets)
 doc/                  architecture, interfacing, integration, verification docs
 ```
 
@@ -199,6 +200,7 @@ test depends on uninit / pre-fill data.
 | `./tb/cocotb/sdp_stress.sh` | DATABANK_SDP=1 random stress; default 100 seeds |
 | `./syn/vivado/run_synth.sh` | OOC synth on U250 default; env vars override target, period, directive, policy |
 | `./syn/vivado/sweep.sh` | 4-size × {TDP,SDP} U250 sweep; refreshes `sweep_results.md` |
+| `./syn/vivado/u55c_synth.sh` | U55C (Alveo HBM) preset; `PNR=1` for full place+route closure |
 | `./syn/vivado/v80_synth.sh` | V80 (Versal Premium) preset; `PNR=1` for full place+route closure |
 
 ## Functional coverage
@@ -399,7 +401,7 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
 | [`doc/VERIFICATION_XILINX_VIP_ROADMAP.md`](doc/VERIFICATION_XILINX_VIP_ROADMAP.md) | residual-risk analysis + Xilinx VIP transition plan |
 | [`doc/DESIGN_BANKED_SDP_DATABANK.md`](doc/DESIGN_BANKED_SDP_DATABANK.md) | design proposal: 2-bank SDP databank successor to recover the 6.3 % throughput cost of `DATABANK_SDP=1` |
 | [`doc/wiki/URAM_Mode.md`](doc/wiki/URAM_Mode.md) | **wiki-ready page** on the `DATABANK_SDP=1` UltraRAM mode — when to use it, what it costs, how to verify it fired |
-| [`syn/vivado/README.md`](syn/vivado/README.md) | out-of-context synthesis driver, headline U250 / V80 numbers, URAM mode usage, V80 preset |
+| [`syn/vivado/README.md`](syn/vivado/README.md) | out-of-context synthesis driver, headline U250 / U55C / V80 numbers, URAM mode usage, deployment presets |
 | [`syn/vivado/sweep_results.md`](syn/vivado/sweep_results.md) | full multi-config TDP-vs-SDP synth comparison (4 sizes × 2 modes, LUT/FF/BRAM/URAM/WNS); baseline + tuned sweeps; per-CU capacity for 16/32 CU deployments |
 
 ## Bug fixes in this fork
