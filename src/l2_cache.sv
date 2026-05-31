@@ -38,7 +38,14 @@ module l2_cache
         //Length of the URAM/BRAM cascade in the databank. Vivado-default
         //is 8; shorter values produce more parallel cascades at the cost
         //of additional inter-cascade muxing. Range: 1..8 (URAM288 cap).
-        parameter int unsigned CASCADE_DEPTH = 8
+        parameter int unsigned CASCADE_DEPTH = 8,
+        //Number of banks in the SDP databank (and matching tag bank).
+        //N_BANKS=1 -> current single-bank behavior (no banking logic).
+        //N_BANKS>1 -> per-bank request muxing + concurrent storage paths
+        //(see experiment/DESIGN_BANKED_MEMORY.md for the architecture).
+        //Phase 1 (this commit): parameter plumbing only; N_BANKS>1 is
+        //rejected at elaboration with $error until Phase 2 lands.
+        parameter int unsigned N_BANKS = 1
     )
     (
         input logic clk,
@@ -943,6 +950,15 @@ module l2_cache
         assign db_lookup_saved[i] = lookup_out[i].saved;
     end endgenerate
 
+    // Phase 1 guard: N_BANKS>1 requires the banked storage path
+    // landed in Phase 2 of experiment/banked-memory; reject at
+    // elaboration until then so an accidental override doesn't
+    // silently degrade to single-bank behavior.
+    initial begin
+        assert (N_BANKS == 1)
+        else $fatal(1, "l2_cache: N_BANKS=%0d not yet supported. Only N_BANKS=1 is implemented in Phase 1 of experiment/banked-memory; see experiment/DESIGN_BANKED_MEMORY.md.", N_BANKS);
+    end
+
     l2_databank #(
         .WAYS(WAYS),
         .DATA_W(BLOCK_W),
@@ -953,7 +969,8 @@ module l2_cache
         .SAVED_LEN($bits(saved_t)),
         .DATABANK_SDP(DATABANK_SDP),
         .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG),
-        .CASCADE_DEPTH(CASCADE_DEPTH)
+        .CASCADE_DEPTH(CASCADE_DEPTH),
+        .N_BANKS(N_BANKS)
     ) db_inst (
         .request_valid(db_req_valid),
         .request_rnw(db_req.rnw),

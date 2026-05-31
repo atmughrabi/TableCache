@@ -37,7 +37,11 @@ module l2_databank
         //URAM cascades (1 MB / 2 MB caches) shorter cascades reduce the
         //CAS_OUT propagation delay and can help close higher frequencies.
         //Range: 1..8 (Vivado URAM288 cap).
-        parameter int unsigned CASCADE_DEPTH = 8
+        parameter int unsigned CASCADE_DEPTH = 8,
+        //Number of banks (data array). N_BANKS=1 = current single-bank
+        //behavior; N_BANKS>1 enables per-bank request muxing (see
+        //experiment/DESIGN_BANKED_MEMORY.md). Phase 1: plumbing only.
+        parameter int unsigned N_BANKS = 1
     )
     (
         input logic clk,

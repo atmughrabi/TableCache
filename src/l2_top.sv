@@ -36,6 +36,10 @@ module l2_top
         parameter logic SDP_WRITE_INPUT_REG = 0,
         //Length of the URAM/BRAM cascade in the databank (1..8; default 8).
         parameter int unsigned CASCADE_DEPTH = 8,
+        //Number of banks (data + tag arrays). N_BANKS=1 = current
+        //behavior; N_BANKS>1 enables banked storage (see
+        //experiment/DESIGN_BANKED_MEMORY.md). Phase 1: plumbing only.
+        parameter int unsigned N_BANKS = 1,
 
         // Parameters of Axi Slave Bus Interface S00_AXI
         parameter integer C_S00_AXI_ID_WIDTH = 4,
@@ -308,7 +312,8 @@ module l2_top
         .WRITE_ID_WIDTH(C_S00_AXI_ID_WIDTH),
         .DATABANK_SDP(DATABANK_SDP),
         .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG),
-        .CASCADE_DEPTH(CASCADE_DEPTH)
+        .CASCADE_DEPTH(CASCADE_DEPTH),
+        .N_BANKS(N_BANKS)
     ) inst (
         .clk(s00_axi_aclk),
         .rst(~s00_axi_aresetn),
