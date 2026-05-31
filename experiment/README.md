@@ -67,12 +67,28 @@ Cross-config at CD=1:
 - U55C 512 KB: regresses from +0.127 → -0.072 (smaller URAM array
   doesn't need the cascading help; inter-URAM mux fanout dominates).
 - U250 1 MB: marginal (+0.007 ns); already MET at baseline.
-- U55C 1 MB: +0.095 ns improvement (the best case).
+- U55C 1 MB: +0.095 ns improvement (the best case on UltraScale+).
+- **V80 ES 512 KB**: +0.094 ns (-0.090 → **+0.004 ns post-route**,
+  finally closes 250 MHz on the previously laggard ES silicon).
+- **V80 ES 1 MB**: +0.521 ns (-1.370 → -0.849, 213 → 239 MHz).
+- **V80 ES 2 MB**: +0.249 ns (-1.350 → -1.101, 214 → 226 MHz).
 
-Per-size recommendation:
-- 512 KB / 8w → leave `CASCADE_DEPTH=8` (default).
-- 1 MB / 8w on U55C → set `CASCADE_DEPTH=1` to lift 288 → 296 MHz.
-- 2 MB / 8w → not measured; same reasoning suggests `CASCADE_DEPTH=1`.
+The V80 family responds far more strongly to CD=1 than UltraScale+
+HBM. Reason: V80 uses the URAM288**E5** (Versal) primitive, which
+has different CAS_OUT propagation characteristics than the URAM288
+(UltraScale+) used on U55C / U250. The cascade is the dominant
+binding path on V80 even at small sizes, so reducing CD always helps.
+
+Per-board × per-size recommendation:
+
+| Board | 512 KB / 8w     | 1 MB / 8w        | 2 MB / 8w        |
+|---|---|---|---|
+| U250 | `CD=8` (default) | `CD=1` (marginal +0.007 ns)   | not measured     |
+| U55C | `CD=8` (default) | **`CD=1` (+0.095 ns, +8 MHz)** | not measured     |
+| V80  | **`CD=1` (+0.094 ns, closes 250)** | **`CD=1` (+0.521 ns, +26 MHz)** | **`CD=1` (+0.249 ns, +12 MHz)** |
+
+V80 gets the largest benefit from this attack — `CD=1` is the right
+default for any V80 deployment regardless of size.
 
 Verification: 19 / 19 modules, 5 / 5 GRASP mutations, 10 / 10 formal
 all PASS.
