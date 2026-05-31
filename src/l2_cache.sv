@@ -1412,17 +1412,7 @@ module l2_cache
     assign mem_awid   = mem_awid_int;
     assign mem_wdata  = mem_wdata_int;
     assign mem_wstrb  = mem_wstrb_int;
-    // Experimental: register mem_rready at the cache output boundary.
-    // Breaks the long combinational chain from out_fifo's LFSR through
-    // the FSM's R-channel-acceptance logic into the mem_rready output.
-    // AXI-safe (slave will hold rvalid until rready acks); costs 1
-    // cycle on the cache->mem R-channel handshake. See experiment/.
-    logic mem_rready_reg;
-    always_ff @(posedge clk) begin
-        if (rst) mem_rready_reg <= 1'b0;
-        else     mem_rready_reg <= mem_rready_int;
-    end
-    assign mem_rready = mem_rready_reg;
+    assign mem_rready = mem_rready_int;
     assign mem_bready = mem_bready_int;
 
     //Assertions check cache limitations, not AXI correctness
