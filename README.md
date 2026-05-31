@@ -402,6 +402,7 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
 | [`doc/VERIFICATION_XILINX_VIP_ROADMAP.md`](doc/VERIFICATION_XILINX_VIP_ROADMAP.md) | residual-risk analysis + Xilinx VIP transition plan |
 | [`doc/DESIGN_BANKED_SDP_DATABANK.md`](doc/DESIGN_BANKED_SDP_DATABANK.md) | design proposal: 2-bank SDP databank successor to recover the 6.3 % throughput cost of `DATABANK_SDP=1` |
 | [`doc/wiki/URAM_Mode.md`](doc/wiki/URAM_Mode.md) | **wiki-ready page** on the `DATABANK_SDP=1` UltraRAM mode — when to use it, what it costs, how to verify it fired |
+| [`doc/wiki/GRASP_Policy.md`](doc/wiki/GRASP_Policy.md) | **wiki-ready page** on the GRASP address-region-aware replacement policy — usage, hit-rate stats, timing impact, verification (8 directed cases / 5-5 mutation / 5 formal proofs), bug history |
 | [`doc/deployment/`](doc/deployment/README.md) | **per-Alveo deployment reports** (U250, U55C, V80) with validated post-route timing, multi-CU device-utilization arithmetic, recommended parameter values, and reproduction commands |
 | [`syn/vivado/README.md`](syn/vivado/README.md) | out-of-context synthesis driver, headline U250 / U55C / V80 numbers, URAM mode usage, deployment presets, 8-way deployment matrix |
 | [`syn/vivado/sweep_results.md`](syn/vivado/sweep_results.md) | full multi-config TDP-vs-SDP synth comparison (4 sizes × 2 modes, LUT/FF/BRAM/URAM/WNS); baseline + tuned sweeps; per-CU capacity for 16/32 CU deployments |

@@ -47,6 +47,10 @@ read overhead is much smaller than the +20 % frequency gain.
 
 ## Related documents
 
+- [`doc/wiki/GRASP_Policy.md`](../wiki/GRASP_Policy.md) — GRASP
+  address-region-aware policy: usage, hit-rate, timing, verification.
+- [`doc/wiki/URAM_Mode.md`](../wiki/URAM_Mode.md) — `DATABANK_SDP=1`
+  UltraRAM mode: when to use it, what it costs, how to verify.
 - [`syn/vivado/README.md`](../../syn/vivado/README.md) — full Vivado OOC
   synth driver, knob reference, headline timing tables.
 - [`syn/vivado/sweep_results.md`](../../syn/vivado/sweep_results.md) —
