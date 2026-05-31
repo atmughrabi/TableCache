@@ -114,6 +114,33 @@ entirely. Net throughput recovery: **~6.1 %** at N_BANKS=2.
 (skeleton phase verification). `N_BANKS=2` adds the bank arbiter +
 parallel storage instances.
 
+## Phase 2a measured results (data bank banked, port-1 still masked)
+
+Landed in commit `988fb7a`. Measured on `N_BANKS=2` + `CASCADE_DEPTH=1`
++ `DB_LATENCY=3` + `SDP_WRITE_INPUT_REG=1` + tuned PnR directives:
+
+| Config | Main (N=1) | Phase 2a (N=2) | Δ WNS | Δ MHz | LUT cost |
+|---|---:|---:|---:|---:|---:|
+| **U55C 1 MB @ 300 MHz** | -0.045 ns (~296) | **+0.048 ns (~304)** | **+0.093 ns** | **+8 MHz (✓ MET)** | 1585 → 2590 (+63 %) |
+| **V80 2 MB @ 250 MHz**  | -0.380 ns (~228) | -0.106 ns (~244)     | +0.274 ns | +16 MHz | (similar magnitude) |
+
+Headline wins:
+- U55C 1 MB now MEETS 300 MHz post-route (first time across the
+  whole optimization arc).
+- V80 2 MB goes from ~228 MHz to ~244 MHz on ES silicon — 6 MHz
+  short of 250 MHz; production silicon should close it.
+
+Resource trade:
+- URAM count unchanged (banks split the existing URAMs, no new
+  storage added).
+- LUT cost: +50-70 % from bank-selection mux + per-bank routing
+  decoder. Acceptable on UltraScale+ HBM where LUTs are abundant.
+- FF count similar growth (registered bank-id pipeline).
+
+Caveat: this win is the cascade-depth-reduction alone. Phase 2b
+(re-enable port 1) is required to also recover the 6.3 % SDP
+throughput cost; Phase 2a leaves port 1 masked.
+
 ## Implementation plan
 
 | Phase | What | Verification gate | Effort |
