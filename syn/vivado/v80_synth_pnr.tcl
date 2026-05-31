@@ -43,6 +43,15 @@ if {[llength $generics] > 0} {
         -directive $dir
 }
 create_clock -name clk -period $period_ns [get_ports clk]
+# V80 ES silicon defaults clock_uncertainty to 0.300 ns; production
+# UltraScale+ HBM is ~0.035 ns. Allow override via env var to project
+# what production V80 silicon will deliver before AMD ships the
+# non-ES speed file. Default: leave the part's silicon model untouched.
+if {[info exists ::env(CLOCK_UNCERTAINTY_NS)]} {
+    set unc $::env(CLOCK_UNCERTAINTY_NS)
+    puts "==== overriding clock_uncertainty to ${unc} ns (was Vivado default) ===="
+    set_clock_uncertainty $unc [get_clocks clk]
+}
 report_utilization        -file $out/utilization_postsynth.rpt
 report_timing_summary     -file $out/timing_summary_postsynth.rpt
 
@@ -50,16 +59,19 @@ report_timing_summary     -file $out/timing_summary_postsynth.rpt
 # bounded; flip to ExtraNetDelay_high or AggressiveExplore if timing
 # is binding.
 puts "==== place_design ===="
-place_design -directive Default
+set place_dir [expr {[info exists ::env(PLACE_DIRECTIVE)] ? $::env(PLACE_DIRECTIVE) : "Default"}]
+place_design -directive $place_dir
 
 puts "==== phys_opt_design (post-place) ===="
-phys_opt_design -directive Default
+set phys_dir [expr {[info exists ::env(PHYS_DIRECTIVE)] ? $::env(PHYS_DIRECTIVE) : "Default"}]
+phys_opt_design -directive $phys_dir
 
 puts "==== route_design ===="
-route_design -directive Default
+set route_dir [expr {[info exists ::env(ROUTE_DIRECTIVE)] ? $::env(ROUTE_DIRECTIVE) : "Default"}]
+route_design -directive $route_dir
 
 puts "==== phys_opt_design (post-route) ===="
-phys_opt_design -directive Default
+phys_opt_design -directive $phys_dir
 
 # Final reports under the canonical names so v80_synth.sh's parser
 # picks them up. Keep the post-synth snapshots for delta inspection.
@@ -68,6 +80,11 @@ report_utilization -hierarchical -file $out/utilization_hier.rpt
 report_timing_summary     -file $out/timing_summary.rpt
 report_methodology        -file $out/methodology.rpt
 report_drc                -file $out/drc.rpt
+
+# Detailed binding-path report (top-3 worst paths, full topology)
+# for V80-focused timing analysis. See experiment/v80-focus branch.
+report_timing -delay_type max -nworst 3 -path_type full -input_pins \
+    -file $out/timing_detailed.rpt
 
 # Routed netlist for post-PnR functional sim. The Verilog form keeps
 # UNISIM primitives (LUT6, FDRE, URAM288E5, ...) and references the
