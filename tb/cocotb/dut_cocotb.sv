@@ -53,9 +53,14 @@ module dut_cocotb
         parameter logic DATABANK_SDP = 0,
 `endif
 `ifdef TC_SDP_WRITE_INPUT_REG
-        parameter logic SDP_WRITE_INPUT_REG = `TC_SDP_WRITE_INPUT_REG
+        parameter logic SDP_WRITE_INPUT_REG = `TC_SDP_WRITE_INPUT_REG,
 `else
-        parameter logic SDP_WRITE_INPUT_REG = 0
+        parameter logic SDP_WRITE_INPUT_REG = 0,
+`endif
+`ifdef TC_N_BANKS
+        parameter int unsigned N_BANKS = `TC_N_BANKS
+`else
+        parameter int unsigned N_BANKS = 1
 `endif
     ) (
         input  logic clk,
@@ -234,7 +239,8 @@ module dut_cocotb
         .INCLUDE_VICTIM (INCLUDE_VICTIM),
         .VICTIM_LINES   (VICTIM_LINES),
         .DATABANK_SDP   (DATABANK_SDP),
-        .SDP_WRITE_INPUT_REG (SDP_WRITE_INPUT_REG)
+        .SDP_WRITE_INPUT_REG (SDP_WRITE_INPUT_REG),
+        .N_BANKS        (N_BANKS)
     ) dut (
         .clk(clk), .rst(rst),
         .grasp_high_addr_l(grasp_high_addr_l),

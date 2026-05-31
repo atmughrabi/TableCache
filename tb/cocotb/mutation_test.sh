@@ -125,6 +125,41 @@ case "$FILE" in
             # Would become live if port 1 ever issued a read.
         )
         ;;
+    src/l2_databank.sv:banked)
+        # Banked SDP (DATABANK_SDP=1, N_BANKS=2) mutation set. Covers
+        # the gen_banked_sdp generate block added by Phase 2a of the
+        # banked-memory experiment. Each mutation breaks one part of
+        # the per-bank routing invariant ("a request to line[0]=B must
+        # hit and read exactly bank B").
+        FILE=src/l2_databank.sv  # real path for sed
+        EXTRA_MAKE_ARGS='+define+TC_DATABANK_SDP=1 +define+TC_N_BANKS=2'
+        DEFAULT_TESTS="test_smoke test_random test_workload test_scoreboard"
+        MUTATIONS=(
+            # Force all requests to bank 0: bank_sel always true ->
+            # writes to bank 1 hit bank 0 instead (data corruption);
+            # reads to bank 1 never fire (no read enable).
+            # Expected: scoreboard mismatch on any cross-bank read.
+            "banked_bank_sel_to_zero|s/wire bank_sel = (p0_bank == BANK_BITS'(b));/wire bank_sel = (BANK_BITS'(b) == 0);/"
+            # Invert bank selection: bank b matches when line[0]!=b.
+            # Writes go to wrong bank; reads return wrong bank's data.
+            # Expected: scoreboard mismatch on every miss-fill cycle.
+            "banked_bank_sel_invert|s/wire bank_sel = (p0_bank == BANK_BITS'(b));/wire bank_sel = (p0_bank != BANK_BITS'(b));/"
+            # Drop the bank_id pipeline stage entirely: rdata
+            # demux uses p0_bank (the CURRENT cycle's bank-id)
+            # instead of the LATENCY-pipelined value -> demux
+            # selects the wrong bank for in-flight reads.
+            # Expected: read data corruption under load.
+            "banked_pipe_to_zero|s/assign unpacked_rdata\\[0\\] = bank_rdata_arr\\[bank_pipe\\[LATENCY\\]\\];/assign unpacked_rdata[0] = bank_rdata_arr[BANK_BITS'(0)];/"
+            # Drop the per-bank-line address shift: instead of routing
+            # only the upper line bits to each bank, all bits go through
+            # -- causing N=2's per-bank ADDR_WIDTH (LINE_ADDR_W-1) to
+            # under-index the bank (bank 0 collides line[0]=0 and
+            # line[0]=2, etc).
+            # Expected: writes to different lines clobber each other
+            # within a bank -> scoreboard mismatch.
+            'banked_drop_addr_shift|s|line\[0\]\[$bits(line_t)-1:BANK_BITS\]|line[0][LINE_ADDR_W-1-BANK_BITS:0]|g'
+        )
+        ;;
     src/tc_flush_controller.sv)
         DEFAULT_TESTS="test_flush"
         MUTATIONS=(

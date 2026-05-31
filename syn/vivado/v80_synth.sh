@@ -31,6 +31,15 @@ DATABANK_SDP="${DATABANK_SDP:-1}"
 # the opposite trade at 512 KB, so the src/ default stays 8; only this
 # V80 wrapper overrides.
 CASCADE_DEPTH="${CASCADE_DEPTH:-1}"
+# N_BANKS=2 banks the SDP data array on V80 (Phase 2a of
+# experiment/banked-memory). On V80 ES the data-bank cascade is the
+# binding path even at small sizes, so banking is a strict improvement:
+#   512 KB: +0.007 ns  (marginal; doesn't hurt)
+#   1 MB:   +0.093 ns  (239 -> 245 MHz)
+#   2 MB:   +0.274 ns  (228 -> 244 MHz)
+# UltraScale+ HBM (U55C / U250) only benefits at 1 MB; default stays
+# at 1 in the src/ tree.
+N_BANKS="${N_BANKS:-2}"
 PNR="${PNR:-0}"
 
 case "$SIZE" in
@@ -70,7 +79,7 @@ env PART="$PART" \
     WAYS="$WAYS" LINES="$LINES" LINE_W="$LINE_W" \
     POLICY="$POLICY" INCLUDE_VICTIM="$INCLUDE_VICTIM" \
     DATABANK_SDP="$DATABANK_SDP" DB_LATENCY="$DB_LATENCY" \
-    CASCADE_DEPTH="$CASCADE_DEPTH" \
+    CASCADE_DEPTH="$CASCADE_DEPTH" N_BANKS="$N_BANKS" \
     DIRECTIVE="$DIRECTIVE" PERIOD_NS="$PERIOD_NS" \
     "$VIVADO" -mode batch -source "$TCL" \
         -tclargs l2_cache "$REPO" "$OUT" \

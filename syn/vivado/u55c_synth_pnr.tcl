@@ -26,7 +26,7 @@ set_property top $top [current_fileset]
 set generics [list]
 if {$top eq "l2_cache" || $top eq "l2_top"} {
     foreach v {WAYS LINES LINE_W POLICY REPLACEMENT_POLICY INCLUDE_VICTIM \
-               VICTIM_LINES DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG CASCADE_DEPTH} {
+               VICTIM_LINES DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG CASCADE_DEPTH N_BANKS} {
         if {[info exists ::env($v)]} {
             lappend generics "$v=$::env($v)"
             puts "==== override $v=$::env($v)"
@@ -65,6 +65,11 @@ report_utilization -hierarchical -file $out/utilization_hier.rpt
 report_timing_summary     -file $out/timing_summary.rpt
 report_methodology        -file $out/methodology.rpt
 report_drc                -file $out/drc.rpt
+
+# Detailed binding-path report (top-3 worst paths, full topology)
+# for post-route binding-path analysis.
+report_timing -delay_type max -nworst 3 -path_type full -input_pins \
+    -file $out/timing_detailed.rpt
 
 # Routed netlist + SDF for post-PnR functional sim (see syn/post_pnr_sim.sh).
 write_verilog -mode timesim -sdf_anno true -force $out/routed_netlist.v
