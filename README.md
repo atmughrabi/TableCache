@@ -42,6 +42,7 @@ that pins it at:
 | If you want to … | Read |
 |---|---|
 | **Use TableCache in your FPGA design** | [doc/FPGA_INTEGRATION.md](doc/FPGA_INTEGRATION.md) |
+| **Pick the right Alveo board + config** | [doc/deployment/](doc/deployment/README.md) — per-board reports (U250, U55C, V80) with validated post-route timing + multi-CU arithmetic |
 | Understand the AXI / snoop / flush contract | [doc/INTERFACING.md](doc/INTERFACING.md) |
 | Understand how the cache works inside | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) |
 | Re-run / extend the verification | [doc/VERIFICATION.md](doc/VERIFICATION.md) |
@@ -401,7 +402,8 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
 | [`doc/VERIFICATION_XILINX_VIP_ROADMAP.md`](doc/VERIFICATION_XILINX_VIP_ROADMAP.md) | residual-risk analysis + Xilinx VIP transition plan |
 | [`doc/DESIGN_BANKED_SDP_DATABANK.md`](doc/DESIGN_BANKED_SDP_DATABANK.md) | design proposal: 2-bank SDP databank successor to recover the 6.3 % throughput cost of `DATABANK_SDP=1` |
 | [`doc/wiki/URAM_Mode.md`](doc/wiki/URAM_Mode.md) | **wiki-ready page** on the `DATABANK_SDP=1` UltraRAM mode — when to use it, what it costs, how to verify it fired |
-| [`syn/vivado/README.md`](syn/vivado/README.md) | out-of-context synthesis driver, headline U250 / U55C / V80 numbers, URAM mode usage, deployment presets |
+| [`doc/deployment/`](doc/deployment/README.md) | **per-Alveo deployment reports** (U250, U55C, V80) with validated post-route timing, multi-CU device-utilization arithmetic, recommended parameter values, and reproduction commands |
+| [`syn/vivado/README.md`](syn/vivado/README.md) | out-of-context synthesis driver, headline U250 / U55C / V80 numbers, URAM mode usage, deployment presets, 8-way deployment matrix |
 | [`syn/vivado/sweep_results.md`](syn/vivado/sweep_results.md) | full multi-config TDP-vs-SDP synth comparison (4 sizes × 2 modes, LUT/FF/BRAM/URAM/WNS); baseline + tuned sweeps; per-CU capacity for 16/32 CU deployments |
 
 ## Bug fixes in this fork
