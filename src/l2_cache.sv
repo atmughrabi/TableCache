@@ -950,13 +950,14 @@ module l2_cache
         assign db_lookup_saved[i] = lookup_out[i].saved;
     end endgenerate
 
-    // Phase 1 guard: N_BANKS>1 requires the banked storage path
-    // landed in Phase 2 of experiment/banked-memory; reject at
-    // elaboration until then so an accidental override doesn't
-    // silently degrade to single-bank behavior.
+    // Phase 2a guard: only N_BANKS values that are powers of two and
+    // for which LINES is divisible by N_BANKS are supported (each bank
+    // gets LINES/N_BANKS depth). N_BANKS=1 is always supported.
     initial begin
-        assert (N_BANKS == 1)
-        else $fatal(1, "l2_cache: N_BANKS=%0d not yet supported. Only N_BANKS=1 is implemented in Phase 1 of experiment/banked-memory; see experiment/DESIGN_BANKED_MEMORY.md.", N_BANKS);
+        assert (N_BANKS == 1 || N_BANKS == 2 || N_BANKS == 4)
+        else $fatal(1, "l2_cache: N_BANKS=%0d unsupported (only 1, 2, 4 allowed in Phase 2a). See experiment/DESIGN_BANKED_MEMORY.md.", N_BANKS);
+        assert ((LINES % N_BANKS) == 0)
+        else $fatal(1, "l2_cache: LINES=%0d not divisible by N_BANKS=%0d.", LINES, N_BANKS);
     end
 
     l2_databank #(

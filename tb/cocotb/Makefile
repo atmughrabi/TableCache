@@ -159,6 +159,12 @@ endif
 ifneq ($(SDP_WRITE_INPUT_REG),)
 EXTRA_ARGS += +define+TC_SDP_WRITE_INPUT_REG=$(SDP_WRITE_INPUT_REG)
 endif
+# N_BANKS: only forward when set so the tree's default (1) is unaffected
+# for pre-existing tests. See experiment/banked-memory and
+# experiment/DESIGN_BANKED_MEMORY.md.
+ifneq ($(N_BANKS),)
+EXTRA_ARGS += +define+TC_N_BANKS=$(N_BANKS)
+endif
 ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
 endif

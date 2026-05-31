@@ -310,6 +310,7 @@ module l2_databank
     end
 
     generate if (DATABANK_SDP) begin : gen_sdp_databank
+      if (N_BANKS == 1) begin : gen_single_bank
         // Single SDP RAM. After sdp_p1_stall gating, at most one port writes
         // and at most one port reads per cycle, so we can route 1W + 1R
         // through the single SDP pair. RAM read latency = 1 + LATENCY cycles;
@@ -370,6 +371,68 @@ module l2_databank
         // Steer rdata back to the requesting port; other port sees 0.
         assign unpacked_rdata[0] = read_was_p1_pipe[LATENCY] ? '0       : sdp_rdata;
         assign unpacked_rdata[1] = read_was_p1_pipe[LATENCY] ? sdp_rdata : '0;
+      end else begin : gen_banked_sdp
+        // Phase 2a (experiment/banked-memory): N_BANKS-way banked SDP
+        // storage. The cache controller still drives only port 0 in SDP
+        // mode (port 1 masked); banking here doesn't recover the lost
+        // R+W concurrency yet (that is Phase 2b). What it DOES do is
+        // split the URAM array into N parallel sub-arrays of depth
+        // LINES/N_BANKS, halving the URAM cascade depth per bank and
+        // shortening the CAS_OUT propagation chain that was the binding
+        // path on 1 MB / 2 MB caches.
+        //
+        // Banking key: line address LSBs select bank, so neighbouring
+        // line addresses (common in graph traversal) land in different
+        // banks -- maximises future parallelism when port 1 re-enables.
+        localparam int BANK_BITS     = $clog2(N_BANKS);
+        localparam int PER_BANK_LINE = $bits(line_t) - BANK_BITS;
+        localparam int PER_BANK_ADDR = PER_BANK_LINE + $bits(block_t);
+
+        wire p0_wr = en_gated[0] & |unpacked_wbe[0];
+        wire p0_rd = en_gated[0] & ~|unpacked_wbe[0];
+        wire [BANK_BITS-1:0] p0_bank = line[0][BANK_BITS-1:0];
+
+        // Per-bank packed read data (so dynamic select is synthesizable)
+        logic [N_BANKS-1:0][WAYS*DATA_W-1:0] bank_rdata_arr;
+
+        for (genvar b = 0; b < N_BANKS; b++) begin : gen_bank
+            wire bank_sel = (p0_bank == BANK_BITS'(b));
+            sdp_ram_uram #(
+                .ADDR_WIDTH(PER_BANK_ADDR),
+                .NUM_COL(WAYS*WBE_W),
+                .COL_WIDTH(8),
+                .PIPELINE_DEPTH(LATENCY),
+                .CASCADE_DEPTH(CASCADE_DEPTH),
+                .WRITE_INPUT_REG(SDP_WRITE_INPUT_REG)
+            ) bank_storage (
+                .clk,
+                .a_en(p0_wr & bank_sel),
+                .a_wbe(unpacked_wbe[0]),
+                .a_wdata({WAYS{wdata[0]}}),
+                .a_addr({line[0][$bits(line_t)-1:BANK_BITS], block[0]}),
+                .b_en(p0_rd & bank_sel),
+                .b_addr({line[0][$bits(line_t)-1:BANK_BITS], block[0]}),
+                .b_rdata(bank_rdata_arr[b])
+            );
+        end
+
+        // Pipeline the bank-id of the in-flight read so the result
+        // demux happens at the right cycle (matches PIPELINE_DEPTH).
+        logic [LATENCY:0][BANK_BITS-1:0] bank_pipe;
+        always_ff @(posedge clk) begin
+            if (rst) begin
+                for (int j = 0; j <= LATENCY; j++) bank_pipe[j] <= '0;
+            end else begin
+                bank_pipe[0] <= p0_bank;
+                for (int j = 1; j <= LATENCY; j++) bank_pipe[j] <= bank_pipe[j-1];
+            end
+        end
+
+        // Steer the served bank's rdata to port 0; port 1 stays 0
+        // (port 1 is masked in SDP mode pending Phase 2b).
+        assign unpacked_rdata[0] = bank_rdata_arr[bank_pipe[LATENCY]];
+        assign unpacked_rdata[1] = '0;
+      end
     end else begin : gen_tdp_databank
         tdp_ram #(
             .ADDR_WIDTH($bits(line_t)+$bits(block_t)),
