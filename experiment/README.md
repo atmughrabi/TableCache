@@ -44,29 +44,106 @@ Every commit on this branch MUST:
 The gates are mechanical — `experiment/verify.sh` runs them all and
 exits non-zero if any fail.
 
-## Attack candidates (ordered lowest-risk → highest-risk)
+## Attack log
 
-1. **CASCADE_HEIGHT tuning** for `sdp_ram_uram` (parameter only, no
-   RTL surgery). Shorter URAM cascade = faster propagation but more
-   inter-URAM muxing. Quick experiment with no semantic change.
+### Attack 1 — CASCADE_DEPTH as a tunable parameter — **LANDED**
 
-2. **Bank the SDP URAM array** (`doc/DESIGN_BANKED_SDP_DATABANK.md`
-   proposal). Split the 16/34/66 URAM array into 2 banks with a port
-   arbiter. Recovers the 6.3 % SDP throughput cost AND halves the
-   cascade depth. ~2 weeks; significant FSM impact.
+Commit `7461357`. Promotes `CASCADE_DEPTH` from a `localparam = 8`
+in `l2_databank.sv` to a `parameter` plumbed through `l2_cache.sv`
+and `l2_top.sv`, with env-var forwarding in `run_synth.tcl`,
+`u55c_synth_pnr.tcl`, `v80_synth_pnr.tcl`. Default unchanged (8).
 
-3. **Pipeline the tagbank output** (`PIPELINE_DEPTH=1` in
-   `sdp_ram_padded_rst`). Adds 1 cycle to the tagbank read; the
-   cache controller's `stage1 → stage2` pipeline needs to absorb the
-   extra stage. Medium risk; touches the cache control flow.
+Measured impact on the 300 MHz target (U55C 1 MB / 8w / GRASP /
+SDP+URAM, DBL=3, WIR=1, aggressive PnR directives):
 
-4. **Cache controller FSM re-pipelining**. Break the combinational
-   reductions across FIFO LFSRs that feed the data-bank write port
-   mux. Highest risk — this is the surface that stabilized over bugs
-   #5–#13.
+| `CASCADE_DEPTH` | WNS post-route | MHz | Δ vs CD=8 |
+|---:|---:|---:|---:|
+| 1 (no cascade) | -0.045 | ~296 | **+0.095 ns** |
+| 2              | -0.282 | ~276 | -0.142 ns |
+| 4              | -0.074 | ~293 | +0.066 ns |
+| 8 (default)    | -0.140 | ~287 | — |
 
-Each attack lives in its own commit (or commit series), gated through
-`experiment/verify.sh`.
+Cross-config at CD=1:
+- U55C 512 KB: regresses from +0.127 → -0.072 (smaller URAM array
+  doesn't need the cascading help; inter-URAM mux fanout dominates).
+- U250 1 MB: marginal (+0.007 ns); already MET at baseline.
+- U55C 1 MB: +0.095 ns improvement (the best case).
+
+Per-size recommendation:
+- 512 KB / 8w → leave `CASCADE_DEPTH=8` (default).
+- 1 MB / 8w on U55C → set `CASCADE_DEPTH=1` to lift 288 → 296 MHz.
+- 2 MB / 8w → not measured; same reasoning suggests `CASCADE_DEPTH=1`.
+
+Verification: 19 / 19 modules, 5 / 5 GRASP mutations, 10 / 10 formal
+all PASS.
+
+### Attack 2 — Banked-SDP databank — **DEFERRED**
+
+The design proposal already exists at
+`doc/DESIGN_BANKED_SDP_DATABANK.md`. It scopes the work at ~2 weeks
+(7 days RTL + 5 days verification + docs) and includes explicit
+trigger conditions for when to implement: "a real production workload
+shows the 6.3 % SDP throughput cost is binding". That trigger has not
+fired. The throughput measurement on the 300 MHz tuned knobs (this
+branch's perf reference) is +14–17 % vs the 250 MHz baseline, which
+is much larger than the 6.3 % the banking would recover.
+
+**Decision**: do not implement on this branch. Leaving the design
+note as the future reference.
+
+### Attack 3 — Tagbank output pipeline (`PIPELINE_DEPTH=0 → 1`) — **FAILED VERIFY, NOT LANDED**
+
+Hypothesis: adding 1 register on the tagbank read output breaks the
+`saved_arvalid → tagbank BRAM enable` binding path (the post-tuned
+critical path on U55C 512 KB at 3.333 ns).
+
+Result: the cache controller's `stage1 → stage2 → policy_update`
+pipeline does not absorb the extra cycle without surgery. Smoke
+tests + GRASP directed tests + flush + scoreboard all PASS (9/19),
+but tests with realistic concurrency / backpressure / bursts FAIL:
+
+  test_random              FAIL
+  test_workload            FAIL
+  test_reset_recovery      FAIL
+  test_backpressure        FAIL
+  test_strobe              FAIL
+  test_cbom_stress         FAIL
+  test_cbom_rmw_race       FAIL
+  test_l2top               FAIL
+  test_realism             FAIL
+  test_finish_fifo_stress  FAIL
+
+The single-line change (`PIPELINE_DEPTH(0) → PIPELINE_DEPTH(1)`) in
+`src/l2_tagbank.sv:172` is reverted. Landing this attack requires
+adding a matching pipeline stage to the cache controller — that is
+Attack 4 territory.
+
+### Attack 4 — Cache-controller FSM re-pipelining — **NOT ATTEMPTED**
+
+Scope: insert one or more pipeline registers in the FSM's combinational
+reductions across FIFO LFSRs that feed the data-bank write port mux,
+absorbing the side effects on the `WRITING → READY → READING`
+serialisation. Realistic estimate: multi-week, comparable to the work
+that took bugs #5–#13 to stabilise.
+
+**Decision**: out of scope for this session. The right path is a
+dedicated effort with a separate verification protocol (re-derive the
+formal invariants for the new FSM, extend the directed-stress matrix
+for the new pipeline depth). This branch will not attempt it.
+
+## What this branch ships if merged
+
+Only Attack 1 is shippable today. Its merge value is small but real:
+- New `CASCADE_DEPTH` parameter on `l2_cache` / `l2_top` / `l2_databank`.
+- Default unchanged (no regression on existing deployments).
+- Documented per-size recommendation (use CD=1 for 1 MB+, keep CD=8
+  for ≤512 KB).
+- Lifts U55C 1 MB from 288 to 296 MHz post-route on the 300 MHz target.
+
+Attacks 2-4 remain documented as known follow-ups; Attack 2's design
+note is in `doc/DESIGN_BANKED_SDP_DATABANK.md`, and the Attack 3
+failure is reproducible (single-line revert) for any future attempt
+at fixing the cache controller alongside the pipeline insertion.
 
 ## Merge criteria
 
