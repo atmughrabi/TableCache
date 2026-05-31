@@ -25,6 +25,12 @@ DIRECTIVE="${DIRECTIVE:-default}"
 DB_LATENCY="${DB_LATENCY:-2}"
 INCLUDE_VICTIM="${INCLUDE_VICTIM:-0}"
 DATABANK_SDP="${DATABANK_SDP:-1}"
+# V80 uses Versal URAM288E5 primitives; on this family CASCADE_DEPTH=1
+# is a strict improvement across 512KB / 1MB / 2MB (+0.094 / +0.521 /
+# +0.249 ns post-route WNS vs CD=8). UltraScale+ HBM (U55C / U250) has
+# the opposite trade at 512 KB, so the src/ default stays 8; only this
+# V80 wrapper overrides.
+CASCADE_DEPTH="${CASCADE_DEPTH:-1}"
 PNR="${PNR:-0}"
 
 case "$SIZE" in
@@ -41,7 +47,7 @@ mkdir -p "$OUT"
 echo "==== V80 synth: SIZE=$SIZE WAYS=$WAYS LINES=$LINES LINE_W=$LINE_W"
 echo "             POLICY=$POLICY DB_LATENCY=$DB_LATENCY INCLUDE_VICTIM=$INCLUDE_VICTIM"
 echo "             DATABANK_SDP=$DATABANK_SDP DIRECTIVE=$DIRECTIVE PERIOD_NS=$PERIOD_NS"
-echo "             PNR=$PNR PART=$PART"
+echo "             CASCADE_DEPTH=$CASCADE_DEPTH PNR=$PNR PART=$PART"
 echo "             OUT=$OUT"
 
 # Select the right TCL (synth-only vs synth+PnR)
@@ -64,6 +70,7 @@ env PART="$PART" \
     WAYS="$WAYS" LINES="$LINES" LINE_W="$LINE_W" \
     POLICY="$POLICY" INCLUDE_VICTIM="$INCLUDE_VICTIM" \
     DATABANK_SDP="$DATABANK_SDP" DB_LATENCY="$DB_LATENCY" \
+    CASCADE_DEPTH="$CASCADE_DEPTH" \
     DIRECTIVE="$DIRECTIVE" PERIOD_NS="$PERIOD_NS" \
     "$VIVADO" -mode batch -source "$TCL" \
         -tclargs l2_cache "$REPO" "$OUT" \
