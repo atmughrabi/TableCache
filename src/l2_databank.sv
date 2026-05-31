@@ -30,7 +30,14 @@ module l2_databank
         //1 = register SDP URAM write-port inputs (forwarded to sdp_ram_uram.
         //WRITE_INPUT_REG). Only meaningful with DATABANK_SDP=1; adds 1 cycle
         //of write commit latency.
-        parameter logic SDP_WRITE_INPUT_REG = 0
+        parameter logic SDP_WRITE_INPUT_REG = 0,
+        //Length of the URAM/BRAM cascade in the databank. Vivado-default
+        //is 8 (the longest cascade); shorter values produce more parallel
+        //cascades at the cost of additional inter-cascade muxing. On long
+        //URAM cascades (1 MB / 2 MB caches) shorter cascades reduce the
+        //CAS_OUT propagation delay and can help close higher frequencies.
+        //Range: 1..8 (Vivado URAM288 cap).
+        parameter int unsigned CASCADE_DEPTH = 8
     )
     (
         input logic clk,
@@ -83,7 +90,8 @@ module l2_databank
 
     //These parameters can be customized
     localparam int unsigned OUTPUT_FIFO_DEPTH = 32; //How many words to buffer per port
-    localparam int unsigned CASCADE_DEPTH = 8; //Length of the memory cascade on AMD FPGAs
+    // CASCADE_DEPTH promoted to module parameter (see header); use the
+    // parameter value below where the depth is needed by sdp_ram instances.
     
     localparam int unsigned WBE_W = DATA_W/8;
     typedef logic[LINE_ADDR_W-1:0] line_t;

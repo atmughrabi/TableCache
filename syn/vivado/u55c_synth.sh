@@ -20,6 +20,11 @@ DIRECTIVE="${DIRECTIVE:-default}"
 DB_LATENCY="${DB_LATENCY:-2}"
 INCLUDE_VICTIM="${INCLUDE_VICTIM:-0}"
 DATABANK_SDP="${DATABANK_SDP:-1}"
+# CASCADE_DEPTH=8 (Vivado-default) is best for 512 KB on UltraScale+ HBM
+# (U55C / U250 = URAM288). Override CASCADE_DEPTH=1 for 1 MB or larger
+# caches to gain ~+0.1 ns post-route WNS by replacing the URAM cascade
+# with a parallel LUT mux.
+CASCADE_DEPTH="${CASCADE_DEPTH:-8}"
 PNR="${PNR:-0}"
 
 case "$SIZE" in
@@ -36,7 +41,7 @@ mkdir -p "$OUT"
 echo "==== U55C synth: SIZE=$SIZE WAYS=$WAYS LINES=$LINES LINE_W=$LINE_W"
 echo "             POLICY=$POLICY DB_LATENCY=$DB_LATENCY INCLUDE_VICTIM=$INCLUDE_VICTIM"
 echo "             DATABANK_SDP=$DATABANK_SDP DIRECTIVE=$DIRECTIVE PERIOD_NS=$PERIOD_NS"
-echo "             PNR=$PNR PART=$PART"
+echo "             CASCADE_DEPTH=$CASCADE_DEPTH PNR=$PNR PART=$PART"
 echo "             OUT=$OUT"
 
 if [[ "$PNR" == "1" ]]; then
@@ -58,6 +63,7 @@ env PART="$PART" \
     WAYS="$WAYS" LINES="$LINES" LINE_W="$LINE_W" \
     POLICY="$POLICY" INCLUDE_VICTIM="$INCLUDE_VICTIM" \
     DATABANK_SDP="$DATABANK_SDP" DB_LATENCY="$DB_LATENCY" \
+    CASCADE_DEPTH="$CASCADE_DEPTH" \
     DIRECTIVE="$DIRECTIVE" PERIOD_NS="$PERIOD_NS" \
     "$VIVADO" -mode batch -source "$TCL" \
         -tclargs l2_cache "$REPO" "$OUT" \
