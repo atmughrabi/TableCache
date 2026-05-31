@@ -405,6 +405,46 @@ SIZE=1M PERIOD_NS=3.333 DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 \
 PART=xcu250-figd2104-2L-e PERIOD_NS=3.333 ... PNR=1 ./u55c_synth.sh
 ```
 
+### V80 ES at extreme frequencies (1 MB and 2 MB, 300 / 350 MHz targets)
+
+V80 engineering-sample silicon (the `-S` speed file) limits achievable
+frequency for the large 1 MB / 2 MB / 8w configs regardless of how
+aggressive we push the synth target. Useful as the boundary number
+for production-silicon planning.
+
+| Cache | Target MHz | LUT | BRAM | URAM | WNS post-route (ns) | Achievable MHz |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 MB | 300 (3.333 ns) | 1634 | 2 | 34 | -1.370 | ~213 |
+| 1 MB | 350 (2.857 ns) | 1679 | 2 | 34 | -1.584 | ~225 |
+| 2 MB | 300 (3.333 ns) | 1769 | 4 | 66 | -1.350 | ~214 |
+| 2 MB | 350 (2.857 ns) | 1818 | 4 | 66 | -1.931 | ~209 |
+
+All four with `DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 PLACE/PHYS/
+ROUTE_DIRECTIVE=ExtraNetDelay_high/AggressiveExplore/AggressiveExplore`.
+Achievable MHz = `1000 / (period - WNS)` so it's the longest-path
+period after route, NOT the closed clock.
+
+**Reading the data**: at 1 MB / 8w on V80 ES the design hits the
+~213 MHz wall and pushing the target higher just yields larger
+negative slack without raising achievable MHz. At 2 MB the 66-URAM
+cascade adds enough delay that 350 MHz makes the result strictly
+WORSE (~209 MHz) than 300 MHz (~214 MHz) — diminishing returns
+from aggressive optimization on a structurally-bound path.
+
+Production V80 silicon should remove the 0.265 ns ES clock-
+uncertainty penalty, lifting 1 MB to ~250 MHz and 2 MB to ~230 MHz
+(rough projection, not measured). The ~300 MHz wall on V80 1MB+
+is a structural URAM-cascade-depth issue that the ES penalty hides
+slightly — clearing the penalty exposes the cascade as the next
+binding path.
+
+**Conclusion for V80 large-cache deployments**:
+- 200 MHz: comfortable today on ES silicon
+- 250 MHz: needs production silicon (and likely closes 1 MB)
+- 300+ MHz: not achievable on 1 MB / 2 MB without FSM pipelining
+  (multi-week structural work)
+- Use U250 or U55C if you need 1 MB or 2 MB at 300 MHz today
+
 ## V80 (Versal Premium) preset — `v80_synth.sh`
 
 Wraps `run_synth.sh` with the V80 PART and the URAM-deployment knobs
