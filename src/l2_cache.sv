@@ -34,7 +34,11 @@ module l2_cache
         parameter logic DATABANK_SDP = 0, //1=SDP databank (URAM-friendly, ~1-3% throughput cost); 0=TDP (default)
         //1 = register SDP URAM write-port inputs (+1 cycle write commit
         //latency; only meaningful with DATABANK_SDP=1). See sdp_ram_uram.sv.
-        parameter logic SDP_WRITE_INPUT_REG = 0
+        parameter logic SDP_WRITE_INPUT_REG = 0,
+        //Length of the URAM/BRAM cascade in the databank. Vivado-default
+        //is 8; shorter values produce more parallel cascades at the cost
+        //of additional inter-cascade muxing. Range: 1..8 (URAM288 cap).
+        parameter int unsigned CASCADE_DEPTH = 8
     )
     (
         input logic clk,
@@ -948,7 +952,8 @@ module l2_cache
         .LATENCY(DB_LATENCY),
         .SAVED_LEN($bits(saved_t)),
         .DATABANK_SDP(DATABANK_SDP),
-        .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG)
+        .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG),
+        .CASCADE_DEPTH(CASCADE_DEPTH)
     ) db_inst (
         .request_valid(db_req_valid),
         .request_rnw(db_req.rnw),

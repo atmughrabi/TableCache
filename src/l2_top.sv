@@ -31,6 +31,11 @@ module l2_top
         parameter int VICTIM_LINES = 8,
         //1=SDP databank (URAM-friendly, ~1-3% throughput cost); 0=TDP (default)
         parameter logic DATABANK_SDP = 0,
+        //1 = register SDP URAM write-port inputs (+1 cycle write commit;
+        //only meaningful with DATABANK_SDP=1).
+        parameter logic SDP_WRITE_INPUT_REG = 0,
+        //Length of the URAM/BRAM cascade in the databank (1..8; default 8).
+        parameter int unsigned CASCADE_DEPTH = 8,
 
         // Parameters of Axi Slave Bus Interface S00_AXI
         parameter integer C_S00_AXI_ID_WIDTH = 4,
@@ -301,7 +306,9 @@ module l2_top
         .BLOCK_W(C_S00_AXI_DATA_WIDTH),
         .READ_ID_WIDTH(C_S00_AXI_ID_WIDTH),
         .WRITE_ID_WIDTH(C_S00_AXI_ID_WIDTH),
-        .DATABANK_SDP(DATABANK_SDP)
+        .DATABANK_SDP(DATABANK_SDP),
+        .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG),
+        .CASCADE_DEPTH(CASCADE_DEPTH)
     ) inst (
         .clk(s00_axi_aclk),
         .rst(~s00_axi_aresetn),
