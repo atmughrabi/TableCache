@@ -46,16 +46,19 @@ report_utilization        -file $out/utilization_postsynth.rpt
 report_timing_summary     -file $out/timing_summary_postsynth.rpt
 
 puts "==== place_design ===="
-place_design -directive Default
+set place_dir [expr {[info exists ::env(PLACE_DIRECTIVE)] ? $::env(PLACE_DIRECTIVE) : "Default"}]
+place_design -directive $place_dir
 
 puts "==== phys_opt_design (post-place) ===="
-phys_opt_design -directive Default
+set phys_dir [expr {[info exists ::env(PHYS_DIRECTIVE)] ? $::env(PHYS_DIRECTIVE) : "Default"}]
+phys_opt_design -directive $phys_dir
 
 puts "==== route_design ===="
-route_design -directive Default
+set route_dir [expr {[info exists ::env(ROUTE_DIRECTIVE)] ? $::env(ROUTE_DIRECTIVE) : "Default"}]
+route_design -directive $route_dir
 
 puts "==== phys_opt_design (post-route) ===="
-phys_opt_design -directive Default
+phys_opt_design -directive $phys_dir
 
 report_utilization        -file $out/utilization.rpt
 report_utilization -hierarchical -file $out/utilization_hier.rpt

@@ -151,6 +151,14 @@ EXTRA_ARGS += -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINCONNE
 EXTRA_ARGS += +define+TC_POLICY=$(POLICY) +define+TC_LINES=$(LINES) +define+TC_LINE_W=$(LINE_W) \
               +define+TC_WAYS=$(WAYS) \
               +define+TC_DB_LATENCY=$(DB_LATENCY) +define+TC_VICTIM=$(VICTIM) +define+TC_CBOM=$(CBOM)
+# DATABANK_SDP + SDP_WRITE_INPUT_REG: only forward when explicitly set so
+# pre-existing tests that don't set them keep the historical defaults.
+ifneq ($(DATABANK_SDP),)
+EXTRA_ARGS += +define+TC_DATABANK_SDP=$(DATABANK_SDP)
+endif
+ifneq ($(SDP_WRITE_INPUT_REG),)
+EXTRA_ARGS += +define+TC_SDP_WRITE_INPUT_REG=$(SDP_WRITE_INPUT_REG)
+endif
 ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
 endif
