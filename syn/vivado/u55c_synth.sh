@@ -25,6 +25,12 @@ DATABANK_SDP="${DATABANK_SDP:-1}"
 # caches to gain ~+0.1 ns post-route WNS by replacing the URAM cascade
 # with a parallel LUT mux.
 CASCADE_DEPTH="${CASCADE_DEPTH:-8}"
+# N_BANKS=1 default for UltraScale+ HBM (U55C / U250). N=2 helps
+# U55C 1 MB (+0.093 ns, ~+8 MHz, closes 300 MHz) but regresses
+# U250 1 MB slightly (binding path is in out_fifo, not the data bank,
+# so the bank-mux overhead loses without a balancing gain). For
+# multi-CU U55C deployments at 1 MB, prefer N_BANKS=2 explicitly.
+N_BANKS="${N_BANKS:-1}"
 PNR="${PNR:-0}"
 
 case "$SIZE" in
@@ -63,7 +69,7 @@ env PART="$PART" \
     WAYS="$WAYS" LINES="$LINES" LINE_W="$LINE_W" \
     POLICY="$POLICY" INCLUDE_VICTIM="$INCLUDE_VICTIM" \
     DATABANK_SDP="$DATABANK_SDP" DB_LATENCY="$DB_LATENCY" \
-    CASCADE_DEPTH="$CASCADE_DEPTH" \
+    CASCADE_DEPTH="$CASCADE_DEPTH" N_BANKS="$N_BANKS" \
     DIRECTIVE="$DIRECTIVE" PERIOD_NS="$PERIOD_NS" \
     "$VIVADO" -mode batch -source "$TCL" \
         -tclargs l2_cache "$REPO" "$OUT" \

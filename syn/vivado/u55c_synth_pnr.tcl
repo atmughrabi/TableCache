@@ -66,6 +66,11 @@ report_timing_summary     -file $out/timing_summary.rpt
 report_methodology        -file $out/methodology.rpt
 report_drc                -file $out/drc.rpt
 
+# Detailed binding-path report (top-3 worst paths, full topology)
+# for post-route binding-path analysis.
+report_timing -delay_type max -nworst 3 -path_type full -input_pins \
+    -file $out/timing_detailed.rpt
+
 # Routed netlist + SDF for post-PnR functional sim (see syn/post_pnr_sim.sh).
 write_verilog -mode timesim -sdf_anno true -force $out/routed_netlist.v
 write_sdf -force $out/routed_netlist.sdf
