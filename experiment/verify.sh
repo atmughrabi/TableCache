@@ -27,7 +27,7 @@ cd "$REPO/tb/cocotb"
 source .venv/bin/activate 2>/dev/null || { echo "ERROR: tb/cocotb/.venv missing" >&2; exit 2; }
 
 DEFAULT_POLICY="${POLICY_DEFAULT:-LRU}"
-KNOBS="DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 DATABANK_SDP=1${N_BANKS:+ N_BANKS=$N_BANKS}"
+KNOBS="DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 DATABANK_SDP=1${N_BANKS:+ N_BANKS=$N_BANKS}${V2:+ V2=$V2}${N_BANKS_V2:+ N_BANKS_V2=$N_BANKS_V2}"
 
 # ---- 1. module regression ----
 echo "==== experiment/verify.sh: cocotb regression at $KNOBS ===="

@@ -114,10 +114,24 @@ endif
 EXTRA_ARGS += +define+TC_POLICY_INT=$(TC_POLICY_INT)
 else
 # All RTL files (cache_config first, l2_cache and friends; exclude l2_top and shim).
+# V2=1: target dut_v2_cocotb (the TableCache v2 sibling wrapper). Picks up
+# src/v2/*.sv in addition to src/*.sv. N_BANKS_V2 forwards via TC_N_BANKS_V2.
+ifeq ($(V2),1)
+TOPLEVEL := dut_v2_cocotb
+VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
+    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
+    $(wildcard $(SRC_DIR)/v2/*.sv) \
+    $(TB_DIR)/axi_protocol_checker.sv \
+    $(TB_DIR)/dut_v2_cocotb.sv
+ifneq ($(N_BANKS_V2),)
+EXTRA_ARGS += +define+TC_N_BANKS_V2=$(N_BANKS_V2)
+endif
+else
 VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
     $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
     $(TB_DIR)/axi_protocol_checker.sv \
     $(TB_DIR)/dut_cocotb.sv
+endif
 endif
 
 EXTRA_ARGS += --timing
