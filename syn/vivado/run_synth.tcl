@@ -26,8 +26,12 @@ puts "==== part = $part ===="
 create_project -in_memory -part $part
 
 # RTL sources (-sv enables SystemVerilog).
+# Include both src/*.sv (v1) and src/v2/*.sv (v2 sibling). v2 files are
+# only referenced when TOP=l2_cache_v2 is selected; harmless otherwise
+# since Vivado only synthesizes the chosen top + its dependencies.
 set rtl_files [glob -nocomplain $repo_root/src/*.sv]
-foreach f $rtl_files {
+set v2_files  [glob -nocomplain $repo_root/src/v2/*.sv]
+foreach f [concat $rtl_files $v2_files] {
     read_verilog -sv $f
 }
 
@@ -53,9 +57,9 @@ set_property top $top [current_fileset]
 # Also accepts SDP_WRITE_INPUT_REG (1-cycle URAM write-port input reg,
 # default 0, only meaningful with DATABANK_SDP=1) and DB_LATENCY.
 set generics [list]
-if {$top eq "l2_cache" || $top eq "l2_top"} {
+if {$top eq "l2_cache" || $top eq "l2_top" || $top eq "l2_cache_v2"} {
     foreach v {WAYS LINES LINE_W POLICY REPLACEMENT_POLICY INCLUDE_VICTIM \
-               VICTIM_LINES DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG CASCADE_DEPTH N_BANKS} {
+               VICTIM_LINES DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG CASCADE_DEPTH N_BANKS N_BANKS_V2} {
         if {[info exists ::env($v)]} {
             lappend generics "$v=$::env($v)"
             puts "==== override $v=$::env($v)"

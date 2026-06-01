@@ -86,7 +86,7 @@ module l2_cache_v2
         input r_t mem_r,
         input logic[BLOCK_W-1:0] mem_rdata,
         input logic[READ_ID_WIDTH + ((N_BANKS_V2>1) ? $clog2(N_BANKS_V2) : 0):0] mem_rid,
-        output mem_rready,
+        output logic mem_rready,
         output aw_t mem_aw,
         output logic[WRITE_ID_WIDTH + ((N_BANKS_V2>1) ? $clog2(N_BANKS_V2) : 0):0] mem_awid,
         input logic mem_awready,

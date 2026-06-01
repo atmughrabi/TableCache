@@ -21,12 +21,15 @@ create_project -in_memory -part $part
 foreach f [glob -nocomplain $repo_root/src/*.sv] {
     read_verilog -sv $f
 }
+foreach f [glob -nocomplain $repo_root/src/v2/*.sv] {
+    read_verilog -sv $f
+}
 set_property top $top [current_fileset]
 
 set generics [list]
-if {$top eq "l2_cache" || $top eq "l2_top"} {
+if {$top eq "l2_cache" || $top eq "l2_top" || $top eq "l2_cache_v2"} {
     foreach v {WAYS LINES LINE_W POLICY REPLACEMENT_POLICY INCLUDE_VICTIM \
-               VICTIM_LINES DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG CASCADE_DEPTH N_BANKS} {
+               VICTIM_LINES DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG CASCADE_DEPTH N_BANKS N_BANKS_V2} {
         if {[info exists ::env($v)]} {
             lappend generics "$v=$::env($v)"
             puts "==== override $v=$::env($v)"

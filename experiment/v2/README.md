@@ -1,144 +1,142 @@
-# TableCache v2 — Architecture Plan
+# TableCache v2 architecture roadmap
 
-**Status**: design + RTL-skeleton phase on `experiment/v2-architecture`.
+v2 is a **sibling RTL family** at `src/v2/` that explores breaking
+TableCache's structural ceilings (the 300+ MHz wall at 1 MB+, the
+6.3% SDP throughput cost). v1 at `src/l2_cache.sv` ships unchanged
+on `main`.
 
-v2 is a from-the-v1-baseline rearchitecture targeting the structural
-ceiling that the Phase 2b attempts hit on v1. v1 (current `main`,
-`src/l2_cache.sv`) is the stable production cache and stays
-untouched in the tree. v2 lives at `src/v2/l2_cache_v2.sv` (and
-sibling files) and is a drop-in alternative at the AXI boundary.
+## Status
 
-## Why v2 (not just keep optimizing v1)
+| Phase | Status | Outcome |
+|---|---|---|
+| **v2.0** skeleton | LANDED (`530656e`) | wrapper at N_BANKS_V2=1 == v1 passthrough; 19/19+5/5+10/10 PASS |
+| **v2.1** multi-bank | LANDED (`82a3cbd`) | per-bank v1 instances + router/merger; 19/19+5/5+10/10 PASS at N=1,2,4; ~15-32 MHz SLOWER than v1 |
+| **v2.2** per-bank FSM redesign | NOT STARTED | the actual frequency-win phase |
+| **v2.3** pipelined banks | NOT STARTED | 350 MHz target |
+| **v2.4** perf + deployment | NOT STARTED | merge to main as opt-in |
 
-v1 hit the architectural ceiling on three axes during the
-experiment/banked-memory work:
+## v2.1 honest result
 
-1. **300 MHz wall on 1 MB+ caches** (U55C 1 MB closes at ~304;
-   V80 1 MB caps at ~245). The binding paths are the cache
-   controller's combinational reductions across FIFO LFSRs that
-   feed the data-bank write mux + the tagbank BRAM enable.
-2. **6.3 % SDP throughput cost** from port-1 disable. Cannot be
-   recovered without FSM surgery (see Phase 2b post-mortem in
-   `experiment/DESIGN_BANKED_MEMORY.md`).
-3. **2 MB cache structurally bound to ~244 MHz** even with
-   CASCADE_DEPTH=1 + bank=2 because of the 66-URAM cascade depth.
+**Verified correct** at N=1, N=2, N=4: 19/19 cocotb regression +
+5/5 GRASP mutation + 10/10 formal proofs, identical to v1.
 
-v1 was optimized for AMD's original TDP-DDR target. Modern URAM /
-HBM deployments invert the assumptions; a clean redesign is
-worthwhile.
+**Throughput** (`perf_v2_vs_v1.py`; cyc/txn @ LRU, LINES=256, NTXN=2000):
+- v1:        12.82 cyc/txn (baseline)
+- v2 N=1:    12.82 cyc/txn  (+0.00%, byte-identical -- passthrough)
+- v2 N=2:    12.87 cyc/txn  (+0.43%)
+- v2 N=4:    13.06 cyc/txn  (+1.94%)
 
-## v2 design pillars
+**Post-route frequency** (Vivado 2025.2, 1 MB / 8-way / GRASP):
 
-### 1. Per-bank FSM (replaces v1's single FSM with masked ports)
+| Board | Target | Config | WNS | MHz | delta vs v1 |
+|---|---|---|---|---|---|
+| U55C | 300 MHz | v1 baseline N=2 | -0.310 ns | 274 | -- |
+| U55C | 300 MHz | v2 N=2 cascade=1 | -0.612 ns | 253 | **-21 MHz** |
+| U55C | 300 MHz | v2 N=2 cascade=8 | -0.523 ns | 259 | **-15 MHz** |
+| U55C | 300 MHz | v2 N=4 cascade=8 | -0.949 ns | 233 | **-41 MHz** |
+| V80  | 250 MHz | v1 baseline N=2 | -0.145 ns | 241 | -- |
+| V80  | 250 MHz | v2 N=2 cascade=1 | -0.772 ns | 209 | **-32 MHz** |
 
-v1's FSM treats port 0 and port 1 as logically-equivalent ports of
-ONE storage. v2 splits the storage into N independent banks, each
-with its own SDP URAM and its own FSM. A request-router at the front
-dispatches each AXI request to one bank-FSM by line-address LSB.
+**Why v2.1 is slower**: critical path is *inside* a bank's v1 cache
+(`fill_count_reg -> wbe_table -> req_fifo -> URAM BWE`, 9 logic
+levels, ~74% routing). Banking halves LINES per bank but doesn't
+shorten this internal logic chain. v1's Phase 2a `gen_banked_sdp`
+keeps ONE FSM + splits only storage -- still the smarter choice
+for frequency. v2.1's per-bank-full-v1-cache wraps add arbiter
+combinational depth without breaking the bank-internal binding path.
 
-Win:
-- Two concurrent requests on different banks serve in parallel
-  natively — no arbiter needed, no stall logic, no replay buffer.
-- Same-bank back-to-back requests serialize naturally through one
-  bank-FSM (which is allowed to look like v1's FSM).
-- Frequency: each bank-FSM is smaller (depth/N) so the per-bank
-  cascade and tag/way fanout shrink with N. The cross-bank
-  arbitration is only on the request-router (1 cycle).
+**Conclusion**: v2.1 is correctness-complete but a frequency
+regression. **DO NOT MERGE v2.1 to main as-is.** Keep branch open
+for v2.2 (actual per-bank FSM redesign that shortens the internal
+critical path).
 
-### 2. Pipelined request-router
+## Design pillars (v2.0+v2.1 landed; v2.2+ pending)
 
-Front of the cache: AXI ar/aw is decoded and routed to the chosen
-bank in a single cycle, with the bank-id added to the request
-metadata. AXI response merges across banks at the back with a
-round-robin / oldest-first arbiter.
+1. **Per-bank dispatcher** (v2.1 ✓): N_BANKS_V2 v1 caches in parallel
+   with address-bit router on slave side, bank-tagged ID widening
+   on mem side.
+2. **Pipelined request router** (v2.2): 1-cycle skid to break the
+   combinational arbiter path. Expected +20-30 MHz at N=2.
+3. **Native banked URAM/hybrid BRAM-tag** (v2.3): rebuild each bank
+   without the v1 fill_count/wbe_table indirection; route directly
+   to URAM BWE. Targets shortening the 9-LL path to 5-6 LL.
+4. **ID-routed merge** (v2.2): replace at-most-1-outstanding-per-ID
+   with a per-ID FIFO for in-flight tracking (recovers per-ID
+   pipelining for high-throughput AXI masters).
+5. **Unchanged GRASP/SRRIP/LRU policies**: v2 instantiates the same
+   `replacement_policy.sv` per bank; no policy changes.
 
-Win:
-- Cache controller's tightest combinational paths (the FIFO-LFSR
-  to write-mux chain that was the binding path on v1 at 300 MHz)
-  disappear because each bank's write-mux only sees its own
-  bank's requests.
-- The full-cache combinational fanout splits N-ways.
+## What v2 explicitly does NOT do
 
-### 3. Native banked URAM / hybrid BRAM-tag
+- Coherency between banks (each bank is independent; same address
+  always maps to ONE bank by design)
+- Multi-clock domains (single `clk`/`rst` like v1)
+- Wider mem-side AXI features (no AXI4/5 deltas; same channels as v1)
 
-Each bank owns:
-- Its own tag bank (BRAM, depth = LINES / N_BANKS)
-- Its own data bank (URAM, depth = LINES / N_BANKS)
-- Its own replacement-policy state (LRU/SRRIP/GRASP RRPV table)
+## How to use v2 (development only; not yet shipped)
 
-Win:
-- URAM/BRAM scalability: linear with N_BANKS (4 banks at 1 MB
-  total = 4 × 8 URAM cascades of depth 2; vs v1's 1 × 32 URAM
-  cascade of depth 4). Cascade depth becomes a tuning knob per
-  deployment.
-- BRAM tag footprint: 5 × N_BANKS small tag arrays instead of
-  one large array. The aspect-ratio padding (Phase 1 of
-  `sdp_ram_padded_rst`) optimises per bank.
+Verification:
+```bash
+# Passthrough proof (must equal v1)
+V2=1 N_BANKS_V2=1 ./experiment/verify.sh
+# Recommended multi-bank
+V2=1 N_BANKS_V2=2 ./experiment/verify.sh
+# Max banking
+V2=1 N_BANKS_V2=4 ./experiment/verify.sh
+```
 
-### 4. ID-routed merge at the back
+Perf comparison:
+```bash
+cd tb/cocotb
+source .venv/bin/activate
+python3 perf_v2_vs_v1.py
+```
 
-Read responses from banks are tagged with the originating
-AXI ARID + bank-id. A small reorder buffer (1 entry per
-in-flight ID, size = bound by `READ_ID_WIDTH`) merges them
-back into AXI-spec order. Writes use AWID similarly.
-
-### 5. Keep GRASP / SRRIP / LRU / FRQ / SECOND_CHANCE / RANDOM
-unchanged
-
-Replacement policy is per-bank but each bank still uses one of the
-existing `replacement_policy.sv` instances. No policy logic change.
-
-## What v2 does NOT do
-
-- **Coherency**: still single-master AXI. ACE / CHI is out of scope.
-- **Multi-clock**: single kernel clock. No CDC inside the cache.
-- **New AXI features**: same AxLOCK/AxCACHE/AxQOS behavior as v1.
-- **CBOM extensions**: same `CleanInvalid` / `CleanShared` semantics.
-- **Victim cache integration**: out of v2 v1.0; add later if needed.
-
-## Implementation plan
-
-| Phase | What | Verification gate | Effort |
-|---|---|---|---|
-| **v2.0** | Skeleton: `l2_cache_v2.sv` that wraps v1's `l2_cache` 1× per bank with a request-router + response-merger. AXI-compatible at the boundary. | full module regression PASSES on `dut_v2_cocotb.sv`; throughput equals v1 at N_BANKS=1 (since one-bank v2 == v1) | 3-5 days |
-| v2.1 | Replace v1's wrapped FSM with a v2-native per-bank FSM that doesn't need port-1-disable hacks | regression + mutation + formal | 1 week |
-| v2.2 | Optimize the request-router for 350 MHz target on U55C 512 KB | post-synth + post-route sweep | 3 days |
-| v2.3 | Add per-bank pipelined tagbank + databank for further frequency | binding-path analysis loop | 1 week |
-| v2.4 | Full perf comparison vs v1 + per-board deployment-report updates | `perf_v2_vs_v1.sh` | 2 days |
-
-**Total realistic effort**: ~3-4 weeks of focused engineering.
-
-## Verification strategy
-
-- `experiment/verify.sh` extended with `V2=1` mode that runs the
-  v2 test wrapper (`dut_v2_cocotb.sv`) through the full module
-  regression
-- `mutation_test.sh` adds `src/v2/l2_cache_v2.sv:*` entries
-- `tb/formal/` extends GRASP invariants to per-bank instances
-- New `perf_v2_vs_v1.sh` runs `test_workload` on both wrappers
-  and compares cyc/txn + projected throughput at each version's
-  closing MHz
+Synthesis (post-route):
+```bash
+cd syn/vivado
+TOP=l2_cache_v2 SIZE=1M N_BANKS_V2=2 PERIOD_NS=3.333 \
+    CASCADE_DEPTH=8 PNR=1 ./u55c_synth.sh
+TOP=l2_cache_v2 SIZE=1M N_BANKS_V2=2 PERIOD_NS=4.0 \
+    CASCADE_DEPTH=1 PNR=1 ./v80_synth.sh
+```
 
 ## Coexistence with v1
 
-| Aspect | v1 (current) | v2 (this branch's target) |
+| Layer | v1 path | v2 path |
 |---|---|---|
-| Top module | `src/l2_cache.sv` | `src/v2/l2_cache_v2.sv` |
-| AXI wrapper | `src/l2_top.sv` | `src/v2/l2_top_v2.sv` |
-| Cocotb DUT | `tb/cocotb/dut_cocotb.sv` | `tb/cocotb/dut_v2_cocotb.sv` |
-| Synth preset | `syn/vivado/u55c_synth.sh` | `syn/vivado/u55c_synth_v2.sh` |
-| Per-board defaults | unchanged | tuned for v2's expanded knob surface |
-| User-facing module name | `l2_cache` | `l2_cache_v2` |
+| Top-level | `src/l2_cache.sv` | `src/v2/l2_cache_v2.sv` (sibling) |
+| AXI wrapper | `src/l2_top.sv` (uses l2_cache) | `src/v2/l2_top_v2.sv` (planned; uses l2_cache_v2) |
+| cocotb testbench | `tb/cocotb/dut_cocotb.sv` | `tb/cocotb/dut_v2_cocotb.sv` |
+| Per-board synth | `syn/vivado/{u55c,v80}_synth.sh` | same scripts with `TOP=l2_cache_v2 N_BANKS_V2=N` |
+| User opt-in | `l2_cache` instance | `l2_cache_v2` instance (when v2 ships) |
 
-Both ship in the same release. Users explicitly pick `_v2`; default
-references in docs continue to point at v1 until v2 graduates from
-`experiment/`.
+Both v1 and v2 will ship together in the same release once v2 graduates.
 
-## Graduation criteria from `experiment/v2-architecture` to `main`
+## Graduation criteria (when to merge to main)
 
-1. All v1 verification surfaces have v2 equivalents passing
-2. v2 closes ≥ 350 MHz post-route on U55C 512 KB (vs v1's 312)
-3. v2 throughput on `test_workload` ≥ v1 throughput at the same
-   target MHz (any cycle-overhead is overcome by the MHz gain)
-4. v2 deployment matrix documented in `doc/deployment/V2_*.md`
-5. User sign-off on v2 vs v1 trade-off summary
+v2 may merge as an opt-in alongside v1 only when ALL of:
+1. `V2=1 N_BANKS_V2={1,2,4} ./experiment/verify.sh` are GREEN
+2. `perf_v2_vs_v1.py` shows v2 cyc/txn >= v1 cyc/txn at the same
+   workload (within +-5% variance)
+3. Post-route MHz on U55C 1MB AND V80 1MB at the same target is
+   >= v1 main (no frequency regression)
+4. Documentation (root README, wiki, this file) updated
+
+**v2.1 status**: criteria 1+2 GREEN, criterion 3 FAILED (-15..-32 MHz),
+criterion 4 done. v2.1 does not merge. v2.2 must address criterion 3.
+
+## Implementation plan
+
+| Step | File(s) | Effort | Status |
+|---|---|---|---|
+| v2.0 skeleton + N=1 passthrough | `src/v2/l2_cache_v2.sv` | 1 day | DONE |
+| v2.1 router + merger + N>=2 | `src/v2/l2_cache_v2.sv` (inline) | 3 days | DONE |
+| v2.1 cocotb harness | `tb/cocotb/dut_v2_cocotb.sv` + Makefile | 0.5 day | DONE |
+| v2.1 verify.sh integration | `experiment/verify.sh` | 0.5 day | DONE |
+| v2.1 perf comparison | `tb/cocotb/perf_v2_vs_v1.py` | 0.5 day | DONE |
+| v2.1 PnR on U55C + V80 | `syn/vivado/*` (extended for TOP/N_BANKS_V2) | 0.5 day | DONE |
+| **v2.2 pipelined router** | `src/v2/l2_cache_v2.sv` (+ pipelined arb) | 3-5 days | TODO |
+| v2.2 throughput recovery (ID-FIFO) | `src/v2/l2_cache_v2.sv` | 2-3 days | TODO |
+| v2.3 per-bank logic redesign | `src/v2/l2_databank_v2.sv` (NEW) | 5-7 days | TODO |
+| v2.4 perf + deployment reports | `experiment/v2/` | 2 days | TODO |

@@ -70,9 +70,10 @@ env PART="$PART" \
     POLICY="$POLICY" INCLUDE_VICTIM="$INCLUDE_VICTIM" \
     DATABANK_SDP="$DATABANK_SDP" DB_LATENCY="$DB_LATENCY" \
     CASCADE_DEPTH="$CASCADE_DEPTH" N_BANKS="$N_BANKS" \
+    ${N_BANKS_V2:+N_BANKS_V2="$N_BANKS_V2"} \
     DIRECTIVE="$DIRECTIVE" PERIOD_NS="$PERIOD_NS" \
     "$VIVADO" -mode batch -source "$TCL" \
-        -tclargs l2_cache "$REPO" "$OUT" \
+        -tclargs "${TOP:-l2_cache}" "$REPO" "$OUT" \
         -log "$OUT/vivado.log" -journal "$OUT/vivado.jou" -notrace \
         > "$OUT/synth.log" 2>&1
 rc=$?
