@@ -58,10 +58,16 @@ module dut_v2_cocotb
         parameter logic SDP_WRITE_INPUT_REG = 0,
 `endif
 `ifdef TC_N_BANKS_V2
-        parameter int unsigned N_BANKS_V2 = `TC_N_BANKS_V2
+        parameter int unsigned N_BANKS_V2 = `TC_N_BANKS_V2,
 `else
-        parameter int unsigned N_BANKS_V2 = 1
+        parameter int unsigned N_BANKS_V2 = 1,
 `endif
+        // Mem-side ID width is widened by log2(N_BANKS_V2) bits inside
+        // l2_cache_v2 to carry the bank tag. Expose the wider width so
+        // cocotbext-axi's AxiRam auto-detects the correct id_width.
+        parameter int unsigned BANK_BITS_V2 = (N_BANKS_V2 > 1) ? $clog2(N_BANKS_V2) : 0,
+        parameter int unsigned MEM_RID_W    = READ_ID_WIDTH  + 1 + BANK_BITS_V2,
+        parameter int unsigned MEM_WID_W    = WRITE_ID_WIDTH + 1 + BANK_BITS_V2
     ) (
         input  logic clk,
         input  logic rst,
@@ -125,13 +131,13 @@ module dut_v2_cocotb
         output logic [3:0]                  m_arregion,
         output logic                        m_arvalid,
         input  logic                        m_arready,
-        output logic [READ_ID_WIDTH:0]      m_arid,
+        output logic [MEM_RID_W-1:0]        m_arid,
 
         input  logic                        m_rvalid,
         input  logic                        m_rlast,
         input  logic [1:0]                  m_rresp,
         input  logic [BLOCK_W-1:0]          m_rdata,
-        input  logic [READ_ID_WIDTH:0]      m_rid,
+        input  logic [MEM_RID_W-1:0]        m_rid,
         output logic                        m_rready,
 
         output logic [31:0]                 m_awaddr,
@@ -145,7 +151,7 @@ module dut_v2_cocotb
         output logic [3:0]                  m_awregion,
         output logic                        m_awvalid,
         input  logic                        m_awready,
-        output logic [WRITE_ID_WIDTH:0]     m_awid,
+        output logic [MEM_WID_W-1:0]        m_awid,
 
         output logic                        m_wvalid,
         output logic                        m_wlast,
@@ -155,7 +161,7 @@ module dut_v2_cocotb
 
         input  logic                        m_bvalid,
         input  logic [1:0]                  m_bresp,
-        input  logic [WRITE_ID_WIDTH:0]     m_bid,
+        input  logic [MEM_WID_W-1:0]        m_bid,
         output logic                        m_bready,
 
         // Runtime-configurable GRASP address region bounds.
