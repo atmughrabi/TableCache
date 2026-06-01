@@ -210,6 +210,15 @@ module l2_cache_v2
         // -----------------------------------------------------------
         // Per-bank l2_cache instances (each owns LINES/N_BANKS_V2 lines)
         // -----------------------------------------------------------
+        // Note on KEEP_HIERARCHY: we tried (* keep_hierarchy = "yes" *)
+        // on bank_inst in v2.2a to force Vivado to keep each bank a
+        // contiguous placement cluster. Measured outcome on U55C 1MB
+        // N=2 @ 300 MHz: WNS -1.224 ns (v2.1 was -0.523 ns), i.e.
+        // -0.7 ns regression. The cross-bank "fusion" path visible in
+        // v2.1 timing reports is Vivado's optimizer co-optimizing
+        // shared LFSR / URAM control logic across banks -- forbidding
+        // it forces longer per-bank routes. Decision: NO keep_hierarchy.
+        // See experiment/v2/README.md "v2.2a result" section.
         for (genvar B = 0; B < N_BANKS_V2; B++) begin : gen_bank
             l2_cache #(
                 .POLICY              (POLICY),

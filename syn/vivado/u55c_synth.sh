@@ -42,7 +42,7 @@ case "$SIZE" in
 esac
 
 TAG="u55c_${SIZE}_w${WAYS}_p${POLICY}_period${PERIOD_NS}_dbl${DB_LATENCY}_wir${SDP_WRITE_INPUT_REG:-0}_pnr${PNR}"
-OUT="$HERE/build/${TAG}"
+OUT="${OUT:-$HERE/build/${TAG}}"
 mkdir -p "$OUT"
 echo "==== U55C synth: SIZE=$SIZE WAYS=$WAYS LINES=$LINES LINE_W=$LINE_W"
 echo "             POLICY=$POLICY DB_LATENCY=$DB_LATENCY INCLUDE_VICTIM=$INCLUDE_VICTIM"

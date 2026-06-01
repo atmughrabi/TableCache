@@ -68,7 +68,23 @@ done
 # ---- 2. GRASP mutation suite ----
 echo ""
 echo "==== experiment/verify.sh: GRASP mutation suite ===="
-FILE=src/GRASP.sv ./mutation_test.sh > "$OUT/grasp_mut.log" 2>&1 || true
+# LOGDIR override: mutation_test.sh backs src/GRASP.sv up to
+# $LOGDIR/$basename.orig and restores on EXIT trap. Using the default
+# (/tmp/tc_mutation) shared across parallel verify.sh invocations
+# causes a race where one run's mutated src/GRASP.sv gets backed up by
+# another, then "restored" to the mutated state on its trap. The
+# resulting persistent mutation silently corrupts every downstream
+# synth/cocotb run until manually reverted. Isolating LOGDIR per
+# invocation eliminates the backup-corruption symptom; the flock
+# around the actual mutation work serializes the src/GRASP.sv edits
+# even if two verify.sh runs land simultaneously.
+MUT_LOGDIR="$OUT/mutation_scratch"
+mkdir -p "$MUT_LOGDIR"
+MUT_LOCK="$REPO/.mutation_test.lock"
+(
+    flock -x 9
+    FILE=src/GRASP.sv LOGDIR="$MUT_LOGDIR" ./mutation_test.sh
+) 9>"$MUT_LOCK" > "$OUT/grasp_mut.log" 2>&1 || true
 mut_killed=$(grep -c "KILLED" "$OUT/grasp_mut.log" || true)
 mut_survived=$(grep -c "SURVIVED" "$OUT/grasp_mut.log" || true)
 mut_score=$(grep -oE "mutation score: [0-9.]+%" "$OUT/grasp_mut.log" | head -1)
