@@ -134,8 +134,8 @@ third attempt — two earlier approaches (runtime conflict-stall with
 output `ready` gating, then with only data-handshake gating) closed a
 combinational loop through the upstream `req_fifo`/`fill_request`
 paths in `l2_cache.sv` and caused write-data loss respectively. See
-`doc/ARCHITECTURE.md` §7.5 bug #14 and the
-`tablecache_databank_sdp_uram` Copilot memory note.
+`doc/ARCHITECTURE.md` §7.5 bug #14 for the full failure-modes and
+fix rationale.
 
 ---
 

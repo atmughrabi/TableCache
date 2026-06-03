@@ -54,8 +54,9 @@ For every FIFO instance — not every FIFO module, every **instance**:
 - [ ] FIFO accepts no pushes during reset (push asserted with `rst=1`
       does not advance state).
 - [ ] FIFO outputs **0 on every `valid`** during reset, not 1 cycle
-      late. See `/memories/axi4_valid_reset_gating.md`. If the FIFO
-      drives an AXI VALID directly, gate it combinationally with `~rst`.
+      late. If the FIFO drives an AXI VALID directly, gate it
+      combinationally with `~rst` so the VALID drops in the same cycle
+      the reset asserts.
 
 ### Single-producer / single-consumer
 - [ ] Fill to capacity-1, capacity, capacity+1 — `full` asserts at the
@@ -116,8 +117,7 @@ For every FIFO instance — not every FIFO module, every **instance**:
       while `rst=1`. Especially VALIDs, especially `done_out` (see §3).
 
 ### `done_out` semantics — the deadlock zone
-This is the single biggest source of dataflow bugs. See
-`/memories/done_out_semantics.md`. The checklist:
+This is the single biggest source of dataflow bugs. Checklist:
 
 - [ ] `done_out` is **not** permanently `1'b0` anywhere in the engine
       hierarchy. (Wrapper passthrough, generator-level definition.)
@@ -138,8 +138,9 @@ This is the single biggest source of dataflow bugs. See
 ### Pipeline bookkeeping
 - [ ] Counter that decrements on response receipt does **not**
       use level-sensitive `valid`. Counter pattern must be
-      "pulse-on-meta-change with last-pulsed-offset tracking" (see
-      `/memories/cu_setup_response_counter.md`).
+      "pulse-on-meta-change with last-pulsed-offset tracking" — i.e.,
+      pulse exactly once per response by tracking the last-pulsed
+      metadata offset rather than edge-detecting `valid`.
 - [ ] Counter resets to its load value on `counter_load`; the
       last-pulsed-offset tracker resets too.
 - [ ] Counter cannot wrap below zero in any scenario. Assert
@@ -148,8 +149,8 @@ This is the single biggest source of dataflow bugs. See
 ### Trigger sources
 - [ ] If the engine is **source-capable**, document and test its
       self-trigger path.
-- [ ] If the engine is **sink-only** (e.g. `CSR_INDEX` —
-      `/memories/csr_index_trigger_gating.md`), document the required
+- [ ] If the engine is **sink-only** (a configuration / index engine
+      that only consumes upstream triggers), document the required
       upstream trigger and write an integration test that drives that
       trigger from a real source.
 - [ ] Topology check (run in CI from `topology.json`): every sink-only
@@ -160,7 +161,7 @@ This is the single biggest source of dataflow bugs. See
 ### `(P:N)` / `cu_vector` (or equivalent activation mask)
 - [ ] At least one engine per algo carries the activation annotation.
       Missing annotation → `cu_vector = 0` → silent no-op (engine never
-      receives cfg). See `/memories/csr_index_trigger_gating.md`.
+      receives cfg).
 - [ ] Integration test asserts `cu_vector != 0` before claiming success.
 
 ---
@@ -175,7 +176,7 @@ For every engine-to-engine stream:
 - [ ] `valid` held until `ready` (AXI-Stream rule). Protocol checker on
       every edge.
 - [ ] `valid` drops to 0 the cycle reset asserts (same-cycle, not
-      next-cycle). See `/memories/axi4_valid_reset_gating.md`.
+      next-cycle). Gate the boundary VALID combinationally with `~rst`.
 - [ ] `ready` may withdraw freely before `valid` — assert there is no
       `ready` that depends on `valid` of the same edge (combinational
       loop risk).
@@ -196,9 +197,10 @@ For every engine-to-engine stream:
 ### Replay / duplication hazard
 - [ ] If multiple consumers share one producer's `valid` line through a
       FIFO, **do NOT edge-detect** the shared valid in any consumer.
-      That breaks under bubble+replay. Each consumer must
-      pulse-on-meta-change against its own tracked state
-      (`/memories/cu_setup_response_counter.md` v3→v4 history).
+      That breaks under bubble+replay (a transient `valid=0` between
+      two valid beats looks like a falling edge and the consumer can
+      double-count or miss). Each consumer must pulse-on-meta-change
+      against its own tracked state.
 
 ### Cross-edge interactions
 - [ ] **Feedback loops** in the topology: include a directed test that
@@ -230,8 +232,6 @@ Properties that must hold across the entire engine graph:
 - [ ] **No silent vacuous pass**: a test that exercises 0 transactions
       MUST fail loudly. Concrete check: assert ≥1 trigger consumed by
       every engine the topology claims to use, before declaring PASS.
-      See `/memories/csr_index_trigger_gating.md` "Vacuous-pass
-      detection".
 - [ ] **Reset recovery mid-flow**: assert reset with traffic in flight,
       deassert, run a fresh workload, expect identical output as a
       clean start.
@@ -247,8 +247,8 @@ For every external port (master & slave, every protocol):
       port). Layer-3 of the methodology.
 - [ ] Checker active during every layer-4/5/6 test, not just dedicated
       protocol tests.
-- [ ] Boundary `valid` gated with `~rst` (combinational AND). Per
-      `/memories/axi4_valid_reset_gating.md`.
+- [ ] Boundary `valid` gated with `~rst` (combinational AND) so it
+      drops the same cycle reset asserts.
 - [ ] Reset compliance: master drops all VALIDs the cycle ARESETn
       drops, even mid-burst. Test: pause `ready` mid-burst, assert
       reset, check VALID==0 same cycle.
@@ -363,8 +363,9 @@ Every bug, no exceptions:
 4. **Document**: one line in the project bug log (file location,
    trigger, fix, killing test).
 5. **Memorise**: if the failure mode could plausibly recur in a
-   different file or project, add it to `/memories/` so the next
-   engineer (or LLM session) does not re-pay the debugging cost.
+   different file or project, capture it as a short pattern note in
+   the team wiki (or this checklist) so the next engineer does not
+   re-pay the debugging cost.
 
 Skipping step 3 is the single most common verification anti-pattern;
 refactors silently reintroduce bugs because no test ever proved the
@@ -382,8 +383,9 @@ trade-offs** affect what's cheap to check. Pick deliberately.
 - Free, no licence.
 - Python-driven BFMs (cocotbext-axi). Good enough protocol checker for
   most rules; **misses some AXI4 corner cases** (e.g. cocotbext-axi
-  0.1.28 has known `r_valid`/`b_valid` reset-gating bugs; see
-  `/memories/axi4_valid_reset_gating.md`).
+  0.1.28 has known `r_valid`/`b_valid` reset-gating bugs — wrap the
+  BFM-driven VALID with a `~rst` mask at the testbench boundary so it
+  drops in the same cycle the reset asserts).
 - Limited SVA support — most assertions live in cocotb Python or in
   small SVA wrappers `verilator` can parse.
 - VHDL: not supported.

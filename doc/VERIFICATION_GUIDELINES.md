@@ -209,7 +209,7 @@ bug.
 | "We have 1000 tests" | Quantity ≠ quality | Mutation score |
 | "I'll add tests later" | Later means never | Test-with-fix loop (workflow §3) |
 | "Just rerun until it passes" | Hides flaky bugs | Always investigate first failure |
-| Sticky-OR done signals | False completion under stall | See `/memories/done_out_semantics.md` |
+| Sticky-OR done signals | False completion under stall | Gate `done` on in-flight traffic, not just FSM state |
 | Edge-detect on shared FIFO valid | Replay on backpressure | Pulse-on-meta-change per consumer |
 | Random test with no seed log | Failure not reproducible | Print seed on every run |
 

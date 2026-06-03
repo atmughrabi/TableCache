@@ -150,8 +150,8 @@ TDP is BRAM-tight at 16 caches; SDP+URAM leaves headroom for both
 primitives, matching the paper's "2 ways per URAM" packing strategy
 (thesis §5; release `etd23318.pdf`).
 
-See `/memories/repo/tablecache_databank_sdp_uram.md` (Copilot memory)
-for the design history and the two failed earlier approaches.
+See `doc/ARCHITECTURE.md` §7.5 bug #14 for the design history and
+the two failed earlier approaches.
 
 ## SDP write-input register (`SDP_WRITE_INPUT_REG=1`)
 
