@@ -112,6 +112,32 @@ else
 TC_POLICY_INT := 0
 endif
 EXTRA_ARGS += +define+TC_POLICY_INT=$(TC_POLICY_INT)
+else ifeq ($(MODULE),test_l2top_flush)
+# Flush-through-l2_top integration: tc_flush_controller -> l2_top -> AxiRam.
+# Verifies a CBOM (CleanInvalid) whole-cache flush actually reaches l2_cache
+# THROUGH the l2_top AXI wrapper -- i.e. that l2_top forwards s00_axi_arsnoop
+# and is built with INCLUDE_CBOM=1. dut_flush.sv covers the same flush against
+# l2_cache directly; this catches l2_top-boundary snoop/CBOM drops.
+TOPLEVEL := dut_l2top_flush
+VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
+    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
+    $(TB_DIR)/dut_l2top_flush.sv
+ifeq ($(POLICY),LRU)
+TC_POLICY_INT := 0
+else ifeq ($(POLICY),FRQ)
+TC_POLICY_INT := 1
+else ifeq ($(POLICY),SECOND_CHANCE)
+TC_POLICY_INT := 2
+else ifeq ($(POLICY),RANDOM)
+TC_POLICY_INT := 3
+else ifeq ($(POLICY),SRRIP)
+TC_POLICY_INT := 4
+else ifeq ($(POLICY),GRASP)
+TC_POLICY_INT := 5
+else
+TC_POLICY_INT := 0
+endif
+EXTRA_ARGS += +define+TC_POLICY_INT=$(TC_POLICY_INT)
 else
 # All RTL files (cache_config first, l2_cache and friends; exclude l2_top and shim).
 VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \

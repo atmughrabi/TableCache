@@ -203,3 +203,31 @@ async def test_flush_cold_cache(dut):
     assert mon.n == 0, f"cold-cache flush produced {mon.n} mem AWs (expected 0)"
     assert n_ar == 0, f"cold-cache flush produced {n_ar} bogus mem ARs (expected 0)"
     dut._log.info(f"[flush_cold_cache] PASS: mem ARs={n_ar}, mem AWs={mon.n}")
+
+
+@cocotb.test()
+async def test_flush_cold_cache_cleaninvalid(dut):
+    """Flush an unwarmed (cold) cache with CleanInvalid (4'b1001) -- the mode
+    the tc_flush_controller DEFAULTS to (DEFAULT_MODE). Unlike MakeInvalid,
+    CleanInvalid asserts in_clean=1 and exercises the writeback/evict path.
+    A cold line is clean+invalid so there is nothing to write back: the flush
+    must still complete with 0 mem AWs and 0 mem ARs, returning an R-beat per
+    CBOM so the flush controller's WAIT_R never wedges."""
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    mon = MAwCounter(dut); cocotb.start_soon(mon.run())
+    n_ar = 0
+    async def ar_mon():
+        nonlocal n_ar
+        while True:
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.m_arvalid) and int(dut.m_arready):
+                n_ar += 1
+    cocotb.start_soon(ar_mon())
+
+    await request_flush(dut, mode=0b1001)   # CleanInvalid on cold cache
+    await Timer(200, "ns")
+    assert mon.n == 0, f"cold-cache CleanInvalid flush produced {mon.n} mem AWs (expected 0)"
+    assert n_ar == 0, f"cold-cache CleanInvalid flush produced {n_ar} bogus mem ARs (expected 0)"
+    dut._log.info(f"[flush_cold_cache_cleaninvalid] PASS: mem ARs={n_ar}, mem AWs={mon.n}")

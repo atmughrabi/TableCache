@@ -245,6 +245,14 @@ CBOM snoop sideband (only if `INCLUDE_CBOM=1`):
 - `arsnoop = 4'b1101` MakeInvalid (drop without writeback)
 - `awsnoop = 3'b101 ` WriteEvict (full-line write that bypasses RMW)
 
+On `l2_top` these are the `s00_axi_arsnoop[3:0]` / `s00_axi_awsnoop[2:0]`
+slave ports. They MUST be wired through from your master (and from the
+`tc_flush_controller` AR mux) — `l2_top` no longer ties them off. Driving
+a CBOM `arsnoop` while `l2_top` was built with `INCLUDE_CBOM=0` (or while
+the sideband is tied to 0) silently demotes the CBOM to a plain read,
+which on a cold line fetches from memory instead of completing in place —
+the classic flush-wedges-in-WAIT_R symptom.
+
 ## 5. Memory-side AXI
 
 Standard AXI4 master. Connect to:
@@ -305,11 +313,17 @@ slave handles that burst length (Xilinx MIG accepts up to 256-beat).
   tables flagged a stuck (id, line_hash). Check the `inuse_id` and
   `inuse_line` debug `$display` block in [src/l2_cache.sv](../src/l2_cache.sv)
   (enable with `+define+CACHE_DEBUG`).
-- **`flush_done` never asserts** with `INCLUDE_CBOM=1`: confirm your
-  arbiter isn't gating the cache's slave-side AR with the flush
-  controller's `flush_active`. See
-  [tb/cocotb/dut_flush.sv](../tb/cocotb/dut_flush.sv) for a worked
-  2:1 priority-arb example.
+- **`flush_done` never asserts** with `INCLUDE_CBOM=1`: two common causes.
+  (a) Your arbiter is gating the cache's slave-side AR with the flush
+  controller's `flush_active` — see
+  [tb/cocotb/dut_flush.sv](../tb/cocotb/dut_flush.sv) for a worked 2:1
+  priority-arb example. (b) Through `l2_top`, the `s00_axi_arsnoop`
+  sideband isn't wired from the flush controller (or `l2_top` was built
+  with `INCLUDE_CBOM=0`): the flush CBOMs are demoted to plain reads, each
+  cold line issues a bogus `mem_arvalid` line-fetch (`arid==FLUSH_ID`)
+  instead of completing in place, and the controller wedges in `WAIT_R`.
+  See [tb/cocotb/dut_l2top_flush.sv](../tb/cocotb/dut_l2top_flush.sv) for
+  the correct l2_top wiring (`make MODULE=test_l2top_flush`).
 
 ## 10. Performance tuning knobs
 

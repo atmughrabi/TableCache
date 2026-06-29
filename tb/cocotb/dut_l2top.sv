@@ -163,8 +163,11 @@ module dut_l2top
         .grasp_moderate_addr_l(grasp_moderate_addr_l),
         .grasp_moderate_addr_h(grasp_moderate_addr_h),
 
-        // Slave AXI (l2_top has no aruser/awuser/wuser/ruser/buser/snoop
-        // ports -- those are internally tied off; see l2_top.sv lines 195,226).
+        // Slave AXI. l2_top now exposes ACE snoop sidebands (s00_axi_arsnoop/
+        // awsnoop); this accelerator-style harness is plain AXI4 so they are
+        // tied to 0 (CBOM disabled). See dut_l2top_flush.sv for the CBOM path.
+        .s00_axi_arsnoop  (4'b0000),
+        .s00_axi_awsnoop  (3'b000),
         .s00_axi_araddr   (s_araddr),
         .s00_axi_arlen    (s_arlen),
         .s00_axi_arsize   (s_arsize),

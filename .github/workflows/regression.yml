@@ -92,7 +92,7 @@ jobs:
         run: |
           . .venv/bin/activate
           set -e
-          for mod in test_smoke test_lru_sanity test_flush test_cbom; do
+          for mod in test_smoke test_lru_sanity test_flush test_l2top_flush test_cbom; do
             rm -rf sim_build sim_build_shim
             timeout 300 make MODULE=$mod
           done

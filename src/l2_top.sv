@@ -29,6 +29,12 @@ module l2_top
         //Victim cache
         parameter logic INCLUDE_VICTIM = 1,
         parameter int VICTIM_LINES = 8,
+        //ACE cache block maintenance ops (CleanInvalid/CleanShared/MakeInvalid)
+        //via the s00_axi_arsnoop sideband. Required for the tc_flush_controller
+        //whole-cache flush to work through this AXI wrapper. Matches l2_cache's
+        //default (1); set to 0 to compile out the CBOM path (plain AXI4, no
+        //flush). Masters that don't use CBOM must tie s00_axi_arsnoop to 0.
+        parameter logic INCLUDE_CBOM = 1,
         //1=SDP databank (URAM-friendly, ~1-3% throughput cost); 0=TDP (default)
         parameter logic DATABANK_SDP = 0,
         //1 = register SDP URAM write-port inputs (+1 cycle write commit;
@@ -78,6 +84,8 @@ module l2_top
         input logic[2:0] s00_axi_awprot,
         input logic[3:0] s00_axi_awqos,
         input logic[3:0] s00_axi_awregion,
+        // ACE write snoop (3'b101 = WriteEvict). Tie to 0 for plain AXI4.
+        input logic[2:0] s00_axi_awsnoop,
         input logic s00_axi_awvalid,
         output logic s00_axi_awready,
         input logic[C_S00_AXI_DATA_WIDTH-1:0] s00_axi_wdata,
@@ -99,6 +107,10 @@ module l2_top
         input logic[2:0] s00_axi_arprot,
         input logic[3:0] s00_axi_arqos,
         input logic[3:0] s00_axi_arregion,
+        // ACE read snoop / CBOM (4'b1001 CleanInvalid, 4'b1000 CleanShared,
+        // 4'b1101 MakeInvalid). Honored only when INCLUDE_CBOM=1; tie to 0
+        // for plain AXI4.
+        input logic[3:0] s00_axi_arsnoop,
         input logic s00_axi_arvalid,
         output logic s00_axi_arready,
         output logic[C_S00_AXI_ID_WIDTH-1:0] s00_axi_rid,
@@ -209,7 +221,7 @@ module l2_top
         awprot : s00_axi_awprot,
         awqos : s00_axi_awqos,
         awregion : s00_axi_awregion,
-        awsnoop : '0,
+        awsnoop : s00_axi_awsnoop,
         awvalid : s00_axi_awvalid
     };
     assign s00_axi_awready = req_awready;
@@ -240,7 +252,7 @@ module l2_top
         arqos : s00_axi_arqos,
         arregion : s00_axi_arregion,
         arvalid : s00_axi_arvalid,
-        arsnoop : '0
+        arsnoop : s00_axi_arsnoop
     };
     assign s00_axi_arready = req_arready;
 
@@ -311,7 +323,7 @@ module l2_top
         .RRIP_HP(RRIP_HP),
         .RRPV_WIDTH(RRPV_WIDTH),
         .ADDR_W(C_S00_AXI_ADDR_WIDTH),
-        .INCLUDE_CBOM(0),
+        .INCLUDE_CBOM(INCLUDE_CBOM),
         .INCLUDE_VICTIM(INCLUDE_VICTIM),
         .VICTIM_LINES(VICTIM_LINES),
         .DB_LATENCY(DB_LATENCY),

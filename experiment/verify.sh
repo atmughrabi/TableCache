@@ -36,7 +36,7 @@ MODULES=(
     test_smoke test_random test_workload test_reset_recovery
     test_backpressure test_strobe test_latency test_grasp
     test_grasp_pressure test_grasp_moderate test_grasp_midburst test_grasp_multi
-    test_cbom_stress test_cbom_rmw_race test_l2top
+    test_cbom_stress test_cbom_rmw_race test_l2top test_l2top_flush
     test_realism test_flush test_scoreboard
     test_set_coverage test_finish_fifo_stress
 )
