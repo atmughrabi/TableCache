@@ -430,6 +430,22 @@ module tc_narrow_shim
         end
     end endgenerate
 
+    // ---- per-awid outstanding cap (mirrors rid_outstanding_q for writes) ----
+    logic [NUM_IDS-1:0] awid_outstanding_q;
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            awid_outstanding_q <= '0;
+        end else begin
+            // Set when this shim accepts a write AW for s_awid; clear when its
+            // B beat drains. Cache enforces 1 in-flight per id, so this holds a
+            // 2nd same-awid write at s_awready until the 1st completes.
+            if (s_awvalid & s_awready)
+                awid_outstanding_q[s_awid] <= 1'b1;
+            if (m_bvalid & m_bready)
+                awid_outstanding_q[m_bid]  <= 1'b0;
+        end
+    end
+
     // ---- track which outstanding rids are CBOM (rdata is 'x, don't cache) ----
     logic [NUM_IDS-1:0] cbom_outstanding_q;
     always_ff @(posedge clk) begin
@@ -469,8 +485,14 @@ module tc_narrow_shim
     assign m_awid    = s_awid;
     // Hold AW on the cycle that decides a prefill is needed (combinational
     // ~aw_needs_prefill) as well as while prefill is in flight (~prefill_active).
-    assign m_awvalid = s_awvalid & ~aw_fifo_full & ~prefill_active & ~aw_needs_prefill;
-    assign s_awready = m_awready & ~aw_fifo_full & ~prefill_active & ~aw_needs_prefill;
+    // Per-awid outstanding cap (~awid_outstanding_q[s_awid]) mirrors the read
+    // path's rid_outstanding_q: the cache permits one in-flight request per id,
+    // so a 2nd same-awid write is stalled at the shim until the 1st write's B
+    // returns. Without this the shim forwards overlapping same-id writes and the
+    // cache sees >1 outstanding for that id (an AXI protocol violation that a
+    // strict checker treats as fatal).
+    assign m_awvalid = s_awvalid & ~aw_fifo_full & ~prefill_active & ~aw_needs_prefill & ~awid_outstanding_q[s_awid];
+    assign s_awready = m_awready & ~aw_fifo_full & ~prefill_active & ~aw_needs_prefill & ~awid_outstanding_q[s_awid];
 
     always_ff @(posedge clk) begin
         if (rst) begin
