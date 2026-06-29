@@ -11,7 +11,15 @@ Vivado knobs that reproduce each number.
 | [**V80**](V80.md)   | Versal Premium  | ES (`-S`)  | misses on ES (production should close) | ES clock-uncertainty bound (~259 MHz)  | mandatory for Versal NoC + AIE-ML integration |
 
 All measurements: 8-way / GRASP / SDP+URAM (BRAM tag + URAM data) /
-`INCLUDE_VICTIM=0` / `DATABANK_SDP=1`.
+`INCLUDE_VICTIM=0` / `DATABANK_SDP=1`. The validated timing numbers use
+the default single window per reuse class (`GRASP_HIGH_REGIONS=1`).
+Raising it is **0 ns post-synth** (the windows are off the logical
+critical path) but has a small **post-route** cost from the added
+comparator LUTs: measured U250 512 KB @ 250 MHz, N=2 = +0.029 ns vs
+N=1 = +0.104 ns same-flow — N=2 still MEETS, but budget the ~0.075 ns
+for larger window counts / 300 MHz (see
+[`GRASP_Policy.md` § Timing impact](../wiki/GRASP_Policy.md)). The
+synth/PnR scripts accept `GRASP_HIGH_REGIONS` / `GRASP_MODERATE_REGIONS`.
 
 ## Quick-pick decision table
 

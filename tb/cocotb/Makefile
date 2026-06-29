@@ -165,6 +165,15 @@ endif
 ifneq ($(N_BANKS),)
 EXTRA_ARGS += +define+TC_N_BANKS=$(N_BANKS)
 endif
+# GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS: number of address windows per
+# GRASP reuse class. Only forwarded when set so existing tests keep the
+# single-window default (1). Used by MODULE=test_grasp_multi.
+ifneq ($(GRASP_HIGH_REGIONS),)
+EXTRA_ARGS += +define+TC_GRASP_HIGH_REGIONS=$(GRASP_HIGH_REGIONS)
+endif
+ifneq ($(GRASP_MODERATE_REGIONS),)
+EXTRA_ARGS += +define+TC_GRASP_MODERATE_REGIONS=$(GRASP_MODERATE_REGIONS)
+endif
 ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
 endif

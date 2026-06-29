@@ -4,6 +4,8 @@
 # Phase 1: huge seed sweep on test_random (build once, reuse sim_build).
 # Phase 2: extra-long test_workload (200k ops).
 # Phase 3: matrix sweep across all policies / ways.
+# Phase 4: mutation re-baselines (incl. src/GRASP.sv -> 7 mutations).
+# Phase 5: GRASP multi-window config matrix + hit-rate perf demo.
 #
 # Each phase writes its own log under /tmp/tc_night/<phase>.log and an
 # entry to /tmp/tc_night/summary.txt. Designed to finish in 4-8 hours.
@@ -89,12 +91,41 @@ for f in src/l2_cache.sv src/tc_narrow_shim.sv src/tc_flush_controller.sv \
          src/lutram_1w_1r.sv src/lfsr.sv src/sdp_ram.sv \
          src/l2_tagbank.sv src/LRU.sv \
          src/SRRIP.sv src/FRQ.sv src/second_chance.sv src/random_replacement.sv \
+         src/GRASP.sv \
          src/tdp_ram.sv src/victim_cache.sv; do
     FILE=$f ./mutation_test.sh > "$OUT/phase4_${f//\//_}.log" 2>&1
     score=$(grep -E '^  mutation score:' "$OUT/phase4_${f//\//_}.log" | tail -1)
     log "  $f -- $score"
+    # All instrumented files score 100% (documented-equivalent mutations are
+    # excluded from the matrix). Anything less is a coverage regression.
+    if ! echo "$score" | grep -q '100.0%'; then
+        log "    WARNING: mutation score regressed for $f"
+        fail=$((fail+1))
+    fi
 done
 log "PHASE 4 done"
+
+# ----------------------------------------------------------------------
+# Phase 5 -- GRASP multi-window (N-region) config matrix + perf demo
+# Covers test_grasp_multi across window counts / WAYS / DB latency /
+# SDP+URAM, plus the fallback-vs-single-vs-multi hit-rate demonstration.
+# ----------------------------------------------------------------------
+log "PHASE 5: GRASP multi-window config matrix + perf demo"
+rm -rf sim_build
+OUT="$OUT/grasp_multi_matrix" timeout 3600 ./grasp_multi_matrix.sh > "$OUT/phase5_matrix.log" 2>&1
+rc=$?
+log "PHASE 5 matrix done: rc=$rc | $(grep -E 'cells PASS' "$OUT/phase5_matrix.log" | tail -1)"
+[[ $rc -eq 0 ]] || fail=$((fail+1))
+rm -rf sim_build
+POLICY=GRASP GRASP_HIGH_REGIONS=4 timeout 600 make MODULE=test_grasp_multi_perf \
+    > "$OUT/phase5_perf.log" 2>&1
+rc=$?
+perf=$(grep -E 'multi vs fallback' "$OUT/phase5_perf.log" | tail -1)
+log "PHASE 5 perf done: rc=$rc | ${perf:-no perf line}"
+if [[ $rc -ne 0 ]] || ! grep -qE '\*\* TESTS=[0-9]+ PASS=[0-9]+ FAIL=0 ' "$OUT/phase5_perf.log"; then
+    fail=$((fail+1))
+fi
+log "PHASE 5 done"
 
 # ----------------------------------------------------------------------
 # Final summary

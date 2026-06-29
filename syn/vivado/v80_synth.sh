@@ -25,6 +25,9 @@ DIRECTIVE="${DIRECTIVE:-default}"
 DB_LATENCY="${DB_LATENCY:-2}"
 INCLUDE_VICTIM="${INCLUDE_VICTIM:-0}"
 DATABANK_SDP="${DATABANK_SDP:-1}"
+# GRASP region-window counts (default 1 = original single-window GRASP).
+GRASP_HIGH_REGIONS="${GRASP_HIGH_REGIONS:-1}"
+GRASP_MODERATE_REGIONS="${GRASP_MODERATE_REGIONS:-1}"
 # V80 uses Versal URAM288E5 primitives; on this family CASCADE_DEPTH=1
 # is a strict improvement across 512KB / 1MB / 2MB (+0.094 / +0.521 /
 # +0.249 ns post-route WNS vs CD=8). UltraScale+ HBM (U55C / U250) has
@@ -80,6 +83,7 @@ env PART="$PART" \
     POLICY="$POLICY" INCLUDE_VICTIM="$INCLUDE_VICTIM" \
     DATABANK_SDP="$DATABANK_SDP" DB_LATENCY="$DB_LATENCY" \
     CASCADE_DEPTH="$CASCADE_DEPTH" N_BANKS="$N_BANKS" \
+    GRASP_HIGH_REGIONS="$GRASP_HIGH_REGIONS" GRASP_MODERATE_REGIONS="$GRASP_MODERATE_REGIONS" \
     DIRECTIVE="$DIRECTIVE" PERIOD_NS="$PERIOD_NS" \
     "$VIVADO" -mode batch -source "$TCL" \
         -tclargs l2_cache "$REPO" "$OUT" \

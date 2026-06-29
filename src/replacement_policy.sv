@@ -20,17 +20,24 @@ module replacement_policy
         parameter logic RANDOM_USE_EVICT = 1,
         parameter logic RRIP_HP = 1,
         parameter int unsigned RRIP_WIDTH = 2,
-        parameter int unsigned ADDR_W = 32
+        parameter int unsigned ADDR_W = 32,
+        // GRASP: number of independent address windows per reuse class. Both
+        // default to 1 (original single-window behaviour). Ignored by every
+        // other policy.
+        parameter int unsigned GRASP_HIGH_REGIONS = 1,
+        parameter int unsigned GRASP_MODERATE_REGIONS = 1
     )
     (
         input logic clk,
         input logic rst,
 
-        // Runtime-configurable GRASP address region bounds (0 = disabled)
-        input logic[ADDR_W-1:0] grasp_high_addr_l,
-        input logic[ADDR_W-1:0] grasp_high_addr_h,
-        input logic[ADDR_W-1:0] grasp_moderate_addr_l,
-        input logic[ADDR_W-1:0] grasp_moderate_addr_h,
+        // Runtime-configurable GRASP address region bounds (0 = disabled).
+        // Packed as GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS consecutive
+        // [_l, _h] windows; window i = bits [i*ADDR_W +: ADDR_W].
+        input logic[GRASP_HIGH_REGIONS*ADDR_W-1:0] grasp_high_addr_l,
+        input logic[GRASP_HIGH_REGIONS*ADDR_W-1:0] grasp_high_addr_h,
+        input logic[GRASP_MODERATE_REGIONS*ADDR_W-1:0] grasp_moderate_addr_l,
+        input logic[GRASP_MODERATE_REGIONS*ADDR_W-1:0] grasp_moderate_addr_h,
 
         //Initial metadata lookup
         input logic init_lookup,
@@ -120,7 +127,9 @@ module replacement_policy
             GRASP #(
                 .POLICY_W(POLICY_W),
                 .WAYS(WAYS),
-                .ADDR_W(ADDR_W)
+                .ADDR_W(ADDR_W),
+                .HIGH_REGIONS(GRASP_HIGH_REGIONS),
+                .MODERATE_REGIONS(GRASP_MODERATE_REGIONS)
             ) grasp(.*);  // runtime ports connected by name via .*
         end
     end endgenerate

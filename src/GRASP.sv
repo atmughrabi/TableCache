@@ -14,20 +14,30 @@ module GRASP
     #(
         parameter int unsigned POLICY_W,
         parameter int unsigned WAYS,
-        parameter int unsigned ADDR_W = 32
+        parameter int unsigned ADDR_W = 32,
+        // Number of independently-configurable address windows in each reuse
+        // class.  Each window is one [_l, _h] pair packed into the flattened
+        // region ports below: window i occupies bits [i*ADDR_W +: ADDR_W].
+        // Default 1 reproduces the original single-window high/moderate ports
+        // bit-for-bit (a 1*ADDR_W bus is just an ADDR_W bus).  Raise these to
+        // pin several disjoint buffers in the same reuse class.
+        parameter int unsigned HIGH_REGIONS = 1,
+        parameter int unsigned MODERATE_REGIONS = 1
     )
     (
         input logic clk,
         input logic rst,
 
-        // Runtime-configurable address region bounds.
-        // A region is DISABLED when its _h bound is 0 (both ports driven to
-        // 0 at runtime means "not in use").  When both regions are disabled the
-        // policy reduces to SRRIP-FP: cold (MAX_RRPV) insertion, decrement on hit.
-        input logic[ADDR_W-1:0] grasp_high_addr_l,
-        input logic[ADDR_W-1:0] grasp_high_addr_h,
-        input logic[ADDR_W-1:0] grasp_moderate_addr_l,
-        input logic[ADDR_W-1:0] grasp_moderate_addr_h,
+        // Runtime-configurable address region bounds, packed as
+        // HIGH_REGIONS (resp. MODERATE_REGIONS) consecutive [_l, _h] windows.
+        // Window i lives in bits [i*ADDR_W +: ADDR_W].  An individual window is
+        // DISABLED when its _h field is 0 ("not in use").  When EVERY window is
+        // disabled the policy reduces to SRRIP-FP: cold (MAX_RRPV) insertion,
+        // decrement on hit.
+        input logic[HIGH_REGIONS*ADDR_W-1:0] grasp_high_addr_l,
+        input logic[HIGH_REGIONS*ADDR_W-1:0] grasp_high_addr_h,
+        input logic[MODERATE_REGIONS*ADDR_W-1:0] grasp_moderate_addr_l,
+        input logic[MODERATE_REGIONS*ADDR_W-1:0] grasp_moderate_addr_h,
 
         input logic cache_eviction,
         input logic[WAYS-1:0] cache_way_used_one_hot,
@@ -56,6 +66,8 @@ module GRASP
     logic[RRPV_WIDTH-1:0] updated_RRPV[WAYS-1:0];
     logic high_reuse;
     logic moderate_reuse;
+    logic[HIGH_REGIONS-1:0] high_hit;
+    logic[MODERATE_REGIONS-1:0] moderate_hit;
     int victim_index;
     logic[RRPV_WIDTH-1:0] min_RRPV;
 
@@ -64,15 +76,30 @@ module GRASP
         assign cache_new_status[(i+1)*RRPV_WIDTH -1 : i*RRPV_WIDTH] = updated_RRPV[i];
     end endgenerate
 
-    // Region active only when _h != 0 AND _h >= _l.  Setting both ports to 0
-    // (the "not in use" convention) cleanly disables the region.
-    assign high_reuse = (grasp_high_addr_h != 0) &
-        (grasp_high_addr_h >= grasp_high_addr_l) &
-        (cache_addr >= grasp_high_addr_l) & (cache_addr <= grasp_high_addr_h);
-    assign moderate_reuse = (grasp_moderate_addr_h != 0) &
-        (grasp_moderate_addr_h >= grasp_moderate_addr_l) &
-        (cache_addr >= grasp_moderate_addr_l) & (cache_addr <= grasp_moderate_addr_h) &
-        ~high_reuse;
+    // Each reuse class is the OR of its independently-configured windows.  A
+    // window matches only when its _h field != 0 AND _h >= _l AND the address
+    // falls inside [_l, _h]; driving _h to 0 (the "not in use" convention)
+    // cleanly disables that window.  With every window disabled both classes
+    // are 0 and GRASP behaves exactly like SRRIP-FP.
+    generate
+        for (i = 0; i < HIGH_REGIONS; i++) begin : gen_high_window
+            assign high_hit[i] = (grasp_high_addr_h[i*ADDR_W +: ADDR_W] != 0) &
+                (grasp_high_addr_h[i*ADDR_W +: ADDR_W] >= grasp_high_addr_l[i*ADDR_W +: ADDR_W]) &
+                (cache_addr >= grasp_high_addr_l[i*ADDR_W +: ADDR_W]) &
+                (cache_addr <= grasp_high_addr_h[i*ADDR_W +: ADDR_W]);
+        end
+        for (i = 0; i < MODERATE_REGIONS; i++) begin : gen_moderate_window
+            assign moderate_hit[i] = (grasp_moderate_addr_h[i*ADDR_W +: ADDR_W] != 0) &
+                (grasp_moderate_addr_h[i*ADDR_W +: ADDR_W] >= grasp_moderate_addr_l[i*ADDR_W +: ADDR_W]) &
+                (cache_addr >= grasp_moderate_addr_l[i*ADDR_W +: ADDR_W]) &
+                (cache_addr <= grasp_moderate_addr_h[i*ADDR_W +: ADDR_W]);
+        end
+    endgenerate
+
+    assign high_reuse = |high_hit;
+    // High precedence wins on overlap: a moderate window only takes effect
+    // where no high window matched.
+    assign moderate_reuse = (|moderate_hit) & ~high_reuse;
 
     rrip_tree #(.BLOCK_WIDTH(RRPV_WIDTH), .NUM_BLOCKS(WAYS)) min_tree (
         .blocks(current_RRPV),
@@ -105,5 +132,17 @@ module GRASP
 
     assign cache_replacement_way_int = WAY_W'(victim_index);
     assign cache_replacement_way = WAYS'(1 << victim_index);
+
+`ifndef ASSERT_OFF
+    // Each reuse class needs at least one window; a count of 0 would make the
+    // packed region ports [-1:0].  Reuse the codebase's elaboration-guard
+    // convention (see l2_cache.sv N_BANKS guard).
+    initial begin
+        assert (HIGH_REGIONS >= 1)
+        else $fatal(1, "GRASP: GRASP_HIGH_REGIONS=%0d invalid (must be >= 1).", HIGH_REGIONS);
+        assert (MODERATE_REGIONS >= 1)
+        else $fatal(1, "GRASP: GRASP_MODERATE_REGIONS=%0d invalid (must be >= 1).", MODERATE_REGIONS);
+    end
+`endif
 
 endmodule

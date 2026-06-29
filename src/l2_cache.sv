@@ -45,17 +45,23 @@ module l2_cache
         //(see experiment/DESIGN_BANKED_MEMORY.md for the architecture).
         //Phase 1 (this commit): parameter plumbing only; N_BANKS>1 is
         //rejected at elaboration with $error until Phase 2 lands.
-        parameter int unsigned N_BANKS = 1
+        parameter int unsigned N_BANKS = 1,
+        // GRASP: number of independent address windows per reuse class
+        // (default 1 = original single-window high/moderate behaviour).
+        parameter int unsigned GRASP_HIGH_REGIONS = 1,
+        parameter int unsigned GRASP_MODERATE_REGIONS = 1
     )
     (
         input logic clk,
         input logic rst,
 
-        // Runtime-configurable GRASP address region bounds (0 = disabled)
-        input logic[ADDR_W-1:0] grasp_high_addr_l,
-        input logic[ADDR_W-1:0] grasp_high_addr_h,
-        input logic[ADDR_W-1:0] grasp_moderate_addr_l,
-        input logic[ADDR_W-1:0] grasp_moderate_addr_h,
+        // Runtime-configurable GRASP address region bounds (0 = disabled).
+        // Packed as GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS windows;
+        // window i = bits [i*ADDR_W +: ADDR_W].
+        input logic[GRASP_HIGH_REGIONS*ADDR_W-1:0] grasp_high_addr_l,
+        input logic[GRASP_HIGH_REGIONS*ADDR_W-1:0] grasp_high_addr_h,
+        input logic[GRASP_MODERATE_REGIONS*ADDR_W-1:0] grasp_moderate_addr_l,
+        input logic[GRASP_MODERATE_REGIONS*ADDR_W-1:0] grasp_moderate_addr_h,
 
         input ar_t req_ar,
         input logic[READ_ID_WIDTH-1:0] req_arid,
@@ -671,7 +677,9 @@ module l2_cache
         .RRIP_HP(RRIP_HP),
         .RRIP_WIDTH(RRPV_WIDTH),
         .ADDR_W(ADDR_W),
-        .ADDR_BASE(ADDR_RANGE_L)
+        .ADDR_BASE(ADDR_RANGE_L),
+        .GRASP_HIGH_REGIONS(GRASP_HIGH_REGIONS),
+        .GRASP_MODERATE_REGIONS(GRASP_MODERATE_REGIONS)
     ) tb_inst (
         .in_valid(tb_advance),
         .in_request_id(in_id),
@@ -1444,9 +1452,9 @@ module l2_cache
     arlen_assertion:
         assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (req_ar.arlen < LINE_W)) else $error("Read length greater than cache line");
     awline_assertion:
-        assert property (@(posedge clk) disable iff (rst) req_aw.awvalid |-> (~(req_aw.awburst == 2'b01 & (req_aw.awaddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W] + req_aw.awlen < LINE_W)))) else $error("Write reaches multiple cache lines");
+        assert property (@(posedge clk) disable iff (rst) req_aw.awvalid |-> (~(req_aw.awburst == 2'b01 & (req_aw.awaddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W] + req_aw.awlen >= LINE_W)))) else $error("Write reaches multiple cache lines");
     arline_assertion:
-        assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (~(req_ar.arburst == 2'b01 & (req_ar.araddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W] + req_ar.arlen < LINE_W)))) else $error("Read reaches multiple cache lines");
+        assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (~(req_ar.arburst == 2'b01 & (req_ar.araddr[LOG2_BLOCK_BYTES+:BLOCK_ADDR_W] + req_ar.arlen >= LINE_W)))) else $error("Read reaches multiple cache lines");
     awsize_assertion:
         assert property (@(posedge clk) disable iff (rst) req_aw.awvalid |-> (req_aw.awsize == 3'(LOG2_BLOCK_BYTES))) else $error("No narrow writes");
     arsize_assertion:

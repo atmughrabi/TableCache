@@ -47,6 +47,20 @@ Notable embedded fields:
 - `r_t.rresp[3:0]`, `b_t.bresp[1:0]` — standard AXI rresp (top 2 bits are
   ACE coherency state, returned as `'0` here).
 
+### GRASP region ports (only meaningful when `POLICY=GRASP`)
+
+| Signal | Direction | Width | Meaning |
+|---|---|---|---|
+| `grasp_high_addr_l` / `grasp_high_addr_h` | in | `GRASP_HIGH_REGIONS * ADDR_W` | "hot" windows, packed low→high (window `i` = bits `[i*ADDR_W +: ADDR_W]`). Insert/promote at RRPV=0. |
+| `grasp_moderate_addr_l` / `grasp_moderate_addr_h` | in | `GRASP_MODERATE_REGIONS * ADDR_W` | "moderate" windows, same packing. Insert at RRPV=1. |
+
+Each window matches a **real, line-aligned bus address** in `[_l, _h]`.
+Drive a window's `_h` field to `0` to disable just that window; with
+every window disabled GRASP behaves exactly like SRRIP-FP. At the
+default counts of 1 these are single `[ADDR_W-1:0]` ports. For any other
+policy, tie all four to `0`. See
+[doc/wiki/GRASP_Policy.md](wiki/GRASP_Policy.md) for the full spec.
+
 ### Back end – `mem_*` (master, you wire to RAM/interconnect)
 
 Same shape as the front end, with **no snoop** (the cache forces
@@ -93,7 +107,9 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 
 | Param | Default | Effect |
 |---|---|---|
-| `POLICY` | `LRU` | Replacement policy. Also: FRQ, SECOND_CHANCE, RANDOM, SRRIP. |
+| `POLICY` | `LRU` | Replacement policy. Also: FRQ, SECOND_CHANCE, RANDOM, SRRIP, **GRASP** (address-region-aware; see below). |
+| `GRASP_HIGH_REGIONS` | 1 | GRASP only: number of independent "hot" address windows (each pins a buffer at RRPV=0). |
+| `GRASP_MODERATE_REGIONS` | 1 | GRASP only: number of independent "moderate" address windows (insert at RRPV=1). |
 | `LINES` | 512 | Lines per way. |
 | `WAYS` | 4 | Set-associativity. |
 | `LINE_W` | 8 | Blocks per line. Line size = `LINE_W * BLOCK_W/8` bytes. |

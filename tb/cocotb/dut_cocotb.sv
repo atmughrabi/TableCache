@@ -58,9 +58,19 @@ module dut_cocotb
         parameter logic SDP_WRITE_INPUT_REG = 0,
 `endif
 `ifdef TC_N_BANKS
-        parameter int unsigned N_BANKS = `TC_N_BANKS
+        parameter int unsigned N_BANKS = `TC_N_BANKS,
 `else
-        parameter int unsigned N_BANKS = 1
+        parameter int unsigned N_BANKS = 1,
+`endif
+`ifdef TC_GRASP_HIGH_REGIONS
+        parameter int unsigned GRASP_HIGH_REGIONS = `TC_GRASP_HIGH_REGIONS,
+`else
+        parameter int unsigned GRASP_HIGH_REGIONS = 1,
+`endif
+`ifdef TC_GRASP_MODERATE_REGIONS
+        parameter int unsigned GRASP_MODERATE_REGIONS = `TC_GRASP_MODERATE_REGIONS
+`else
+        parameter int unsigned GRASP_MODERATE_REGIONS = 1
 `endif
     ) (
         input  logic clk,
@@ -159,11 +169,13 @@ module dut_cocotb
         output logic                        m_bready,
 
         // Runtime-configurable GRASP address region bounds.
-        // Drive to 32'h0 when not in use (SRRIP-FP fallback).
-        input  logic [31:0]  grasp_high_addr_l,
-        input  logic [31:0]  grasp_high_addr_h,
-        input  logic [31:0]  grasp_moderate_addr_l,
-        input  logic [31:0]  grasp_moderate_addr_h
+        // Drive to 32'h0 when not in use (SRRIP-FP fallback).  Packed as
+        // GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS consecutive 32-bit
+        // windows; window i = bits [i*32 +: 32].
+        input  logic [GRASP_HIGH_REGIONS*32-1:0]      grasp_high_addr_l,
+        input  logic [GRASP_HIGH_REGIONS*32-1:0]      grasp_high_addr_h,
+        input  logic [GRASP_MODERATE_REGIONS*32-1:0]  grasp_moderate_addr_l,
+        input  logic [GRASP_MODERATE_REGIONS*32-1:0]  grasp_moderate_addr_h
     );
 
     // -- Slave-side: pack flat signals into ar_t/aw_t/w_t structs --
@@ -240,7 +252,9 @@ module dut_cocotb
         .VICTIM_LINES   (VICTIM_LINES),
         .DATABANK_SDP   (DATABANK_SDP),
         .SDP_WRITE_INPUT_REG (SDP_WRITE_INPUT_REG),
-        .N_BANKS        (N_BANKS)
+        .N_BANKS        (N_BANKS),
+        .GRASP_HIGH_REGIONS     (GRASP_HIGH_REGIONS),
+        .GRASP_MODERATE_REGIONS (GRASP_MODERATE_REGIONS)
     ) dut (
         .clk(clk), .rst(rst),
         .grasp_high_addr_l(grasp_high_addr_l),

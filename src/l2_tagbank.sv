@@ -28,17 +28,23 @@ module l2_tagbank
         // Upper-bit constant that the cache strips out of every address before
         // tagging.  We OR it back into policy_addr so address-aware policies
         // (GRASP) see real addresses, not the tag-projected view.
-        parameter logic[ADDR_W-1:0] ADDR_BASE = '0
+        parameter logic[ADDR_W-1:0] ADDR_BASE = '0,
+        // GRASP: number of independent address windows per reuse class
+        // (default 1 = original single-window high/moderate behaviour).
+        parameter int unsigned GRASP_HIGH_REGIONS = 1,
+        parameter int unsigned GRASP_MODERATE_REGIONS = 1
     )
     (
         input logic clk,
         input logic rst,
 
-        // Runtime-configurable GRASP address region bounds (0 = disabled)
-        input logic[ADDR_W-1:0] grasp_high_addr_l,
-        input logic[ADDR_W-1:0] grasp_high_addr_h,
-        input logic[ADDR_W-1:0] grasp_moderate_addr_l,
-        input logic[ADDR_W-1:0] grasp_moderate_addr_h,
+        // Runtime-configurable GRASP address region bounds (0 = disabled).
+        // Packed as GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS windows;
+        // window i = bits [i*ADDR_W +: ADDR_W].
+        input logic[GRASP_HIGH_REGIONS*ADDR_W-1:0] grasp_high_addr_l,
+        input logic[GRASP_HIGH_REGIONS*ADDR_W-1:0] grasp_high_addr_h,
+        input logic[GRASP_MODERATE_REGIONS*ADDR_W-1:0] grasp_moderate_addr_l,
+        input logic[GRASP_MODERATE_REGIONS*ADDR_W-1:0] grasp_moderate_addr_h,
 
         //Request port
         input logic in_valid,
@@ -72,6 +78,10 @@ module l2_tagbank
     //Divided into stage 0 (request), stage 1 (determine if hit), and stage 2 (output, determine replacement)
 
     localparam int unsigned LOG2_BLOCK_BYTES = $clog2(BLOCK_W/8);
+    // Bits of block-within-line offset. The full per-line byte offset is
+    // BLOCK_ADDR_W + LOG2_BLOCK_BYTES; policy_addr must zero ALL of these so
+    // the line index lands at its real address bit position (see policy_addr).
+    localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
 
     typedef logic[TAG_W-1:0] tag_t;
     typedef logic[$clog2(LINES)-1:0] line_t;
@@ -194,7 +204,14 @@ module l2_tagbank
     logic[WAYS-1:0] policy_replacement_way;
     logic[ADDR_W-1:0] policy_addr;
 
-    assign policy_addr = ADDR_BASE | ADDR_W'({stage2.tag, stage2.line, {LOG2_BLOCK_BYTES{1'b0}}});
+    // Reconstruct the real, line-aligned request address for address-aware
+    // policies (GRASP). The line index sits at bit [LOG2_BLOCK_BYTES +
+    // BLOCK_ADDR_W] in a real address, so we must zero BOTH the byte-in-block
+    // bits (LOG2_BLOCK_BYTES) AND the block-in-line bits (BLOCK_ADDR_W).
+    // Zeroing only LOG2_BLOCK_BYTES (the prior behaviour) compressed the line
+    // index 2^BLOCK_ADDR_W-fold, so tight region windows matched the wrong
+    // lines (sibling of bug #15, which fixed the ADDR_BASE high bits).
+    assign policy_addr = ADDR_BASE | ADDR_W'({stage2.tag, stage2.line, {(BLOCK_ADDR_W + LOG2_BLOCK_BYTES){1'b0}}});
     assign evict_entry = tb_rdata_r[policy_replacement_way_int];
 
     replacement_policy #(
@@ -204,7 +221,9 @@ module l2_tagbank
         .RANDOM_USE_EVICT(RANDOM_USE_EVICT),
         .RRIP_HP(RRIP_HP),
         .RRIP_WIDTH(RRIP_WIDTH),
-        .ADDR_W(ADDR_W)
+        .ADDR_W(ADDR_W),
+        .GRASP_HIGH_REGIONS(GRASP_HIGH_REGIONS),
+        .GRASP_MODERATE_REGIONS(GRASP_MODERATE_REGIONS)
     ) policy_inst (
         .init_lookup(in_valid),
         .lookup_line_addr(in_request.line),

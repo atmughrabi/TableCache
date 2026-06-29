@@ -40,6 +40,12 @@ module l2_top
         //behavior; N_BANKS>1 enables banked storage (see
         //experiment/DESIGN_BANKED_MEMORY.md). Phase 1: plumbing only.
         parameter int unsigned N_BANKS = 1,
+        //GRASP: number of independent address windows per reuse class. Both
+        //default to 1 (original single-window high/moderate behaviour). The
+        //region ports below widen to N consecutive address-sized fields so an
+        //external register bank can map one register per window.
+        parameter int unsigned GRASP_HIGH_REGIONS = 1,
+        parameter int unsigned GRASP_MODERATE_REGIONS = 1,
 
         // Parameters of Axi Slave Bus Interface S00_AXI
         parameter integer C_S00_AXI_ID_WIDTH = 4,
@@ -145,10 +151,12 @@ module l2_top
 
         // Runtime-configurable GRASP address region bounds (all-zero = disabled).
         // Width follows the cache address bus so external register banks size cleanly.
-        input logic[C_S00_AXI_ADDR_WIDTH-1:0] grasp_high_addr_l,
-        input logic[C_S00_AXI_ADDR_WIDTH-1:0] grasp_high_addr_h,
-        input logic[C_S00_AXI_ADDR_WIDTH-1:0] grasp_moderate_addr_l,
-        input logic[C_S00_AXI_ADDR_WIDTH-1:0] grasp_moderate_addr_h
+        // Each is GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS consecutive
+        // [_l, _h] windows; window i = bits [i*C_S00_AXI_ADDR_WIDTH +: C_S00_AXI_ADDR_WIDTH].
+        input logic[GRASP_HIGH_REGIONS*C_S00_AXI_ADDR_WIDTH-1:0] grasp_high_addr_l,
+        input logic[GRASP_HIGH_REGIONS*C_S00_AXI_ADDR_WIDTH-1:0] grasp_high_addr_h,
+        input logic[GRASP_MODERATE_REGIONS*C_S00_AXI_ADDR_WIDTH-1:0] grasp_moderate_addr_l,
+        input logic[GRASP_MODERATE_REGIONS*C_S00_AXI_ADDR_WIDTH-1:0] grasp_moderate_addr_h
     );
 
     //Input packing
@@ -313,7 +321,9 @@ module l2_top
         .DATABANK_SDP(DATABANK_SDP),
         .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG),
         .CASCADE_DEPTH(CASCADE_DEPTH),
-        .N_BANKS(N_BANKS)
+        .N_BANKS(N_BANKS),
+        .GRASP_HIGH_REGIONS(GRASP_HIGH_REGIONS),
+        .GRASP_MODERATE_REGIONS(GRASP_MODERATE_REGIONS)
     ) inst (
         .clk(s00_axi_aclk),
         .rst(~s00_axi_aresetn),

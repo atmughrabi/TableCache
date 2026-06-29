@@ -331,8 +331,13 @@ case "$FILE" in
         # LFSR sweep doesn't fully clear all cache state under back-
         # to-back tests. That contamination can mask hit-promotion
         # mutations whose discriminator is cumulative RRPV state.
-        DEFAULT_TESTS="test_smoke test_grasp test_grasp_pressure test_grasp_moderate test_workload test_random"
+        DEFAULT_TESTS="test_smoke test_grasp test_grasp_pressure test_grasp_moderate test_workload test_random test_grasp_multi"
         export POLICY=GRASP
+        # Build with 2 windows/class so the multi-window OR-reduction is
+        # non-trivial (test_grasp_multi needs >= 2; the single-window tests
+        # are unaffected -- they drive only window 0, window 1 stays disabled).
+        export GRASP_HIGH_REGIONS=2
+        export GRASP_MODERATE_REGIONS=2
         MUTATIONS=(
             # Functional-correctness: victim index always 0 -> every miss
             # overwrites way 0 -> data scoreboard divergence.
@@ -353,6 +358,15 @@ case "$FILE" in
             # repeated hits don't pin the line. Killed by
             # test_grasp_hot_under_pressure (cumulative age across rounds).
             "swap_hot_hit_to_max|s/HOT_HIT_RRPV = '0;/HOT_HIT_RRPV = '1;/"
+            # Multi-window OR-reduction: collapse the high OR to window 0
+            # only, so high windows i>0 stop pinning their buffer. EQUIVALENT
+            # at GRASP_HIGH_REGIONS=1 (a 1-bit reduce), which is why this run
+            # forces 2 windows. Killed by test_grasp_multi (buffer B, pinned
+            # by high window 1, is wrongly evicted).
+            "break_high_or_reduce|s/assign high_reuse = |high_hit;/assign high_reuse = high_hit[0];/"
+            # Same for the moderate OR-reduction. Killed by test_grasp_multi
+            # (buffer B, pinned by moderate window 1, is wrongly evicted).
+            "break_moderate_or_reduce|s/assign moderate_reuse = (|moderate_hit) & ~high_reuse;/assign moderate_reuse = moderate_hit[0] \& ~high_reuse;/"
             # drop_moderate_exclusion (drop the `~high_reuse;` term in
             # moderate_reuse) excluded: equivalent. The if-elseif chain
             # in the eviction path already enforces precedence

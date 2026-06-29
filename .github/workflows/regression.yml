@@ -156,16 +156,32 @@ jobs:
           # See doc/ARCHITECTURE.md §7.1 "Address-aware policy classification".
           rm -rf sim_build
           POLICY=GRASP timeout 300 make MODULE=test_grasp
-          # GRASP under the URAM-deployment storage (DATABANK_SDP=1), one
-          # smoke + one workload run to catch SDP/GRASP integration drift.
-          # The full grasp_stress.sh sweep (XPROP, WAYS sweep, seed sweep,
-          # 18-module SDP cross-product) is the local nightly target.
+          # Multi-window GRASP (N>1 region windows): directed correctness
+          # (5 cases) + the fallback/single/multi hit-rate perf demo. These
+          # need the region-count build flags (the region ports widen with
+          # GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS). The full 9-cell
+          # config matrix (grasp_multi_matrix.sh) is the local nightly target.
+          rm -rf sim_build
+          POLICY=GRASP GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2 \
+              timeout 300 make MODULE=test_grasp_multi
+          rm -rf sim_build
+          POLICY=GRASP GRASP_HIGH_REGIONS=4 timeout 300 make MODULE=test_grasp_multi_perf
+          # GRASP under the URAM-deployment storage (DATABANK_SDP=1): smoke,
+          # workload, and the multi-window directed suite, to catch SDP/GRASP
+          # integration drift on the actual deployment databank. The full
+          # 9-cell config matrix (grasp_multi_matrix.sh) and 18-module SDP
+          # cross-product (grasp_stress.sh) are the local nightly targets.
           for mod in test_smoke test_workload; do
             rm -rf sim_build sim_build_shim
             EXTRA_ARGS="+define+TC_DATABANK_SDP=1" POLICY=GRASP \
                 timeout 300 make MODULE=$mod
             rm -rf sim_build sim_build_shim
           done
+          rm -rf sim_build sim_build_shim
+          EXTRA_ARGS="+define+TC_DATABANK_SDP=1" POLICY=GRASP \
+              GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2 \
+              timeout 300 make MODULE=test_grasp_multi
+          rm -rf sim_build sim_build_shim
 
   formal:
     runs-on: ubuntu-22.04

@@ -20,6 +20,9 @@ DIRECTIVE="${DIRECTIVE:-default}"
 DB_LATENCY="${DB_LATENCY:-2}"
 INCLUDE_VICTIM="${INCLUDE_VICTIM:-0}"
 DATABANK_SDP="${DATABANK_SDP:-1}"
+# GRASP region-window counts (default 1 = original single-window GRASP).
+GRASP_HIGH_REGIONS="${GRASP_HIGH_REGIONS:-1}"
+GRASP_MODERATE_REGIONS="${GRASP_MODERATE_REGIONS:-1}"
 # CASCADE_DEPTH=8 (Vivado-default) is best for 512 KB on UltraScale+ HBM
 # (U55C / U250 = URAM288). Override CASCADE_DEPTH=1 for 1 MB or larger
 # caches to gain ~+0.1 ns post-route WNS by replacing the URAM cascade
@@ -70,6 +73,7 @@ env PART="$PART" \
     POLICY="$POLICY" INCLUDE_VICTIM="$INCLUDE_VICTIM" \
     DATABANK_SDP="$DATABANK_SDP" DB_LATENCY="$DB_LATENCY" \
     CASCADE_DEPTH="$CASCADE_DEPTH" N_BANKS="$N_BANKS" \
+    GRASP_HIGH_REGIONS="$GRASP_HIGH_REGIONS" GRASP_MODERATE_REGIONS="$GRASP_MODERATE_REGIONS" \
     DIRECTIVE="$DIRECTIVE" PERIOD_NS="$PERIOD_NS" \
     "$VIVADO" -mode batch -source "$TCL" \
         -tclargs l2_cache "$REPO" "$OUT" \

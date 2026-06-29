@@ -6,8 +6,9 @@
 #   1. Full cocotb module regression at the deployment-knob settings
 #      (DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 DATABANK_SDP=1) — same
 #      knobs that close 300 MHz post-route on U55C / U250.
-#   2. GRASP mutation suite (5/5 KILLED expected — any survivor means
-#      a test gap or RTL drift).
+#   2. GRASP mutation suite (7/7 KILLED expected, incl. the two
+#      multi-window OR-reduction mutations — any survivor means a test
+#      gap or RTL drift).
 #   3. Formal proof suite (10/10 PASS expected).
 #
 # Exit non-zero on any failure. Pre-existing post-synth / post-route
@@ -34,7 +35,7 @@ echo "==== experiment/verify.sh: cocotb regression at $KNOBS ===="
 MODULES=(
     test_smoke test_random test_workload test_reset_recovery
     test_backpressure test_strobe test_latency test_grasp
-    test_grasp_pressure test_grasp_moderate test_grasp_midburst
+    test_grasp_pressure test_grasp_moderate test_grasp_midburst test_grasp_multi
     test_cbom_stress test_cbom_rmw_race test_l2top
     test_realism test_flush test_scoreboard
     test_set_coverage test_finish_fifo_stress
@@ -43,11 +44,14 @@ pass=0; fail=0; failed_modules=()
 for mod in "${MODULES[@]}"; do
     rm -rf sim_build results.xml
     case $mod in
-        test_grasp*) p=GRASP ;;
-        *) p="$DEFAULT_POLICY" ;;
+        # test_grasp_multi needs >= 2 windows per reuse class (the region
+        # ports widen with these); must precede the test_grasp* glob.
+        test_grasp_multi) p=GRASP; mk="GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2" ;;
+        test_grasp*) p=GRASP; mk="" ;;
+        *) p="$DEFAULT_POLICY"; mk="" ;;
     esac
     log="$OUT/$mod.log"
-    if eval "$KNOBS POLICY=$p MODULE=$mod make -s" > "$log" 2>&1; then
+    if eval "$KNOBS $mk POLICY=$p MODULE=$mod make -s" > "$log" 2>&1; then
         summary=$(grep -oE "TESTS=[0-9]+\s+PASS=[0-9]+\s+FAIL=[0-9]+\s+SKIP=[0-9]+" "$log" | head -1)
         nfail=$(echo "$summary" | grep -oE "FAIL=[0-9]+" | sed 's/FAIL=//')
         if [[ "${nfail:-1}" == "0" ]]; then

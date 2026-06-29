@@ -30,8 +30,11 @@ that pins it at:
 - **500-seed nightly stress** sweep, **26-config matrix** sweep (3 of
   them VICTIM=1: LRU/4, LRU/8, SRRIP/4), X-prop sweep, **200k-op
   workload** -- all clean.
-- **Address-aware GRASP** replacement policy with runtime hot/moderate
-  region ports (5/5 directed cases + 32/32 SDP cross-product PASS).
+- **Address-aware GRASP** replacement policy with a configurable number
+  of runtime hot/moderate region windows (`GRASP_HIGH_REGIONS` /
+  `GRASP_MODERATE_REGIONS`, default 1) so multiple disjoint buffers can be
+  pinned at once (12 directed cases incl. multi-window + 32/32 SDP
+  cross-product PASS; 2-window formal proof).
 - **Vivado OOC closure on U250** at 250 MHz for 512 KB/8-way SDP+URAM
   GRASP (WNS = +0.186 ns post-synth); U55C + V80 deployment presets at
   [`syn/vivado/u55c_synth.sh`](syn/vivado/u55c_synth.sh) and
@@ -134,7 +137,14 @@ Knobs (set on the `make` command line): `POLICY={LRU,SRRIP,FRQ,SECOND_CHANCE,RAN
 The bare-cocotb path only supports `BLOCK_W=32`; use `MODULE=test_shim_cache`
 for `BLOCK_W=512`. `GRASP` uses runtime address-window ports
 (`grasp_high_addr_l/h`, `grasp_moderate_addr_l/h`) driven from the test;
-see [`tb/cocotb/test_grasp.py`](tb/cocotb/test_grasp.py).
+see [`tb/cocotb/test_grasp.py`](tb/cocotb/test_grasp.py). Each reuse class
+can hold **N windows** via `GRASP_HIGH_REGIONS` / `GRASP_MODERATE_REGIONS`
+(default 1); the multi-window suite needs them set at build time:
+
+```bash
+make MODULE=test_grasp_multi POLICY=GRASP \
+     GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2
+```
 
 ## Coverage and seed sweep
 
@@ -306,10 +316,15 @@ nohup ./night_run.sh > /tmp/tc_night/main.log 2>&1 &
 tail -f /tmp/tc_night/summary.txt
 ```
 
-4-phase pipeline (~4-8 hours total): 500-seed sweep on `test_random`,
-200k-op `test_workload`, full pytest config matrix, and a mutation
-re-baseline across all instrumented files. Per-seed sim_build is reused,
-so the seed-sweep phase is dominated by simulation time not build time.
+5-phase pipeline (~4-8 hours total): 500-seed sweep on `test_random`,
+200k-op `test_workload`, full pytest config matrix, a mutation
+re-baseline across all instrumented files (incl. `src/GRASP.sv`), and
+the GRASP multi-window config matrix (`grasp_multi_matrix.sh`) + hit-rate
+perf demo. Per-seed sim_build is reused, so the seed-sweep phase is
+dominated by simulation time not build time. The heavy deterministic
+GRASP sweeps (config matrix, mutation) live here in the local nightly
+rather than per-PR CI, which runs the directed `test_grasp_multi` suite
+(default + SDP+URAM) on every push.
 
 ## Test inventory
 
@@ -334,6 +349,8 @@ spec including what bug class it was designed to catch.
 | `test_shim_prefill_race` | direct-driven shim test targeting `drop_prefill_check` mutation; marked `expect_fail` (artifactual under default `PROMOTE_WMISS_TO_RW=0`) |
 | `test_flush` | flush controller (4 scenarios): clean / dirty-writeback / idempotent / **cold-cache** (no pre-warm required) |
 | `test_grasp` | GRASP address-region policy (5 cases): hot-retention, SRRIP-FP fallback (regions=0), invalid region (`_h<_l`), runtime reconfig, hot/moderate overlap precedence |
+| `test_grasp_multi` | GRASP with **N>1 windows** (5 cases): two disjoint buffers each pinned by their own high window; disabled (`_h=0`) window must not match; high+moderate windows coexist; top window slot (index N-1) effective; all-disabled SRRIP-FP fallback evicts. Build with `POLICY=GRASP GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2`. Config matrix: `./grasp_multi_matrix.sh` (9 cells) |
+| `test_grasp_multi_perf` | GRASP multi-window hit-rate demo: 4 disjoint buffers, fallback 0% vs single-window 25% vs 4-window 100%. Build with `POLICY=GRASP GRASP_HIGH_REGIONS=4` |
 | `test_shim_cache` | shim + cache at `BLOCK_W=512`; RMW preservation tests for bug #7 |
 | `test_narrow_shim` | shim alone against `AxiRam`; 10 directed + 1 random pass |
 | `test_shim_latency` | shim cold/hot/write/merge cycle counts |
