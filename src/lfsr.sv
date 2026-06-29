@@ -92,7 +92,7 @@ module lfsr
     end
 
 `ifndef ASSERT_OFF
-    initial assert(WIDTH <= 16) else $fatal("LFSR width too large");
+    initial assert(WIDTH <= 16) else $fatal(1, "LFSR width too large");
 `endif
 
 endmodule

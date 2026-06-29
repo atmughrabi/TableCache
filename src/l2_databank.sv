@@ -615,8 +615,8 @@ module l2_databank
 
 
 `ifndef ASSERT_OFF
-    initial assert(LATENCY >= 1) else $fatal("Latency must be at least one cycle");
-    initial assert(OUTPUT_FIFO_DEPTH >= 2**BLOCK_ADDR_W) else $fatal("Output FIFOs must be able to store a full line");
+    initial assert(LATENCY >= 1) else $fatal(1, "Latency must be at least one cycle");
+    initial assert(OUTPUT_FIFO_DEPTH >= 2**BLOCK_ADDR_W) else $fatal(1, "Output FIFOs must be able to store a full line");
 `endif
 
 endmodule
