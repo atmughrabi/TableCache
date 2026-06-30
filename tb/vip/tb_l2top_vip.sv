@@ -30,6 +30,34 @@ module tb_l2top_vip;
     localparam int AW    = 32;
     localparam logic [31:0] BASE = 32'h8000_0000;
 
+    // Cache geometry / policy -- overridable via +define so the same tb can
+    // run a small fast config or the GraphBlox-scale config (LINES=512, GRASP).
+`ifdef TC_LINES
+    localparam int VLINES = `TC_LINES;
+`else
+    localparam int VLINES = 8;
+`endif
+`ifdef TC_WAYS
+    localparam int VWAYS = `TC_WAYS;
+`else
+    localparam int VWAYS = 2;
+`endif
+`ifdef TC_LINE_W
+    localparam int VLINE_W = `TC_LINE_W;
+`else
+    localparam int VLINE_W = 2;
+`endif
+`ifdef TC_POLICY_INT
+    localparam int VPOLICY = `TC_POLICY_INT;
+`else
+    localparam int VPOLICY = 0;
+`endif
+    // The tag/valid array is cleared by an LFSR walk that needs >= LINES cycles;
+    // the inuse toggle-memories need <= 256. Hold reset generously from geometry
+    // (this is exactly the wrapper-side TC_INIT_CYCLES contract: scale with the
+    // cache, never a small constant).
+    localparam int RESET_CYCLES = 4*VLINES + 1024;
+
     bit aclk = 0;
     bit aresetn = 0;
     always #5 aclk = ~aclk;            // 100 MHz
@@ -78,8 +106,8 @@ module tb_l2top_vip;
     // ===================== DUT: l2_top ======================
     l2_top #(
         .ADDR_L(BASE), .ADDR_H(32'hFFFF_FFFF),
-        .WAYS(2), .LINES(8), .LINE_W(2), .DB_LATENCY(1),
-        .REPLACEMENT_POLICY(0), .INCLUDE_VICTIM(0), .INCLUDE_CBOM(1),
+        .WAYS(VWAYS), .LINES(VLINES), .LINE_W(VLINE_W), .DB_LATENCY(1),
+        .REPLACEMENT_POLICY(VPOLICY), .INCLUDE_VICTIM(0), .INCLUDE_CBOM(1),
         .C_S00_AXI_ID_WIDTH(ID_W), .C_S00_AXI_DATA_WIDTH(BW), .C_S00_AXI_ADDR_WIDTH(AW)
     ) dut (
         .s00_axi_aclk(aclk), .s00_axi_aresetn(aresetn),
@@ -164,7 +192,7 @@ module tb_l2top_vip;
         // ---- COLD power-on: assert reset at t0, hold long enough for the
         //      LFSR reset-walk to clear every array, then deassert. ----
         aresetn = 0;
-        repeat (200) @(posedge aclk);
+        repeat (RESET_CYCLES) @(posedge aclk);
         aresetn = 1;
         repeat (20) @(posedge aclk);
 
@@ -205,8 +233,9 @@ module tb_l2top_vip;
     end
 
     // global watchdog: a cold-cache wedge would otherwise hang forever.
+    // Scale past the reset hold (10 ns/cycle) plus transaction headroom.
     initial begin
-        #200000;
+        #((RESET_CYCLES + 20000) * 10);
         $display("VIP_RESULT FAIL: watchdog timeout (cache wedged cold)");
         $finish;
     end

@@ -47,6 +47,26 @@ set_property top tb_l2top_vip [get_filesets sim_1]
 update_compile_order -fileset sources_1
 update_compile_order -fileset sim_1
 
+# Optional cache config overrides via env (VIP_LINES / VIP_WAYS / VIP_LINE_W /
+# VIP_POLICY name). Default = the small fast config baked into the tb. Passed
+# as xvlog -d defines that only the tb reads (the RTL ignores them).
+set defs {}
+if {[info exists ::env(VIP_LINES)]}  { lappend defs "TC_LINES=$::env(VIP_LINES)" }
+if {[info exists ::env(VIP_WAYS)]}   { lappend defs "TC_WAYS=$::env(VIP_WAYS)" }
+if {[info exists ::env(VIP_LINE_W)]} { lappend defs "TC_LINE_W=$::env(VIP_LINE_W)" }
+if {[info exists ::env(VIP_POLICY)]} {
+    array set pmap {LRU 0 FRQ 1 SECOND_CHANCE 2 RANDOM 3 SRRIP 4 GRASP 5}
+    if {[info exists pmap($::env(VIP_POLICY))]} {
+        lappend defs "TC_POLICY_INT=$pmap($::env(VIP_POLICY))"
+    }
+}
+if {[llength $defs] > 0} {
+    set xvopts ""
+    foreach d $defs { append xvopts "-d $d " }
+    set_property -name {xsim.compile.xvlog.more_options} -value [string trim $xvopts] -objects [get_filesets sim_1]
+    puts "=== VIP config: $defs ==="
+}
+
 # Supply a default timescale for the timescale-less RTL; run to $finish.
 set_property -name {xsim.elaborate.xelab.more_options} -value {-timescale 1ns/1ps} -objects [get_filesets sim_1]
 set_property -name {xsim.simulate.runtime} -value {all} -objects [get_filesets sim_1]

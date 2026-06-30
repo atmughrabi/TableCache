@@ -46,7 +46,16 @@ Requires Vivado 2025.2 (xsim + the AXI VIP IP) on `PATH`. The script:
 4. runs the simulation and prints `VIP_RESULT PASS`/`FAIL`.
 
 Env overrides: `VIP_BUILD` (build dir), `VIP_PART` (FPGA part, default
-`xcu55c-fsvh2892-2L-e`).
+`xcu55c-fsvh2892-2L-e`), and cache config: `VIP_LINES`, `VIP_WAYS`,
+`VIP_LINE_W`, `VIP_POLICY` (e.g. `GRASP`). Defaults to a small fast config;
+the GraphBlox-scale config is verified with:
+
+```bash
+VIP_LINES=512 VIP_WAYS=4 VIP_LINE_W=8 VIP_POLICY=GRASP ./tb/vip/run_vip.sh
+```
+
+The reset hold scales automatically from `LINES` (the tag/valid LFSR walk
+needs >= LINES cycles), mirroring the wrapper-side `TC_INIT_CYCLES` contract.
 
 ## Files
 

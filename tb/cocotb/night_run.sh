@@ -6,6 +6,8 @@
 # Phase 3: matrix sweep across all policies / ways.
 # Phase 4: mutation re-baselines (incl. src/GRASP.sv -> 7 mutations).
 # Phase 5: GRASP multi-window config matrix + hit-rate perf demo.
+# Phase 6: Vivado AXI VIP cold-reset (xsim, 4-state) -- small + LINES=512/GRASP.
+#          Auto-skipped when Vivado is not on PATH.
 #
 # Each phase writes its own log under /tmp/tc_night/<phase>.log and an
 # entry to /tmp/tc_night/summary.txt. Designed to finish in 4-8 hours.
@@ -126,6 +128,28 @@ if [[ $rc -ne 0 ]] || ! grep -qE '\*\* TESTS=[0-9]+ PASS=[0-9]+ FAIL=0 ' "$OUT/p
     fail=$((fail+1))
 fi
 log "PHASE 5 done"
+
+# ----------------------------------------------------------------------
+# Phase 6 -- Vivado AXI VIP cold-reset check (4-state / xsim). The cocotb
+# phases above run under Verilator (2-state) and cannot observe the cold
+# power-on X bug this guards. Skipped automatically when Vivado is absent.
+# ----------------------------------------------------------------------
+log "PHASE 6: AXI VIP cold-reset (xsim)"
+if command -v vivado >/dev/null 2>&1; then
+    rc=0
+    VIP_BUILD="$OUT/vip_build_small" timeout 1200 "$HERE/../vip/run_vip.sh" \
+        > "$OUT/phase6_vip_small.log" 2>&1 || rc=$?
+    log "PHASE 6 small: rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_small.log" | tail -1)"
+    [[ $rc -eq 0 ]] || fail=$((fail+1))
+    rc=0
+    VIP_BUILD="$OUT/vip_build_512" VIP_LINES=512 VIP_WAYS=4 VIP_LINE_W=8 VIP_POLICY=GRASP \
+        timeout 1800 "$HERE/../vip/run_vip.sh" > "$OUT/phase6_vip_512.log" 2>&1 || rc=$?
+    log "PHASE 6 512/GRASP: rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_512.log" | tail -1)"
+    [[ $rc -eq 0 ]] || fail=$((fail+1))
+else
+    log "PHASE 6 SKIPPED: vivado not on PATH"
+fi
+log "PHASE 6 done"
 
 # ----------------------------------------------------------------------
 # Final summary
