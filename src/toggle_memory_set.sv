@@ -67,7 +67,13 @@ module toggle_memory_set
     //Muxing of read and write ports to support post-reset clearing/initialization
     always_comb begin
         _toggle_addr[0:NUM_WRITE_PORTS-1] = toggle_addr;
-        _toggle[0:NUM_WRITE_PORTS-1] = toggle;
+        // While init_clear (reset) is asserted, only the clear-walk port may
+        // toggle: gate the external toggle ports off. This both matches intent
+        // (no real traffic during reset) and makes the reset 4-state robust --
+        // an X on an external toggle during reset would otherwise be written
+        // into the always-written toggle RAM (X & 0 = 0 immunizes it).
+        for (int unsigned k = 0; k < NUM_WRITE_PORTS; k++)
+            _toggle[k] = toggle[k] & ~init_clear;
         _read_addr[0:NUM_READ_PORTS-1] = read_addr;
 
         _toggle_addr[NUM_WRITE_PORTS] = clear_index;

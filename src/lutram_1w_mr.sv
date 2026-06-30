@@ -49,9 +49,12 @@ module lutram_1w_mr
     genvar i;
 
     generate if (FPGA_VENDOR == AMD) begin : gen_amd
-        logic[WIDTH-1:0] ram[DEPTH-1:0];
+        // Declaration initializer (RAM INIT=0). A separate `initial` block
+        // conflicts with the always_ff write port under strict 4-state
+        // elaboration (xsim); the declaration initializer is the strict-clean
+        // equivalent and synthesizes identically.
+        logic[WIDTH-1:0] ram[DEPTH-1:0] = '{default: 0};
 
-        initial ram = '{default: 0};
         always_ff @ (posedge clk) begin
             if (ram_write)
                 ram[waddr] <= new_ram_data;

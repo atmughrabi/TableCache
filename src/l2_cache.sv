@@ -422,6 +422,8 @@ module l2_cache
     cache_id_t  cleared_id;     // (id, hash) most recently cleared for this entry
     logic [HASH_WIDTH-1:0] cleared_hash;
     logic       same_target;    // current clear target matches the last fire
+    // Declared here (used by same_target below); driven by id_to_line_table.
+    hash_t finish_hash;
 
     assign finish_clear_raw = finish_valid & (
         (~bvalid_invalid & ~(rdata_rdata | (~finish_output.bid.rnw & wdata_rdata))) |
@@ -525,7 +527,6 @@ module l2_cache
 
     //Line hashing
     hash_t in_hash;
-    hash_t finish_hash;
     line_t in_line;
     l2_hash #(.IN_WIDTH(LINE_ADDR_W), .OUT_WIDTH(HASH_WIDTH)) hash_inst (
         .addr(in_line),

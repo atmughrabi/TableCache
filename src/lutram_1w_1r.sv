@@ -42,9 +42,13 @@ module lutram_1w_1r
     //Synchronous write port and asynchronous read port
     //Efficiently implemented using lookup tables
 
-    (* ramstyle = "MLAB, no_rw_check", ram_style = "distributed" *) logic[WIDTH-1:0] ram[DEPTH-1:0];
+    // Declaration initializer (HW power-on / RAM INIT). A separate `initial`
+    // block conflicts with the always_ff write port under strict 4-state
+    // elaboration (xsim: "invalid combination of procedural drivers"); the
+    // declaration initializer is the strict-clean equivalent and synthesizes
+    // to the same INIT=0.
+    (* ramstyle = "MLAB, no_rw_check", ram_style = "distributed" *) logic[WIDTH-1:0] ram[DEPTH-1:0] = '{default: 0};
 
-    initial ram = '{default: 0};
     always_ff @ (posedge clk) begin
         if (ram_write)
             ram[waddr] <= new_ram_data;

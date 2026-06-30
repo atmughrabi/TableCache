@@ -221,6 +221,13 @@ module tc_narrow_shim
     logic ar_buf_accept;
     logic ar_miss_accept;
 
+    // Prefill (RMW cold-write-miss) signals are defined in the block further
+    // below, but the AR-accept logic immediately following references them.
+    // Declare/define them here so strict elaborators (xsim) see them in order.
+    logic prefill_active;
+    logic prefill_ar_pending;
+    wire  prefill_ar_fire = prefill_ar_pending;
+
     assign ar_buf_drain_this_cycle = buf_pend_valid_q & s_rready & ~m_rvalid;
     assign ar_buf_accept  =  ar_hits_buffer  & (~buf_pend_valid_q | ar_buf_drain_this_cycle)
                            & ~rid_outstanding_q[s_arid]
@@ -240,8 +247,6 @@ module tc_narrow_shim
     // Uses the highest ID (NUM_IDS-1) as a reserved prefill id.
     // ----------------------------------------------------------------
     localparam logic [ID_W-1:0] PREFILL_ID = '1;
-    logic                            prefill_active;       // busy: AW gated
-    logic                            prefill_ar_pending;   // need to fire wide AR
     logic                            prefill_resp_pending; // m_r with this id is mine
     logic [ADDR_W-1:ALIGN_LSB]       prefill_tag_q;
 
@@ -250,7 +255,6 @@ module tc_narrow_shim
     wire aw_needs_prefill = PROMOTE_WMISS_TO_RW & s_awvalid
                           & ~aw_line_in_buf & ~prefill_active
                           & ~rid_outstanding_q[PREFILL_ID]; // can't reuse PREFILL_ID id slot
-    wire prefill_ar_fire  = prefill_ar_pending;
     // A prefill R must (a) be tagged with PREFILL_ID AND (b) actually be the
     // one we issued. Otherwise a master that uses arid==PREFILL_ID would have
     // its responses silently drained. The shim already gates outgoing prefill
