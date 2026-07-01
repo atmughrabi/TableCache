@@ -399,7 +399,7 @@ module tc_narrow_shim
                                              & (s_araddr[ADDR_W-1:ALIGN_LSB] == lb_tag);
 
         // W-beat side: pull the aligned tag stored at AW time, check match.
-        wire [ADDR_W-1:ALIGN_LSB] w_aligned_tag = aw_fifo_tag[aw_fifo_rptr[FIFO_AW-1:0]];
+        wire [ADDR_W-1:ALIGN_LSB] w_aligned_tag = aw_fifo_tag[aw_rd_idx];
         wire                      w_merge_match = lb_valid
                                                 & (w_aligned_tag == lb_tag);
 
@@ -477,8 +477,26 @@ module tc_narrow_shim
     logic [FIFO_AW:0]   aw_fifo_wptr, aw_fifo_rptr;
     logic               aw_fifo_full, aw_fifo_empty;
 
+    // Low FIFO_AW pointer bits index the depth-MAX_OUTSTANDING_W FIFO memory.
+    // A degenerate depth-1 FIFO has FIFO_AW=0 and a single entry always at
+    // index 0; ptr[FIFO_AW-1:0] would be an ILLEGAL zero-width part-select
+    // (it reads X and silently drops the W-beat byte-lane select -> lost write
+    // data), so degrade it to a constant 0. The power-of-two guard above
+    // accepts MAX_OUTSTANDING_W=1, so depth-1 must actually work.
+    localparam int unsigned AW_IDX_W = (FIFO_AW == 0) ? 1 : FIFO_AW;
+    logic [AW_IDX_W-1:0] aw_wr_idx, aw_rd_idx;
+    generate
+        if (FIFO_AW == 0) begin : gen_aw_idx_depth1
+            assign aw_wr_idx = '0;
+            assign aw_rd_idx = '0;
+        end else begin : gen_aw_idx_depthn
+            assign aw_wr_idx = aw_fifo_wptr[FIFO_AW-1:0];
+            assign aw_rd_idx = aw_fifo_rptr[FIFO_AW-1:0];
+        end
+    endgenerate
+
     assign aw_fifo_empty = (aw_fifo_wptr == aw_fifo_rptr);
-    assign aw_fifo_full  = (aw_fifo_wptr[FIFO_AW-1:0] == aw_fifo_rptr[FIFO_AW-1:0])
+    assign aw_fifo_full  = (aw_wr_idx == aw_rd_idx)
                          & (aw_fifo_wptr[FIFO_AW]     != aw_fifo_rptr[FIFO_AW]);
 
     assign m_awaddr  = {s_awaddr[ADDR_W-1:ALIGN_LSB], {ALIGN_LSB{1'b0}}};
@@ -504,8 +522,8 @@ module tc_narrow_shim
             aw_fifo_rptr <= '0;
         end else begin
             if (s_awvalid & s_awready) begin
-                aw_fifo_mem[aw_fifo_wptr[FIFO_AW-1:0]] <= s_awaddr[OFF_LSB +: OFF_W];
-                aw_fifo_tag[aw_fifo_wptr[FIFO_AW-1:0]] <= s_awaddr[ADDR_W-1:ALIGN_LSB];
+                aw_fifo_mem[aw_wr_idx] <= s_awaddr[OFF_LSB +: OFF_W];
+                aw_fifo_tag[aw_wr_idx] <= s_awaddr[ADDR_W-1:ALIGN_LSB];
                 aw_fifo_wptr <= aw_fifo_wptr + 1'b1;
             end
             if (s_wvalid & s_wready)
@@ -514,7 +532,7 @@ module tc_narrow_shim
     end
 
     logic [OFF_W-1:0] w_sel;
-    assign w_sel = aw_fifo_mem[aw_fifo_rptr[FIFO_AW-1:0]];
+    assign w_sel = aw_fifo_mem[aw_rd_idx];
 
     always_comb begin
         m_wdata = '0;
