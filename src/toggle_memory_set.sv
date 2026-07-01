@@ -52,6 +52,7 @@ module toggle_memory_set
     //Implementation
     logic[WIDTH-1:0] _toggle_addr[NUM_WRITE_PORTS+1];
     logic _toggle[NUM_WRITE_PORTS+1];
+    logic _wen[NUM_WRITE_PORTS+1];
     logic[WIDTH-1:0] _read_addr[NUM_READ_PORTS+1];
     logic read_data[NUM_WRITE_PORTS+1][NUM_READ_PORTS+1];
     logic _in_use[NUM_READ_PORTS+1];
@@ -67,23 +68,33 @@ module toggle_memory_set
     //Muxing of read and write ports to support post-reset clearing/initialization
     always_comb begin
         _toggle_addr[0:NUM_WRITE_PORTS-1] = toggle_addr;
-        // While init_clear (reset) is asserted, only the clear-walk port may
-        // toggle: gate the external toggle ports off. This both matches intent
-        // (no real traffic during reset) and makes the reset 4-state robust --
-        // an X on an external toggle during reset would otherwise be written
-        // into the always-written toggle RAM (X & 0 = 0 immunizes it).
-        for (int unsigned k = 0; k < NUM_WRITE_PORTS; k++)
-            _toggle[k] = toggle[k] & ~init_clear;
+        _toggle[0:NUM_WRITE_PORTS-1] = toggle;
         _read_addr[0:NUM_READ_PORTS-1] = read_addr;
+
+        // Reset (init_clear) 4-state robustness: gate the EXTERNAL toggle
+        // ports' WRITE ENABLE off during the clear walk. Their toggle_id is a
+        // cache-supplied address (e.g. finish_id / set_addr) that can be X
+        // during reset; because toggle_memory writes every cycle, an X address
+        // otherwise corrupts the lutram -- defeating its power-on 0 init in
+        // 4-state sim -- and that X feeds back into the clear-walk's in_use.
+        // With the external writes gated, the external banks keep their 0 init,
+        // in_use stays defined, and the clear-walk (below) still clears any
+        // genuinely-set entries (warm reset) since it now reads a defined
+        // in_use. (Masking the toggle value alone -- the prior approach -- was
+        // insufficient: the write to the X address still happened.)
+        for (int unsigned k = 0; k < NUM_WRITE_PORTS; k++)
+            _wen[k] = ~init_clear;
 
         _toggle_addr[NUM_WRITE_PORTS] = clear_index;
         _toggle[NUM_WRITE_PORTS] = init_clear & _in_use[NUM_READ_PORTS];
         _read_addr[NUM_READ_PORTS] = clear_index;
+        _wen[NUM_WRITE_PORTS] = 1'b1;   // clear-walk always writes (addr = LFSR)
     end
 
     //Instantiation of NUM_READ_PORTS*NUM_WRITE_PORTS dual-ported single-bit wide toggle memories
     generate for (k = 0; k < NUM_WRITE_PORTS+1; k++) begin : write_port_gen
         toggle_memory #(.DEPTH(DEPTH), .NUM_READ_PORTS(NUM_READ_PORTS+1)) mem (
+            .wen(_wen[k]),
             .toggle(_toggle[k]),
             .toggle_id(_toggle_addr[k]),
             .read_id(_read_addr),

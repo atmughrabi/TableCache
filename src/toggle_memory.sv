@@ -30,6 +30,13 @@ module toggle_memory
     (
         input logic clk,
 
+        // Write enable. Historically tied to 1 (the lutram rewrites every
+        // cycle with toggle^read, a no-op when toggle=0). Exposed so the
+        // toggle_memory_set reset can gate external ports off during the
+        // clear walk: their toggle_id (a cache-supplied address) may be X
+        // during reset, and an always-on write to an X address defeats the
+        // lutram's power-on 0 init in 4-state sim.
+        input logic wen,
         input logic toggle,
         input logic[$clog2(DEPTH)-1:0] toggle_id,
 
@@ -60,7 +67,7 @@ module toggle_memory
     write_port (
         .waddr(toggle_id),
         .raddr(_read_id),
-        .ram_write(1'b1),
+        .ram_write(wen),
         .new_ram_data(new_ram_data),
         .ram_data_out(_read_data),
     .*);
