@@ -51,6 +51,10 @@ module sdp_ram_uram
     localparam DATA_WIDTH = COL_WIDTH*NUM_COL;
 
     (* cascade_height = CASCADE_DEPTH, ramstyle = "no_rw_check", ram_style = "ultra" *)
+    // NOTE: not given a declaration initializer -- Vivado does not initialize
+    // UltraRAM. On silicon URAM powers up to 0; a DATABANK_SDP=1 build may show
+    // X in 4-state sim until first written (correct on HW). DATABANK_SDP=0
+    // (tdp_ram, the default and GraphBlox's config) is 0-init'd and 4-state clean.
     logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0];
 
     //Optional 1-cycle write-input register (passthrough when WRITE_INPUT_REG=0)

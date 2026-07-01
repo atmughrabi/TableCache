@@ -91,7 +91,7 @@ module tdp_ram
         // for BRAM block cascading. Bug found via syn/vivado/run_synth.sh
         // on U250 -- see syn/vivado/README.md.
         (* cascade_height = CASCADE_DEPTH, ram_style = "block" *)
-        logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0];
+        logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0] = '{default: '0};
 
         // Expand per-byte write enables (a_wbe, b_wbe) to per-bit masks so the
         // memory update can be expressed as a single full-width non-blocking
@@ -176,7 +176,7 @@ module tdp_ram
         typedef logic[NUM_COL-1:0][COL_WIDTH-1:0] word_t;
 
         (* ramstyle = "no_rw_check" *) //Higher depths use less resources but are slower
-        word_t mem[(1<<ADDR_WIDTH)-1:0];
+        word_t mem[(1<<ADDR_WIDTH)-1:0] = '{default: '0};
 
         word_t a_raw_w;
         word_t a_raw_r;

@@ -44,9 +44,10 @@ module sdp_ram
 
 
     (* cascade_height = CASCADE_DEPTH, ramstyle = "no_rw_check" *) //Higher depths use less resources but are slower
-    logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0];
-
-    //initial mem = '{default: '0};
+    // Declaration initializer (BRAM INIT=0, the default) so the data array is
+    // defined at cold power-on in 4-state sim, matching silicon; a speculative
+    // read during a fill then returns 0, not X.
+    logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0] = '{default: '0};
 
     //A write
     always_ff @(posedge clk) begin

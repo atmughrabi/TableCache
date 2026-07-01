@@ -247,8 +247,17 @@ module l2_cache
     //Finish priority order (all with respect to requests): bvalid > rvalid > wvalid 
 
     always_ff @(posedge clk) begin
-        bvalid_handled <= ~finish_pop & finish_valid; //Always set after first cycle of valid
-        rvalid_handled <= ~finish_pop & finish_valid & bvalid_invalid;
+        if (rst) begin
+            // Cold-init: without a reset these are X for the first cycle and
+            // bleed into bvalid_invalid -> finish_id -> the inuse/CBOM clear
+            // path in 4-state sim (they self-clear once finish_valid settles,
+            // but X during that window is not simulator-portable).
+            bvalid_handled <= 1'b0;
+            rvalid_handled <= 1'b0;
+        end else begin
+            bvalid_handled <= ~finish_pop & finish_valid; //Always set after first cycle of valid
+            rvalid_handled <= ~finish_pop & finish_valid & bvalid_invalid;
+        end
     end
 
     assign bvalid_invalid = ~finish_output.bvalid | bvalid_handled;
