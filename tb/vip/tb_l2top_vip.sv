@@ -21,6 +21,7 @@
 import axi_vip_pkg::*;
 import axi_vip_mst_pkg::*;
 import axi_vip_slv_pkg::*;
+import cache_config::*;   // ar_t / r_t for tc_flush_controller
 
 module tb_l2top_vip;
 
@@ -57,6 +58,9 @@ module tb_l2top_vip;
     // (this is exactly the wrapper-side TC_INIT_CYCLES contract: scale with the
     // cache, never a small constant).
     localparam int RESET_CYCLES = 4*VLINES + 1024;
+    // Address stride that lands on the SAME set (a full cache line-span), used to
+    // force a dirty eviction -> a real mem writeback.
+    localparam int SET_STRIDE = VLINES * VLINE_W * (BW/8);
 
     bit aclk = 0;
     bit aresetn = 0;
@@ -104,6 +108,58 @@ module tb_l2top_vip;
     );
 
     // ===================== DUT: l2_top ======================
+    // ---- tc_flush_controller + AR mux / R demux (flush guard, T5). While
+    //      flush_active the controller owns the AR into l2_top; the VIP master
+    //      is quiesced by the sequential test. CBOM R (id==FLUSH_ID) is demuxed
+    //      back to the controller. ----
+    localparam logic [ID_W-1:0] FLUSH_ID = '1;
+    logic       flush_req = 0, flush_active, flush_done;
+    ar_t        flush_ar;  logic [ID_W-1:0] flush_arid; logic flush_arready;
+    r_t         flush_r;   logic flush_rready;
+    // muxed AR into l2_top.s00
+    logic [ID_W-1:0] cs_arid; logic [AW-1:0] cs_araddr; logic [7:0] cs_arlen;
+    logic [2:0] cs_arsize; logic [1:0] cs_arburst; logic cs_arlock;
+    logic [3:0] cs_arcache; logic [2:0] cs_arprot; logic [3:0] cs_arqos, cs_arregion;
+    logic [3:0] cs_arsnoop; logic cs_arvalid, cs_arready;
+    // l2_top.s00 R outputs (pre-demux)
+    logic [ID_W-1:0] cs_rid; logic [BW-1:0] cs_rdata; logic [1:0] cs_rresp;
+    logic cs_rlast, cs_rvalid, cs_rready;
+
+    tc_flush_controller #(
+        .LINES(VLINES*VWAYS), .LINE_W(VLINE_W), .BLOCK_W(BW),
+        .ID_W(ID_W), .ADDR_BASE(BASE), .DEFAULT_MODE(4'b1001)  // CleanInvalid
+    ) flush_ctrl (
+        .clk(aclk), .rst(~aresetn),
+        .flush_req(flush_req), .flush_mode(4'h0),
+        .flush_active(flush_active), .flush_done(flush_done),
+        .m_ar(flush_ar), .m_arid(flush_arid), .m_arready(flush_arready),
+        .m_r(flush_r), .m_rdata(cs_rdata), .m_rid(cs_rid), .m_rready(flush_rready)
+    );
+
+    always_comb begin
+        if (flush_active) begin
+            cs_arid=flush_arid; cs_araddr=flush_ar.araddr; cs_arlen=flush_ar.arlen;
+            cs_arsize=flush_ar.arsize; cs_arburst=flush_ar.arburst; cs_arlock=flush_ar.arlock;
+            cs_arcache=flush_ar.arcache; cs_arprot=flush_ar.arprot; cs_arqos=flush_ar.arqos;
+            cs_arregion=flush_ar.arregion; cs_arsnoop=flush_ar.arsnoop; cs_arvalid=flush_ar.arvalid;
+            flush_arready=cs_arready;
+        end else begin
+            cs_arid=s_arid; cs_araddr=s_araddr; cs_arlen=s_arlen; cs_arsize=s_arsize;
+            cs_arburst=s_arburst; cs_arlock=s_arlock; cs_arcache=s_arcache; cs_arprot=s_arprot;
+            cs_arqos=s_arqos; cs_arregion=s_arregion; cs_arsnoop=4'b0000; cs_arvalid=s_arvalid;
+            flush_arready=1'b0;
+        end
+    end
+    assign s_arready = flush_active ? 1'b0 : cs_arready;
+    wire route_to_flush = flush_active & (cs_rid == FLUSH_ID);
+    assign flush_r  = '{ rvalid: cs_rvalid & route_to_flush, rlast: cs_rlast, rresp: {2'b00, cs_rresp} };
+    assign s_rvalid = cs_rvalid & ~route_to_flush;
+    assign s_rid    = cs_rid;
+    assign s_rdata  = cs_rdata;
+    assign s_rresp  = cs_rresp;
+    assign s_rlast  = cs_rlast;
+    assign cs_rready = route_to_flush ? flush_rready : s_rready;
+
     l2_top #(
         .ADDR_L(BASE), .ADDR_H(32'hFFFF_FFFF),
         .WAYS(VWAYS), .LINES(VLINES), .LINE_W(VLINE_W), .DB_LATENCY(1),
@@ -122,13 +178,13 @@ module tb_l2top_vip;
         .s00_axi_wdata(s_wdata), .s00_axi_wstrb(s_wstrb), .s00_axi_wlast(s_wlast),
         .s00_axi_wvalid(s_wvalid), .s00_axi_wready(s_wready),
         .s00_axi_bid(s_bid), .s00_axi_bresp(s_bresp), .s00_axi_bvalid(s_bvalid), .s00_axi_bready(s_bready),
-        // s00 AR/R
-        .s00_axi_arid(s_arid), .s00_axi_araddr(s_araddr), .s00_axi_arlen(s_arlen), .s00_axi_arsize(s_arsize),
-        .s00_axi_arburst(s_arburst), .s00_axi_arlock(s_arlock), .s00_axi_arcache(s_arcache), .s00_axi_arprot(s_arprot),
-        .s00_axi_arqos(s_arqos), .s00_axi_arregion(s_arregion), .s00_axi_arsnoop(4'b0000),
-        .s00_axi_arvalid(s_arvalid), .s00_axi_arready(s_arready),
-        .s00_axi_rid(s_rid), .s00_axi_rdata(s_rdata), .s00_axi_rresp(s_rresp), .s00_axi_rlast(s_rlast),
-        .s00_axi_rvalid(s_rvalid), .s00_axi_rready(s_rready),
+        // s00 AR/R (through the flush AR-mux / R-demux)
+        .s00_axi_arid(cs_arid), .s00_axi_araddr(cs_araddr), .s00_axi_arlen(cs_arlen), .s00_axi_arsize(cs_arsize),
+        .s00_axi_arburst(cs_arburst), .s00_axi_arlock(cs_arlock), .s00_axi_arcache(cs_arcache), .s00_axi_arprot(cs_arprot),
+        .s00_axi_arqos(cs_arqos), .s00_axi_arregion(cs_arregion), .s00_axi_arsnoop(cs_arsnoop),
+        .s00_axi_arvalid(cs_arvalid), .s00_axi_arready(cs_arready),
+        .s00_axi_rid(cs_rid), .s00_axi_rdata(cs_rdata), .s00_axi_rresp(cs_rresp), .s00_axi_rlast(cs_rlast),
+        .s00_axi_rvalid(cs_rvalid), .s00_axi_rready(cs_rready),
         // m00 AW/W/B
         .m00_axi_awid(m_awid), .m00_axi_awaddr(m_awaddr), .m00_axi_awlen(m_awlen), .m00_axi_awsize(m_awsize),
         .m00_axi_awburst(m_awburst), .m00_axi_awlock(m_awlock), .m00_axi_awcache(m_awcache), .m00_axi_awprot(m_awprot),
@@ -162,6 +218,10 @@ module tb_l2top_vip;
     axi_vip_mst_mst_t      mst;
     axi_vip_slv_slv_mem_t  slv;
 
+    // Count real mem writebacks (dirty evictions reaching the backend).
+    int mem_aw_count = 0;
+    always @(posedge aclk) if (aresetn && m_awvalid && m_awready) mem_aw_count++;
+
     // single-beat 32-bit helpers
     bit [8*4096-1:0]          wbeats, rbeats;
     xil_axi_data_beat [255:0] nouser;
@@ -182,6 +242,7 @@ module tb_l2top_vip;
 
     int       errors = 0;
     bit [31:0] rd;
+    int       aw0;
 
     initial begin
         mst = new("mst", master_vip.inst.IF);
@@ -225,6 +286,42 @@ module tb_l2top_vip;
         end else
             $display("PASS T3 write->read-back: %h", rd);
 
+        // T4: write WAYS+1 distinct dirty lines that map to the SAME set. The
+        // (WAYS+1)th write forces a dirty eviction -> a REAL mem AW to the
+        // backend (directly probing the "cold write issues 0 mem AW / stalls"
+        // concern). Then read all back: WAYS stay cached, the evicted one
+        // refills from the writeback in mem. Exercises the cold write +
+        // eviction + finish/writeback path that a read-only test misses.
+        aw0 = mem_aw_count;
+        for (int i = 0; i <= VWAYS; i++)
+            axi_wr(BASE + i*SET_STRIDE, 32'hE000_0000 + i);
+        for (int i = 0; i <= VWAYS; i++) begin
+            axi_rd(BASE + i*SET_STRIDE, rd);
+            if (rd !== (32'hE000_0000 + i)) begin
+                $display("FAIL T4 read-back line %0d: got %h want %h", i, rd, 32'hE000_0000 + i);
+                errors++;
+            end
+        end
+        if (mem_aw_count == aw0) begin
+            $display("FAIL T4 eviction: 0 mem AW (dirty write never reached backend)");
+            errors++;
+        end else
+            $display("PASS T4 eviction+writeback: %0d mem AW, %0d lines verified",
+                     mem_aw_count - aw0, VWAYS + 1);
+
+        // T5: whole-cache flush (CleanInvalid CBOM walk via tc_flush_controller)
+        // over a cache that now holds dirty lines. The reported cold flush wedge
+        // (cbom_fifo X) would hang here; require flush_done within a bound.
+        flush_req = 1; @(posedge aclk); flush_req = 0;
+        for (int fcyc = 0; fcyc < 8*VLINES*VWAYS + 4000; fcyc++) begin
+            @(posedge aclk);
+            if (flush_done) break;
+        end
+        if (!flush_done) begin
+            $display("FAIL T5 flush: flush_done never pulsed (cold flush WEDGED)"); errors++;
+        end else
+            $display("PASS T5 whole-cache flush completed");
+
         if (errors == 0)
             $display("VIP_RESULT PASS: l2_top cold cache works in xsim (4-state)");
         else
@@ -233,9 +330,9 @@ module tb_l2top_vip;
     end
 
     // global watchdog: a cold-cache wedge would otherwise hang forever.
-    // Scale past the reset hold (10 ns/cycle) plus transaction headroom.
+    // Scale past the reset hold + the whole-cache flush walk + headroom.
     initial begin
-        #((RESET_CYCLES + 20000) * 10);
+        #((RESET_CYCLES + 8*VLINES*VWAYS + 40000) * 10);
         $display("VIP_RESULT FAIL: watchdog timeout (cache wedged cold)");
         $finish;
     end

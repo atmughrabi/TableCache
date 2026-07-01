@@ -15,13 +15,20 @@ axi_vip_mst (MASTER VIP)  ->  l2_top.s00 (slave)
 l2_top.m00 (master)       ->  axi_vip_slv (SLAVE memory-model VIP)
 ```
 
-and, from a cold reset, runs three self-checking transactions:
+and, from a cold reset, runs self-checking transactions:
 
 - **T1** cold read of a preloaded line → MISS → line fill from the slave
   memory returns the expected, **defined** data (not `X`).
 - **T2** write then read-back of the same line → write-allocate, the cache
   returns the written value.
 - **T3** a second line write/read.
+- **T4** write `WAYS+1` dirty lines mapping to the same set → forces a dirty
+  eviction → a **real mem AW** (writeback) to the backend; then reads all
+  back (the evicted one refills from mem). Guards the cold write + eviction +
+  writeback path that a read-only test misses.
+- **T5** whole-cache **flush** (a `tc_flush_controller` CleanInvalid CBOM walk,
+  muxed onto the s00 AR) over the now-dirty cache → `flush_done` must pulse.
+  Guards the cold CBOM / cbom-FIFO path.
 
 A cold cache only behaves here if the tag/valid arrays were actually cleared
 to 0 by the LFSR-walk reset routine — which only works in 4-state once the

@@ -170,6 +170,15 @@ module dut_l2top_flush
     r_t                        flush_r;
     logic                      flush_rready;
 
+    // -- l2_top R outputs (flat). Declared here (before the flush controller
+    //    references c_rid/c_rdata) for strict (xsim) elaboration order. --
+    logic [READ_ID_WIDTH-1:0] c_rid;
+    logic [BLOCK_W-1:0]       c_rdata;
+    logic [1:0]               c_rresp;
+    logic                     c_rlast;
+    logic                     c_rvalid;
+    logic                     c_rready;
+
     tc_flush_controller #(
         .LINES   (LINES),
         .LINE_W  (LINE_W),
@@ -235,13 +244,6 @@ module dut_l2top_flush
     end
 
     // -- l2_top R outputs (flat) --
-    logic [READ_ID_WIDTH-1:0] c_rid;
-    logic [BLOCK_W-1:0]       c_rdata;
-    logic [1:0]               c_rresp;
-    logic                     c_rlast;
-    logic                     c_rvalid;
-    logic                     c_rready;
-
     // R demux by id: route FLUSH_ID responses to the controller while
     // flushing, everything else to the accelerator.
     wire route_to_flush = flush_active & (c_rid == FLUSH_ID);
