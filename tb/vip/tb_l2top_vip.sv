@@ -126,8 +126,8 @@ module tb_l2top_vip;
     logic cs_rlast, cs_rvalid, cs_rready;
 
     tc_flush_controller #(
-        .LINES(VLINES*VWAYS), .LINE_W(VLINE_W), .BLOCK_W(BW),
-        .ID_W(ID_W), .ADDR_BASE(BASE), .DEFAULT_MODE(4'b1001)  // CleanInvalid
+        .LINES(VLINES), .WAYS(VWAYS), .LINE_W(VLINE_W), .BLOCK_W(BW),
+        .ID_W(ID_W), .ADDR_BASE(BASE), .DEFAULT_MODE(4'b1011)  // CleanInvalidByIndex (whole-set)
     ) flush_ctrl (
         .clk(aclk), .rst(~aresetn),
         .flush_req(flush_req), .flush_mode(4'h0),
@@ -321,6 +321,33 @@ module tb_l2top_vip;
             $display("FAIL T5 flush: flush_done never pulsed (cold flush WEDGED)"); errors++;
         end else
             $display("PASS T5 whole-cache flush completed");
+
+        // T6 (FIX B): fill one set with dirty lines at HIGH tags (well beyond
+        // the swept tag range) and require the default by-index flush to write
+        // them ALL back. A per-line CleanInvalid flush would miss every one
+        // (it only matches tag == swept address tag). Enforces whole-set clean.
+        begin
+            automatic int HIGH = 32;                 // tag 0x20, >> VWAYS-1
+            automatic bit ok = 1;
+            for (int i = 0; i < VWAYS; i++)
+                axi_wr(BASE + (HIGH + i)*SET_STRIDE + 32'h10, 32'hCA11_E000 + i);
+            flush_req = 1; @(posedge aclk); flush_req = 0;
+            for (int fcyc = 0; fcyc < 8*VLINES*VWAYS + 4000; fcyc++) begin
+                @(posedge aclk); if (flush_done) break;
+            end
+            // Every high-tag dirty way must have been written back + dropped:
+            // the post-flush read refills from the backend and returns the value.
+            for (int i = 0; i < VWAYS; i++) begin
+                axi_rd(BASE + (HIGH + i)*SET_STRIDE + 32'h10, rd);
+                if (rd !== (32'hCA11_E000 + i)) begin
+                    ok = 0; errors++;
+                    $display("FAIL T6 by-index flush tag 0x%0h: got %h want %h",
+                             HIGH + i, rd, 32'hCA11_E000 + i);
+                end
+            end
+            if (ok)
+                $display("PASS T6 by-index flush cleaned %0d high-tag ways", VWAYS);
+        end
 
         if (errors == 0)
             $display("VIP_RESULT PASS: l2_top cold cache works in xsim (4-state)");

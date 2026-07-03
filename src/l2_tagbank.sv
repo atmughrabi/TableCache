@@ -55,6 +55,10 @@ module l2_tagbank
         input logic[$clog2(LINE_W)-1:0] in_request_len,
         input logic in_request_inval,
         input logic in_request_clean,
+        //By-index (whole-set) clean: select the way from the low bits of the
+        //tag field instead of a tag compare, so a flush can clean every
+        //physical way of a set regardless of the resident tag.
+        input logic in_request_by_index,
         input logic in_request_full_write,
 
         output logic out_valid,
@@ -65,6 +69,7 @@ module l2_tagbank
         output logic[$clog2(LINE_W)-1:0] out_request_len,
         output logic out_request_inval,
         output logic out_request_clean,
+        output logic out_request_by_index,
         output logic out_request_full_write,
         output logic out_hit,
         output logic out_dirty,
@@ -102,6 +107,7 @@ module l2_tagbank
         block_t len;
         logic inval;
         logic clean;
+        logic by_index;
         logic full_write;
     } request_t;
 
@@ -126,6 +132,7 @@ module l2_tagbank
         len : in_request_len,
         inval : in_request_inval,
         clean : in_request_clean,
+        by_index : in_request_by_index,
         full_write : in_request_full_write
     };
 
@@ -169,9 +176,15 @@ module l2_tagbank
     end
 
     assign hit = |hit_one_hot_r;
+    // Normal path: associative tag compare across ways. By-index path: the low
+    // $clog2(WAYS) bits of the tag field carry the target WAY, so a whole-set
+    // flush can select and clean each physical way regardless of its stored tag
+    // (the flush controller walks set x way; the way rides the tag position).
     always_comb begin
         for (int i = 0; i < WAYS; i++)
-            hit_one_hot[i] = tb_rdata[i].valid & stage1.tag == tb_rdata[i].tag;
+            hit_one_hot[i] = tb_rdata[i].valid &
+                (stage1.by_index ? (way_t'(i) == way_t'(stage1.tag))
+                                 : (stage1.tag == tb_rdata[i].tag));
     end
 
     one_hot_to_integer #(.WIDTH(WAYS)) ohot (
@@ -260,6 +273,7 @@ module l2_tagbank
     assign out_request_len = stage2.len;
     assign out_request_inval = stage2.inval;
     assign out_request_clean = stage2.clean;
+    assign out_request_by_index = stage2.by_index;
     assign out_request_full_write = stage2.full_write;
     assign out_hit = hit;
     assign out_dirty = evicted_entry.valid & evicted_entry.dirty;

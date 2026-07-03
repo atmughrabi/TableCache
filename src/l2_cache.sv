@@ -187,6 +187,7 @@ module l2_cache
     block_t tb_out_len;
     logic tb_out_inval;
     logic tb_out_clean;
+    logic tb_out_by_index;
     logic tb_out_full_write;
 
     //Input request
@@ -664,9 +665,15 @@ module l2_cache
     logic in_full_write;
     logic in_inval;
     logic in_clean;
+    logic in_by_index;
     assign in_full_write = chosen_aw.awsnoop == 3'b101; //WriteEvict
-    assign in_inval = INCLUDE_CBOM & try_read & (chosen_ar.arsnoop == 4'b1001 | chosen_ar.arsnoop == 4'b1101); //CleanInvalid, MakeInvalid
-    assign in_clean = INCLUDE_CBOM & try_read & (chosen_ar.arsnoop == 4'b1001 | chosen_ar.arsnoop ==  4'b1000); //CleanInvalid, CleanShared
+    //By-index whole-set clean (reserved ACE arsnoop 4'b1011): behaves like
+    //CleanInvalid but the tagbank selects the way from the tag field's low bits
+    //instead of matching the tag, so a flush cleans every way of a set
+    //regardless of the resident tag. Per-line CleanInvalid (4'b1001) unchanged.
+    assign in_by_index = INCLUDE_CBOM & try_read & (chosen_ar.arsnoop == 4'b1011);
+    assign in_inval = INCLUDE_CBOM & try_read & (chosen_ar.arsnoop == 4'b1001 | chosen_ar.arsnoop == 4'b1101 | chosen_ar.arsnoop == 4'b1011); //CleanInvalid, MakeInvalid, CleanInvalidByIndex
+    assign in_clean = INCLUDE_CBOM & try_read & (chosen_ar.arsnoop == 4'b1001 | chosen_ar.arsnoop ==  4'b1000 | chosen_ar.arsnoop == 4'b1011); //CleanInvalid, CleanShared, CleanInvalidByIndex
 
 
     ////////////////////////////////////////////////////
@@ -699,6 +706,7 @@ module l2_cache
         .in_request_len(in_len),
         .in_request_inval(in_inval),
         .in_request_clean(in_clean),
+        .in_request_by_index(in_by_index),
         .in_request_full_write(in_full_write),
         .out_valid(tb_valid),
         .out_request_id(tb_out_id),
@@ -708,6 +716,7 @@ module l2_cache
         .out_request_len(tb_out_len),
         .out_request_inval(tb_out_inval),
         .out_request_clean(tb_out_clean),
+        .out_request_by_index(tb_out_by_index),
         .out_request_full_write(tb_out_full_write),
         .out_hit(tb_hit),
         .out_dirty(tb_dirty),
@@ -1164,7 +1173,12 @@ module l2_cache
     assign tb_will_discard = (~tb_hit & ((INCLUDE_CBOM & tb_out_clean) | ~tb_dirty)) | (INCLUDE_CBOM & tb_out_inval & ~tb_out_clean);
     assign lookup_in = '{
         saved : '{
-            tag : INCLUDE_CBOM & INCLUDE_VICTIM & tb_out_clean & tb_out_inval ? tb_out_tag : tb_tag,
+            //Writeback address tag. Normally a CleanInvalid's request tag equals
+            //the resident tag (it matched), so tb_out_tag is used with a victim
+            //cache. A by-index clean carries the WAY (not a tag) in the tag
+            //field, so it must fall back to the tagbank's stored tag (tb_tag) to
+            //write the dirty line back to its real {tag,set} address.
+            tag : INCLUDE_CBOM & INCLUDE_VICTIM & tb_out_clean & tb_out_inval & ~tb_out_by_index ? tb_out_tag : tb_tag,
             line : tb_out_line,
             block : tb_out_block,
             clean : INCLUDE_CBOM & INCLUDE_VICTIM & tb_out_clean & tb_out_inval

@@ -4,9 +4,14 @@
 // tc_flush_controller: whole-cache flush sequencer for l2_cache.sv.
 //
 // Acts as an AXI master at the cache's slave port. On `flush_req`, walks
-// every line of the configured cache and issues a single-beat CBOM AR
-// (default arsnoop = CleanInvalid = 4'b1001). The cache's existing
-// ACE-CBOM path writes back dirty lines and drops them.
+// every physical line (set x way) of the configured cache and issues a
+// single-beat CBOM AR. The default snoop is CleanInvalidByIndex (4'b1011):
+// the cache cleans+invalidates the addressed WAY of the addressed SET
+// regardless of the resident tag, so dirty lines with ANY tag are written
+// back and dropped. line_idx encodes {way, set}: set (line_idx mod LINES) in
+// the address set bits, way (line_idx / LINES) in the tag position. A plain
+// CleanInvalid (4'b1001) can still be selected via flush_mode, but by-address
+// CBOM only matches tag==addr and cannot flush a set-associative cache.
 //
 // Strictly sequential: one AR in flight at a time. Waits for the R last
 // handshake before issuing the next AR. This is the simplest possible
@@ -22,11 +27,12 @@ module tc_flush_controller
 
     #(
         parameter int unsigned LINES        = 64,
+        parameter int unsigned WAYS         = 1,
         parameter int unsigned LINE_W       = 8,
         parameter int unsigned BLOCK_W      = 32,
         parameter int unsigned ID_W         = 4,
         parameter logic[31:0]  ADDR_BASE    = 32'h80000000,
-        parameter logic[3:0]   DEFAULT_MODE = 4'b1001   // CleanInvalid
+        parameter logic[3:0]   DEFAULT_MODE = 4'b1011   // CleanInvalidByIndex (whole-set clean, all ways/tags)
     )
     (
         input  logic clk,
@@ -48,7 +54,13 @@ module tc_flush_controller
         output logic                      m_rready
     );
 
-    localparam int unsigned LOG2_LINES   = $clog2(LINES);
+    // Total physical lines to sweep = sets (LINES) x ways (WAYS). For the by-index
+    // whole-set clean, line_idx encodes {way, set}: set = line_idx mod LINES sits
+    // in the address set bits; way = line_idx / LINES rides the tag position, and
+    // the cache reads the way from the tag field's low bits. With WAYS=1 (default)
+    // this degenerates to the legacy per-set walk.
+    localparam int unsigned TOTAL_LINES  = LINES * WAYS;
+    localparam int unsigned LOG2_TOTAL   = $clog2(TOTAL_LINES);
     localparam int unsigned BLOCK_BYTES  = BLOCK_W / 8;
     localparam int unsigned LINE_STRIDE  = LINE_W * BLOCK_BYTES;
     localparam int unsigned LOG2_STRIDE  = $clog2(LINE_STRIDE);
@@ -62,7 +74,7 @@ module tc_flush_controller
     } state_t;
 
     state_t                 state, state_n;
-    logic[LOG2_LINES:0]     line_idx;          // 0..LINES (LINES = done)
+    logic[LOG2_TOTAL:0]     line_idx;          // 0..TOTAL_LINES (TOTAL_LINES = done)
     logic[3:0]              mode_q;
 
     // Suppress unused warnings for ports kept for symmetry
@@ -76,7 +88,7 @@ module tc_flush_controller
         state_n = state;
         case (state)
             IDLE:   if (flush_req)                                              state_n = ISSUE;
-            ISSUE:  if (line_idx == LINES[LOG2_LINES:0])                        state_n = FINISH;
+            ISSUE:  if (line_idx == TOTAL_LINES[LOG2_TOTAL:0])                  state_n = FINISH;
                     else if (m_ar.arvalid && m_arready)                         state_n = WAIT_R;
             WAIT_R: if (m_r.rvalid && m_rready && m_r.rlast && (m_rid == FLUSH_ID))  state_n = ISSUE;
             FINISH:                                                              state_n = IDLE;
@@ -106,8 +118,8 @@ module tc_flush_controller
     // --------------------------------------------------------------
     always_comb begin
         m_ar          = '0;
-        m_ar.arvalid  = (state == ISSUE) && (line_idx != LINES[LOG2_LINES:0]);
-        m_ar.araddr   = ADDR_BASE + ({{(32-LOG2_LINES-1){1'b0}}, line_idx} << LOG2_STRIDE);
+        m_ar.arvalid  = (state == ISSUE) && (line_idx != TOTAL_LINES[LOG2_TOTAL:0]);
+        m_ar.araddr   = ADDR_BASE + ({{(32-LOG2_TOTAL-1){1'b0}}, line_idx} << LOG2_STRIDE);
         m_ar.arlen    = 8'd0;              // CBOM single-beat (matches test_cbom._drive_cbom)
         m_ar.arsize   = 3'($clog2(BLOCK_BYTES));
         m_ar.arburst  = 2'b01;             // INCR

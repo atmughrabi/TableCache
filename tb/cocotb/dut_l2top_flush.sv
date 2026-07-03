@@ -181,6 +181,7 @@ module dut_l2top_flush
 
     tc_flush_controller #(
         .LINES   (LINES),
+        .WAYS    (WAYS),
         .LINE_W  (LINE_W),
         .BLOCK_W (BLOCK_W),
         .ID_W    (READ_ID_WIDTH),

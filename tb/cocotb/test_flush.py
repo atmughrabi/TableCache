@@ -231,3 +231,70 @@ async def test_flush_cold_cache_cleaninvalid(dut):
     assert mon.n == 0, f"cold-cache CleanInvalid flush produced {mon.n} mem AWs (expected 0)"
     assert n_ar == 0, f"cold-cache CleanInvalid flush produced {n_ar} bogus mem ARs (expected 0)"
     dut._log.info(f"[flush_cold_cache_cleaninvalid] PASS: mem ARs={n_ar}, mem AWs={mon.n}")
+
+
+# ---------------------------------------------------------------------------
+# FIX B regression (E6): whole-cache flush must clean ALL ways of a set,
+# regardless of the resident tag. Prior to the by-index (CleanInvalidByIndex,
+# 4'b1011) flush mode, tc_flush_controller drove a per-line CleanInvalid whose
+# tag came from the swept address, so only lines whose tag == line_idx/num_sets
+# were cleaned; dirty lines with any other tag were never written back or
+# invalidated. Here we dirty every way of a single set at HIGH tags (0x30..)
+# and require the default by-index flush to write them all back + drop them.
+# ---------------------------------------------------------------------------
+WAYS_E6 = int(os.environ.get("TC_WAYS", "4"))
+
+
+def _e6_addr(set_i: int, tag_i: int, word: int = 4) -> int:
+    # set occupies bits [LOG2(LINE_BYTES) +: LOG2(LINES)]; tag is above that.
+    log2_line = LINE_BYTES.bit_length() - 1
+    log2_sets = LINES.bit_length() - 1
+    return BASE | (tag_i << (log2_line + log2_sets)) | (set_i << log2_line) | (word * BLOCK_BYTES)
+
+
+@cocotb.test()
+async def test_flush_multitag_all_ways(dut):
+    """E6: dirty every way of one set at distinct HIGH tags, then run the
+    default (by-index) flush. Every canary must reach the backend and the
+    post-flush read-back must return the written value (line cleaned)."""
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    mon = MAwCounter(dut); cocotb.start_soon(mon.run())
+
+    SET = 5
+    HIGH_TAG = 0x30
+    written = {}
+    for w in range(WAYS_E6):
+        addr = _e6_addr(SET, HIGH_TAG + w, word=w % LINE_W)
+        val  = 0xCA11E000 | w
+        await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
+                            5_000, "ns")
+        written[addr] = val
+
+    # Pre-flush: backend still holds the ORIGINAL golden values (dirty in cache).
+    for addr in written:
+        raw = int.from_bytes(ram.read(addr & MEM_MASK, BLOCK_BYTES), "little")
+        assert raw == golden(0x80000000 | (addr & MEM_MASK)), \
+            f"pre-flush backend @0x{addr:08x} already 0x{raw:08x} (canary not dirty in cache?)"
+
+    aw_before = mon.n
+    await request_flush(dut)                 # mode=0 -> DEFAULT_MODE = by-index
+    await Timer(600, "ns")
+    aw_during = mon.n - aw_before
+    assert aw_during >= WAYS_E6, \
+        f"by-index flush issued {aw_during} writebacks (expected >= {WAYS_E6} dirty ways)"
+
+    miss = 0
+    for addr, val in written.items():
+        got = int.from_bytes(ram.read(addr & MEM_MASK, BLOCK_BYTES), "little")
+        if got != val:
+            miss += 1
+            dut._log.error(f"E6 backend @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}")
+    assert miss == 0, f"{miss}/{WAYS_E6} high-tag dirty ways NOT written back by flush"
+
+    # Read-back through the cache must also return the written value.
+    for addr, val in written.items():
+        op = await with_timeout(master.read(addr, BLOCK_BYTES), 5_000, "ns")
+        got = int.from_bytes(op.data, "little")
+        assert got == val, f"E6 read-back @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}"
+    dut._log.info(f"[flush_multitag_all_ways] PASS: {WAYS_E6} high-tag ways flushed, AWs={aw_during}")
