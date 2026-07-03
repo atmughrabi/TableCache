@@ -26,9 +26,20 @@ and, from a cold reset, runs self-checking transactions:
   eviction → a **real mem AW** (writeback) to the backend; then reads all
   back (the evicted one refills from mem). Guards the cold write + eviction +
   writeback path that a read-only test misses.
-- **T5** whole-cache **flush** (a `tc_flush_controller` CleanInvalid CBOM walk,
-  muxed onto the s00 AR) over the now-dirty cache → `flush_done` must pulse.
-  Guards the cold CBOM / cbom-FIFO path.
+- **T5** whole-cache **flush** (a `tc_flush_controller` `CleanInvalidByIndex`
+  CBOM walk, muxed onto the s00 AR) over the now-dirty cache → `flush_done`
+  must pulse. Guards the cold CBOM / cbom-FIFO path.
+- **T6** by-index flush correctness: fill all `WAYS` of one set at distinct
+  **high** tags (`0x20+`, well beyond the swept tag range), flush, and require
+  every one to be written back and dropped (post-flush read refills). A plain
+  by-address `CleanInvalid` would miss them all — this guards the whole-set
+  flush fix (bug #23).
+
+Throughout, a continuous **`$isunknown` X-monitor** (armed after reset)
+asserts that no s00/m00 valid/ready handshake is `X` and no payload is `X`
+while its VALID is asserted (read `rdata` is skipped — a CBOM returns `'x` by
+design). This is the generic net for the 4-state cold-init X class that
+Verilator (2-state) cannot see.
 
 A cold cache only behaves here if the tag/valid arrays were actually cleared
 to 0 by the LFSR-walk reset routine — which only works in 4-state once the

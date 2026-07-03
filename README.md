@@ -347,7 +347,7 @@ spec including what bug class it was designed to catch.
 | `test_realism` | DDR-style sustained mem-R inter-beat latency (20/40/80) + long-idle reset recover |
 | `test_finish_fifo_stress` | hot-set + heavy response back-pressure (drives `cp_*` cover points) |
 | `test_shim_prefill_race` | direct-driven shim test targeting `drop_prefill_check` mutation; marked `expect_fail` (artifactual under default `PROMOTE_WMISS_TO_RW=0`) |
-| `test_flush` | flush controller (4 scenarios): clean / dirty-writeback / idempotent / **cold-cache** (no pre-warm required) |
+| `test_flush` | flush controller (7 scenarios): clean / dirty-writeback / idempotent / **cold-cache** (no pre-warm) / **cold-cache CleanInvalid** / **multi-tag all-ways** / **scattered multi-tag** (whole-set by-index flush writes back + invalidates every way at any tag) |
 | `test_grasp` | GRASP address-region policy (5 cases): hot-retention, SRRIP-FP fallback (regions=0), invalid region (`_h<_l`), runtime reconfig, hot/moderate overlap precedence |
 | `test_grasp_multi` | GRASP with **N>1 windows** (5 cases): two disjoint buffers each pinned by their own high window; disabled (`_h=0`) window must not match; high+moderate windows coexist; top window slot (index N-1) effective; all-disabled SRRIP-FP fallback evicts. Build with `POLICY=GRASP GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2`. Config matrix: `./grasp_multi_matrix.sh` (9 cells) |
 | `test_grasp_multi_perf` | GRASP multi-window hit-rate demo: 4 disjoint buffers, fallback 0% vs single-window 25% vs 4-window 100%. Build with `POLICY=GRASP GRASP_HIGH_REGIONS=4` |
@@ -404,7 +404,7 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
 - Bursts must stay within a cache line.
 - `INCR` and `WRAP` only; `FIXED` is not supported.
 - `AxLOCK` (EXCLUSIVE) is not supported.
-- `arsnoop`: `CleanInvalid` (`4'b1001`), `CleanShared` (`4'b1000`), `MakeInvalid` (`4'b1101`); other encodings treated as regular reads.
+- `arsnoop`: `CleanInvalid` (`4'b1001`), `CleanShared` (`4'b1000`), `MakeInvalid` (`4'b1101`), `CleanInvalidByIndex` (`4'b1011`, whole-set/all-tags clean used by the flush controller); other encodings treated as regular reads.
 - `awsnoop`: `WriteEvict` (`3'b101`) for full-line writes; others trigger RMW.
 
 ## Documentation
@@ -440,6 +440,13 @@ for details.
 | 14 | `l2_databank.sv` | new `DATABANK_SDP=1` UltraRAM mode initially closed a combinational loop and lost write data; chosen fix disables databank port 1 in SDP mode |
 | 15 | `l2_tagbank.sv` | `policy_addr` projected from the tag-only view, hiding the `ADDR_RANGE_L` prefix from address-aware policies; GRASP silently degraded to RRIP-FP for every address ≥ `0x8000_0000`. Added `ADDR_BASE` parameter and OR it back in before passing to the policy. |
 | 16 | `l2_tagbank.sv` | `out_dirty` and `out_tag` were unconditionally read from the policy-chosen replacement way's entry, so a CBOM `CleanInvalid`/`CleanShared` HIT on a line that lived in a different way issued the writeback using the wrong way's (typically zero) tag, sending the dirty data to mem address 0 instead of the actual line address. Introduced `evicted_entry = hit ? tb_rdata_r[hit_index] : evict_entry`. Surfaced by `test_cbom_rmw_race` -- the existing CBOM tests pre-warmed the line with a full-line read which masked the wrong-way path. |
+| 18 | `l2_top.sv` | AXI wrapper tied `s00_axi_arsnoop`/`awsnoop` to 0 and forced `INCLUDE_CBOM=0`, so no CBOM or whole-cache flush worked through the wrapper. Forward the snoop sidebands and parameterize `INCLUDE_CBOM`. |
+| 19 | `lfsr.sv`, `toggle_memory_set.sv` | 4-state (xsim) cold-init: the reset-walk LFSR powered up X, so `X<<1`/`XNOR(X)` stayed X and the tag/valid arrays never cleared. Declaration initializer `value='0` + mask external toggles during `init_clear`. (No-op on real HW where flops power to 0.) |
+| 20 | `l2_cache.sv`, `sdp_ram.sv`/`tdp_ram.sv` | 4-state cold-init: unreset `bvalid_handled`/`rvalid_handled` + uninitialized databank BRAM data read X cold. Add resets + `= '{default:0}` INIT. |
+| 21 | `toggle_memory.sv`, `toggle_memory_set.sv` | `toggle_memory` hard-tied `ram_write=1'b1`, so during reset the external ports wrote at X addresses and defeated the lutram 0-init. Added a `wen` port; gate external writes off during `init_clear` (clear-walk keeps writing). |
+| 22 | `tc_narrow_shim.sv` | At `MAX_OUTSTANDING_W=1` (`FIFO_AW=$clog2(1)=0`) the AW-lane index `ptr[FIFO_AW-1:0]` was an illegal zero-width `[-1:0]` select, so write data was dropped. Derive `aw_wr_idx`/`aw_rd_idx` = const 0 at depth-1. The power-of-two guard advertised depth-1 as supported, so it was a real bug. |
+| 23 | `l2_cache.sv`, `l2_tagbank.sv`, `tc_flush_controller.sv` | **Whole-cache flush could not flush a set-associative cache.** The controller drove per-line `CleanInvalid` whose tag came from the swept address (`tag = line_idx/num_sets`), so only tags `0..(walk/sets-1)` were cleaned; dirty lines with any other tag were silently never written back or invalidated. Added `CleanInvalidByIndex` (arsnoop `4'b1011`): the tagbank selects the WAY from the tag field's low bits (writeback uses the stored tag), and the controller walks `LINES*WAYS` (set x way). Per-line `CleanInvalid` unchanged. Regression: `test_flush_multitag_all_ways` (negative control with old mode fails). |
+| 24 | `fifo.sv` | The over/underflow SVAs fired spuriously (~724x) during flush: the databank output-FIFO pop = `ready & valid` where `ready` depends combinationally on that FIFO's own valid, so xsim sampled `fifo_valid=X` in the assertion Preponed region even though the occupancy counter is provably never X. Guard both assertions with `~$isunknown(...)`; a genuine over/underflow drives full/valid to a known 1/0, so detection is preserved. |
 
 A self-bug #11 in `axi_protocol_checker.sv` (`vcount` multi-driver race
 masking #10) was also fixed; see same section.

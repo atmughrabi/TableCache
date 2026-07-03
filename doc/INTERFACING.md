@@ -95,8 +95,9 @@ For INCR bursts you must additionally ensure that `block + len < LINE_W` so the 
 | `arsnoop` | Name | Effect (requires `INCLUDE_CBOM=1`) |
 |---|---|---|
 | `4'b1000` | CleanShared  | Flush dirty line to mem, KEEP it cached, mark clean. |
-| `4'b1001` | CleanInvalid | Flush dirty line to mem, DROP it from cache. |
+| `4'b1001` | CleanInvalid | Flush dirty line to mem, DROP it from cache. Matches by ADDRESS (tag), so it acts on the one line whose tag == `araddr`'s tag in the addressed set. |
 | `4'b1101` | MakeInvalid  | DROP line WITHOUT writeback. Dirty data is lost (intentional). |
+| `4'b1011` | CleanInvalidByIndex | Clean+invalidate the WAY selected by the low `$clog2(WAYS)` bits of the tag field, regardless of the resident tag (writeback uses the tagbank's STORED tag). Lets a flush clean every physical way of a set; a by-address `CleanInvalid` cannot flush a set-associative cache (it only matches one tag per set). Used by `tc_flush_controller`. |
 | anything else | regular read | Normal cache lookup. |
 
 CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
@@ -291,28 +292,39 @@ correct WRAP implementation.
 ### Whole-cache flush controller ([`src/tc_flush_controller.sv`](../src/tc_flush_controller.sv))
 
 > **Status: working.** Validated by
-> [tb/cocotb/test_flush.py](../tb/cocotb/test_flush.py) (4 tests, all
-> PASS), including `test_flush_cold_cache` which flushes an
-> unwarmed cache (0 mem ARs, 0 mem AWs). One operational note:
->
-> 1. `CleanInvalid` (default `arsnoop = 4'b1001`) appears to issue a
->    writeback for every present line regardless of dirty state, so
->    `flush_mode = 0b1001` produces `LINES` mem AWs. Use
->    `flush_mode = 0b1101` (MakeInvalid) to drop without writeback, or
->    `flush_mode = 0b1001` to writeback-then-drop on every line. The
->    `test_flush_writes_back_dirty` scenario verifies the data path.
+> [tb/cocotb/test_flush.py](../tb/cocotb/test_flush.py) (7 tests, all
+> PASS), including `test_flush_cold_cache` (flushes an unwarmed cache: 0
+> mem ARs, 0 mem AWs), `test_flush_multitag_all_ways` and
+> `test_flush_scattered_multitag` (dirty every way of a set at high/
+> scattered tags — writeback + invalidation enforced).
 
-Optional drop-in sequencer that issues an ACE-CBOM (default
-`CleanInvalid` = `4'b1001`) on every line. Use when the accelerator
-needs an atomic "drain everything to memory" handshake rather than per-
-line snoops.
+Optional drop-in sequencer that walks every physical line (`LINES × WAYS`)
+of the cache and issues a single-beat CBOM per line. Use when the
+accelerator needs an atomic "drain everything to memory" handshake rather
+than per-line snoops.
 
-Ports:
+**Default snoop is `CleanInvalidByIndex` (`4'b1011`).** For each line the
+sequencer presents `araddr = ADDR_BASE + line_idx * LINE_STRIDE`, where
+`line_idx` encodes `{way, set}`: the set index lands in the address set
+bits and the way rides the tag position. The cache cleans+invalidates that
+physical WAY of that SET regardless of the resident tag, so dirty lines
+with ANY tag are written back and dropped.
 
-| Signal | Direction | Description |
+> **Why not plain `CleanInvalid` (`4'b1001`)?** A by-address CBOM matches a
+> single `(set, tag)`. Sweeping addresses only ever presents tags
+> `0 .. (walk/num_sets − 1)`, so dirty lines whose tag falls outside that
+> range are never written back or invalidated — a by-address sweep cannot
+> flush a set-associative cache. `flush_mode = 4'b1001` remains available
+> for a targeted per-tag clean, but is NOT a whole-cache flush.
+
+Ports and params:
+
+| Signal / param | Direction | Description |
 |---|---|---|
+| `LINES` / `WAYS` params | — | sets and associativity; the controller walks `LINES × WAYS` lines |
+| `DEFAULT_MODE[3:0]` param | — | snoop when `flush_mode==0`; defaults to `4'b1011` (CleanInvalidByIndex) |
 | `flush_req` | input | single-cycle pulse to start |
-| `flush_mode[3:0]` | input | overrides default `arsnoop`; `0` keeps default. Use `4'b1001` (CleanInvalid), `4'b1000` (CleanShared, keep clean copy), or `4'b1101` (MakeInvalid, no writeback). |
+| `flush_mode[3:0]` | input | overrides `DEFAULT_MODE`; `0` keeps default. `4'b1011` (whole-set, all tags), `4'b1101` (MakeInvalid, no writeback), or `4'b1001`/`4'b1000` (per-tag). |
 | `flush_active` | output | high from `flush_req` until the last R beat drains |
 | `flush_done` | output | single-cycle pulse on completion |
 
@@ -325,7 +337,11 @@ slave port:
 
 ```sv
 // Pseudocode -- see tb/cocotb/dut_flush.sv for a working version
-tc_flush_controller #(...) flush_ctrl (
+tc_flush_controller #(
+    .LINES(LINES), .WAYS(WAYS),   // walks LINES*WAYS lines; WAYS defaults to 1
+    .LINE_W(LINE_W), .BLOCK_W(BLOCK_W), .ID_W(ID_W), .ADDR_BASE(ADDR_RANGE_L)
+    // DEFAULT_MODE defaults to 4'b1011 (CleanInvalidByIndex)
+) flush_ctrl (
     .clk(clk), .rst(rst),
     .flush_req(flush_req), .flush_mode(flush_mode),
     .flush_active(flush_active), .flush_done(flush_done),

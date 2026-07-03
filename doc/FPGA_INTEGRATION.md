@@ -241,7 +241,8 @@ Recommended:
 
 CBOM snoop sideband (only if `INCLUDE_CBOM=1`):
 - `arsnoop = 4'b1000` CleanShared (writeback if dirty, keep clean copy)
-- `arsnoop = 4'b1001` CleanInvalid (writeback if present, evict)
+- `arsnoop = 4'b1001` CleanInvalid (writeback if present, evict — matches ONE tag per set)
+- `arsnoop = 4'b1011` CleanInvalidByIndex (clean+invalidate the addressed WAY of a set, ANY tag — used by the whole-cache flush controller)
 - `arsnoop = 4'b1101` MakeInvalid (drop without writeback)
 - `awsnoop = 3'b101 ` WriteEvict (full-line write that bypasses RMW)
 
