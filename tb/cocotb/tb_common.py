@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, Timer
+from cocotb.triggers import RisingEdge, Timer, ReadOnly
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
 
 CLK_PERIOD_NS = 10
@@ -84,3 +84,75 @@ def attach_mem(dut, size_bytes: int = 1 << 20, seed_window_bytes: int = None):
             GOLDEN_BYTES, "little")
     ram.write(0, bytes(seed))
     return ram
+
+
+# ---------------------------------------------------------------------------
+# Backend-writeback monitor (enrichment)
+#
+# Snoops the memory-side write channel (m_aw* + m_w*) and, for every completed
+# write burst, asserts it covers EXACTLY ONE cache line. This is the direct
+# net for the FIX-A class ("the 8-beat writeback spans two lines"): a full-line
+# writeback must be either an INCR from the line base (awlen = LINE_W-1) or a
+# WRAP whose wrap boundary equals the line size -- either way every beat lands
+# in the same line. Any burst whose beats touch two distinct line bases fails.
+#
+# It also records, per completed burst, the {byte_addr: word} actually written
+# (honouring INCR/WRAP addressing and wstrb) so a test can cross-check the
+# backend contents against its reference model.
+# ---------------------------------------------------------------------------
+class WritebackMonitor:
+    def __init__(self, dut, line_w: int = None, block_bytes: int = 4,
+                 mem_mask: int = 0xFFFFFFFF):
+        self.dut = dut
+        self.line_w = line_w if line_w is not None else int(os.environ.get("TC_LINE_W", "8"))
+        self.block_bytes = block_bytes
+        self.line_bytes = self.line_w * block_bytes
+        self.mem_mask = mem_mask
+        self.bursts = 0
+        self.beats = 0
+        self.errors: list[str] = []
+        self.written: dict[int, int] = {}   # byte-addr -> word (last write wins)
+
+    async def run(self):
+        aw_q: list[tuple[int, int, int, int]] = []  # (addr, len, size, burst)
+        cur = None       # (base_addr, size, burst, boundary, beat_idx, [line_bases])
+        while True:
+            await RisingEdge(self.dut.clk)
+            await ReadOnly()
+            if int(self.dut.m_awvalid) and int(self.dut.m_awready):
+                aw_q.append((int(self.dut.m_awaddr) & self.mem_mask,
+                             int(self.dut.m_awlen), int(self.dut.m_awsize),
+                             int(self.dut.m_awburst)))
+            if int(self.dut.m_wvalid) and int(self.dut.m_wready):
+                if cur is None:
+                    if not aw_q:
+                        # W before AW: tolerate, resync on next AW.
+                        continue
+                    addr, alen, asize, aburst = aw_q.pop(0)
+                    size = 1 << asize
+                    boundary = (alen + 1) * size
+                    cur = [addr, size, aburst, boundary, 0, set(), alen]
+                base, size, aburst, boundary, j, lines, alen = cur
+                if aburst == 2:  # WRAP
+                    lower = base - (base % boundary)
+                    beat_addr = lower + ((base - lower + j * size) % boundary)
+                else:            # INCR (1) / FIXED (0, unused here)
+                    beat_addr = base + j * size
+                lines.add(beat_addr - (beat_addr % self.line_bytes))
+                data = int(self.dut.m_wdata) & 0xFFFFFFFF
+                strb = int(self.dut.m_wstrb)
+                if strb & 0xF:
+                    self.written[beat_addr] = data
+                self.beats += 1
+                cur[4] = j + 1
+                if int(self.dut.m_wlast):
+                    self.bursts += 1
+                    if len(lines) != 1:
+                        self.errors.append(
+                            f"writeback burst @0x{base:08x} burst={aburst} "
+                            f"len={alen} spans {len(lines)} lines: "
+                            f"{sorted(hex(x) for x in lines)}")
+                    cur = None
+
+    def check(self):
+        assert not self.errors, "WritebackMonitor: " + " | ".join(self.errors)

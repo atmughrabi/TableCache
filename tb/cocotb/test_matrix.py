@@ -122,3 +122,50 @@ def test_random_small(policy, ways, db_lat, victim, cbom):
         f"random cocotb FAIL count = {nfail} ({policy} W={ways} DB={db_lat} V={victim} C={cbom})\n"
         f"---stdout tail---\n{r.stdout[-3000:]}"
     )
+
+
+# Focused subset for the heavier enrichment tests (writeback monitor + flush
+# tag-coverage). Policy is largely orthogonal to writeback/flush correctness, so
+# we sweep what actually matters: VICTIM on/off and the associativity, plus one
+# non-LRU policy. Each entry: (POLICY, WAYS, DB_LATENCY, VICTIM, CBOM).
+ENRICH_MATRIX = [
+    ("LRU",   4, 1, 0, 1),   # baseline
+    ("LRU",   4, 1, 1, 1),   # + victim cache
+    ("LRU",   2, 1, 1, 1),   # WAYS=2 + victim (deployment-like)
+    ("LRU",   8, 1, 0, 1),   # WAYS=8
+    ("SRRIP", 4, 1, 1, 1),   # non-LRU policy + victim
+]
+
+
+@pytest.mark.parametrize("policy,ways,db_lat,victim,cbom", ENRICH_MATRIX,
+                          ids=[f"{p}-W{w}-L{l}-V{v}-C{c}" for p, w, l, v, c in ENRICH_MATRIX])
+def test_eviction_matrix(policy, ways, db_lat, victim, cbom):
+    """Heavy non-aligned eviction round-trip + backend WritebackMonitor across
+    configs (the FIX-A / writeback-correctness net)."""
+    env = {"POLICY": policy, "WAYS": str(ways), "DB_LATENCY": str(db_lat),
+           "VICTIM": str(victim), "CBOM": str(cbom)}
+    r = _make(env, "test_eviction", timeout_s=360)
+    assert r.returncode == 0, (
+        f"eviction FAIL ({policy} W={ways} DB={db_lat} V={victim} C={cbom})\n"
+        f"---stdout tail---\n{r.stdout[-3000:]}\n---stderr tail---\n{r.stderr[-1000:]}")
+    nfail = _cocotb_fail_count(r.stdout)
+    assert nfail == 0, (
+        f"eviction cocotb FAIL count = {nfail} ({policy} W={ways} V={victim})\n"
+        f"---stdout tail---\n{r.stdout[-3000:]}")
+
+
+@pytest.mark.parametrize("policy,ways,db_lat,victim,cbom", ENRICH_MATRIX,
+                          ids=[f"{p}-W{w}-L{l}-V{v}-C{c}" for p, w, l, v, c in ENRICH_MATRIX])
+def test_flush_matrix(policy, ways, db_lat, victim, cbom):
+    """Whole-cache flush suite incl. multi-tag/all-ways + scattered high-tag
+    regressions (the FIX-B / flush tag-coverage net) across configs."""
+    env = {"POLICY": policy, "WAYS": str(ways), "DB_LATENCY": str(db_lat),
+           "VICTIM": str(victim), "CBOM": str(cbom)}
+    r = _make(env, "test_flush", timeout_s=360)
+    assert r.returncode == 0, (
+        f"flush FAIL ({policy} W={ways} DB={db_lat} V={victim} C={cbom})\n"
+        f"---stdout tail---\n{r.stdout[-3000:]}\n---stderr tail---\n{r.stderr[-1000:]}")
+    nfail = _cocotb_fail_count(r.stdout)
+    assert nfail == 0, (
+        f"flush cocotb FAIL count = {nfail} ({policy} W={ways} V={victim})\n"
+        f"---stdout tail---\n{r.stdout[-3000:]}")

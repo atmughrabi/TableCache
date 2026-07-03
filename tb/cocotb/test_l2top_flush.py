@@ -24,4 +24,5 @@ from test_flush import (  # noqa: F401
     test_flush_cold_cache,
     test_flush_cold_cache_cleaninvalid,
     test_flush_multitag_all_ways,
+    test_flush_scattered_multitag,
 )

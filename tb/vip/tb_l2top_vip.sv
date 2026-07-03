@@ -241,8 +241,40 @@ module tb_l2top_vip;
     endtask
 
     int       errors = 0;
+    int       xmon_errors = 0;
+    bit       mon_active = 0;
     bit [31:0] rd;
     int       aw0;
+
+    // ---- 4-state X-monitor (enrichment) -------------------------------------
+    // After reset settles, no valid/ready handshake may be X, and no payload may
+    // be X while its VALID is asserted. This is the generic net for the cold-init
+    // X-bug class (LFSR reset-walk, toggle_memory, cbom/writeback regs) that only
+    // shows up in 4-state sim -- exactly the bugs this cache repeatedly hit. rdata
+    // is skipped on the cache->master read channel because a CBOM legitimately
+    // returns 'x (no data), but the memory-side m_rdata IS checked.
+    always @(posedge aclk) if (mon_active) begin
+        if ($isunknown({s_awvalid, s_awready, s_wvalid, s_wready, s_bvalid, s_bready,
+                        cs_arvalid, cs_arready, cs_rvalid, cs_rready,
+                        m_awvalid, m_awready, m_wvalid, m_wready, m_bvalid, m_bready,
+                        m_arvalid, m_arready, m_rvalid, m_rready})) begin
+            $display("FAIL Xmon @%0t: a valid/ready handshake bit is X", $time); xmon_errors++;
+        end
+        if (cs_arvalid && $isunknown({cs_araddr, cs_arlen, cs_arsize, cs_arsnoop})) begin
+            $display("FAIL Xmon @%0t: s00 AR payload X while arvalid", $time); xmon_errors++; end
+        if (s_awvalid && $isunknown({s_awaddr, s_awlen, s_awsize})) begin
+            $display("FAIL Xmon @%0t: s00 AW payload X while awvalid", $time); xmon_errors++; end
+        if (s_wvalid && $isunknown({s_wdata, s_wstrb, s_wlast})) begin
+            $display("FAIL Xmon @%0t: s00 W payload X while wvalid", $time); xmon_errors++; end
+        if (m_awvalid && $isunknown({m_awaddr, m_awlen, m_awsize, m_awburst})) begin
+            $display("FAIL Xmon @%0t: m00 AW payload X while awvalid (writeback addr X!)", $time); xmon_errors++; end
+        if (m_wvalid && $isunknown({m_wdata, m_wstrb, m_wlast})) begin
+            $display("FAIL Xmon @%0t: m00 W payload X while wvalid (writeback data X!)", $time); xmon_errors++; end
+        if (m_arvalid && $isunknown({m_araddr, m_arlen, m_arsize})) begin
+            $display("FAIL Xmon @%0t: m00 AR payload X while arvalid (fetch addr X!)", $time); xmon_errors++; end
+        if (m_rvalid && $isunknown({m_rdata, m_rlast})) begin
+            $display("FAIL Xmon @%0t: m00 R payload X while rvalid", $time); xmon_errors++; end
+    end
 
     initial begin
         mst = new("mst", master_vip.inst.IF);
@@ -256,6 +288,7 @@ module tb_l2top_vip;
         repeat (RESET_CYCLES) @(posedge aclk);
         aresetn = 1;
         repeat (20) @(posedge aclk);
+        mon_active = 1;   // arm the 4-state X-monitor once the cold reset settled
 
         // Preload backing memory for the line we read cold (both words of the line).
         slv.mem_model.backdoor_memory_write_4byte(BASE + 32'h0, 32'hCAFE_BABE);
@@ -349,10 +382,12 @@ module tb_l2top_vip;
                 $display("PASS T6 by-index flush cleaned %0d high-tag ways", VWAYS);
         end
 
-        if (errors == 0)
+        if (xmon_errors != 0)
+            $display("FAIL Xmon: %0d 4-state X violation(s) observed after reset", xmon_errors);
+        if (errors == 0 && xmon_errors == 0)
             $display("VIP_RESULT PASS: l2_top cold cache works in xsim (4-state)");
         else
-            $display("VIP_RESULT FAIL: %0d error(s)", errors);
+            $display("VIP_RESULT FAIL: %0d error(s) + %0d Xmon violation(s)", errors, xmon_errors);
         $finish;
     end
 

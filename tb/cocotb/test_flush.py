@@ -12,9 +12,11 @@ Three scenarios:
 from __future__ import annotations
 
 import os
+import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ReadOnly, Timer, with_timeout
+from tb_common import WritebackMonitor
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
 
 CLK_NS      = 10
@@ -298,3 +300,64 @@ async def test_flush_multitag_all_ways(dut):
         got = int.from_bytes(op.data, "little")
         assert got == val, f"E6 read-back @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}"
     dut._log.info(f"[flush_multitag_all_ways] PASS: {WAYS_E6} high-tag ways flushed, AWs={aw_during}")
+
+
+@cocotb.test()
+async def test_flush_scattered_multitag(dut):
+    """Enrichment: dirty every way of MANY sets at SCATTERED HIGH tags (mixed
+    with a clean warmed line per set), flush, then require:
+      (a) no writeback burst spans two lines (WritebackMonitor),
+      (b) every dirty canary reached the backend AND reads back correct,
+      (c) the cache is fully invalidated -- a 2nd flush issues 0 writebacks.
+    The prior flush suite only ever warmed tag-0 lines, so the tag-coverage
+    hole (dirty lines at higher tags never cleaned) had no assertion."""
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    mon = WritebackMonitor(dut, line_w=LINE_W, mem_mask=MEM_MASK)
+    cocotb.start_soon(mon.run())
+    counter = MAwCounter(dut); cocotb.start_soon(counter.run())
+
+    rng = random.Random(0xF10E)
+    NSET = min(LINES, 8)
+    written = {}
+    for s in range(NSET):
+        # one clean warmed line (read) at a low tag -> clean+dirty mix per set
+        await with_timeout(master.read(_e6_addr(s, 0, 0), BLOCK_BYTES), 5_000, "ns")
+        for w in range(WAYS_E6):
+            tag = 0x100 + (s * WAYS_E6 + w) * 3        # distinct, scattered HIGH tags
+            blk = rng.randrange(LINE_W)
+            addr = _e6_addr(s, tag, blk)
+            val  = 0xD1500000 | (s << 8) | w
+            await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
+                               5_000, "ns")
+            written[addr] = val
+
+    await request_flush(dut)                 # by-index whole-set clean (default)
+    await Timer(1000, "ns")
+    mon.check()
+
+    # (b) every dirty canary reached the backend (backdoor read, no cache access)
+    miss = 0
+    for addr, val in written.items():
+        got = int.from_bytes(ram.read(addr & MEM_MASK, BLOCK_BYTES), "little")
+        if got != val:
+            miss += 1
+            dut._log.error(f"scattered backend @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}")
+    assert miss == 0, f"{miss}/{len(written)} scattered high-tag dirty lines NOT written back"
+
+    # (c) invalidation: the 1st flush dropped every line, so a 2nd flush over the
+    # now-empty cache must issue ZERO writebacks. Done BEFORE any cache read-back
+    # (a read would re-allocate the lines and the flush writes valid lines back).
+    aw = counter.n
+    await request_flush(dut)
+    await Timer(600, "ns")
+    assert counter.n == aw, \
+        f"2nd flush issued {counter.n - aw} writebacks -> 1st flush left lines resident (not invalidated)"
+
+    # data is also correct when refetched through the cache
+    for addr, val in written.items():
+        op = await with_timeout(master.read(addr, BLOCK_BYTES), 5_000, "ns")
+        got = int.from_bytes(op.data, "little")
+        assert got == val, f"scattered read-back @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}"
+    dut._log.info(f"[flush_scattered_multitag] PASS: {len(written)} scattered ways over "
+                  f"{NSET} sets flushed+invalidated, writeback_bursts={mon.bursts}")
