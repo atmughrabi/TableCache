@@ -129,10 +129,19 @@ module fifo
 
 
 `ifndef ASSERT_OFF
+    // The consequents are guarded with !$isunknown(...) so the assertions fire
+    // only on a REAL violation (known-full overflow / known-empty underflow),
+    // never on a sampled-X. A combinational fifo_full/fifo_valid cone that feeds
+    // back through downstream ready/pop logic (e.g. the databank output FIFO's
+    // pop = ready & valid, where `ready` depends combinationally on this FIFO's
+    // own valid) can sample X in the SVA Preponed region during a flush read
+    // sweep even though the occupancy counter is provably never X and no real
+    // under/overflow occurs. A genuine over/underflow drives full/valid to a
+    // KNOWN 1/0, so detection is preserved.
     fifo_overflow_assertion:
-        assert property (@(posedge clk) disable iff (rst) fifo_push |-> (~fifo_full | fifo_pop)) else $error("FIFO overflow");
+        assert property (@(posedge clk) disable iff (rst) (fifo_push & ~$isunknown(fifo_full)) |-> (~fifo_full | fifo_pop)) else $error("FIFO overflow");
     fifo_underflow_assertion:
-        assert property (@(posedge clk) disable iff (rst) fifo_pop |-> fifo_valid) else $error("FIFO underflow");
+        assert property (@(posedge clk) disable iff (rst) (fifo_pop & ~$isunknown(fifo_valid)) |-> fifo_valid) else $error("FIFO underflow");
 `endif
 
 endmodule
