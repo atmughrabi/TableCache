@@ -132,7 +132,7 @@ line. Sweep table at [`syn/vivado/sweep_results.md`](../syn/vivado/sweep_results
 | `VICTIM_LINES` | Capacity of the victim cache | 4, 8, 16 | 8 |
 | `DATABANK_SDP` | UltraRAM-packed databank (see §10.1) | 0/1 | 0 |
 | `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | Slave AXI ID widths | 3-5 | 4 |
-| `ADDR_RANGE_L/H` | Bounding address window (NAPOT) | 0x80000000-0xFFFFFFFF | per design |
+| `ADDR_RANGE_L/H` | Bounding address window (NAPOT); base-0 full `[0,0xFFFFFFFF]` supported | 0x80000000-0xFFFFFFFF | per design |
 
 ### Recommended configs by use case
 

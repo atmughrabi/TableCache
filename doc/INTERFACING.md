@@ -120,7 +120,7 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 | `VICTIM_LINES` | 8 | Size of the victim cache. |
 | `INCLUDE_CBOM` | 1 | Enables the ACE snoop opcodes above. |
 | `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | 4 | Max in-flight unique IDs per direction. |
-| `ADDR_RANGE_L/H` | 0x80000000 / 0xFFFFFFFF | Bounding address range; must be NAPOT. |
+| `ADDR_RANGE_L/H` | 0x80000000 / 0xFFFFFFFF | Bounding address range; must be NAPOT. A base-0 full range `[0, 0xFFFFFFFF]` is supported (the whole 32-bit space is cached; `OMITTED_ADDR_W=0`). |
 | `DATABANK_SDP` | 0 | **0** = TDP databank (`tdp_ram`, BRAM only). **1** = SDP+URAM databank (`sdp_ram_uram`, AMD UltraRAM mapping). See §5.1. |
 
 ### 5.1 `DATABANK_SDP` — UltraRAM packing mode
