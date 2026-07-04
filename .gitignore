@@ -6,7 +6,7 @@
 *$py.class
 
 # ---- Simulator build outputs ----------------------------------------------
-**/sim_build/
+**/sim_build*/
 **/sim_build_shim/
 **/shim_build_dir/
 **/obj_dir*/

@@ -103,9 +103,20 @@ module l2_databank
     typedef logic[DATA_W-1:0] block_data_t;
     typedef logic[ID_W-1:0] cache_id_t;
 
+    //Generation tag: distinguishes back-to-back reads that REUSE the same id
+    //(e.g. a whole-cache flush issues every CBOM with one FLUSH_ID). Without it
+    //the premature-exit below matches a discarded beat to the current read by id
+    //alone, so at LATENCY>=2 a stale discarded beat from the PRIOR same-id read
+    //(still in the deeper pipeline) falsely aborts the current read. GEN_W spans
+    //the pipeline window (LATENCY+1 in-flight beats) so no two reads whose beats
+    //can coexist share a gen.
+    localparam int unsigned GEN_W = $clog2(LATENCY + 2);
+    typedef logic[GEN_W-1:0] gen_t;
+
     typedef struct packed {
         line_t line;
         cache_id_t id;
+        gen_t gen;
         logic evict;
         logic fill;
         logic[$clog2(WAYS)-1:0] way;
@@ -118,6 +129,7 @@ module l2_databank
         logic last;
         logic original_last;
         cache_id_t id;
+        gen_t gen;
     } read_pipeline_t;
 
     ////////////////////////////////////////////////////
@@ -139,6 +151,8 @@ module l2_databank
     logic in_last[2];
     logic in_original_last[2];
     cache_id_t in_id[2];
+    gen_t in_gen[2];
+    gen_t read_gen[2];   //per-port running generation, bumped when a new read starts
     block_t saved_block[2];
 
     //External signals
@@ -215,10 +229,18 @@ module l2_databank
                 current_state[i] <= READY;
             else
                 current_state[i] <= next_state[i];
-            
+
+            if (rst)
+                read_gen[i] <= '0;
+            //A new read starts on the READY->READING transition: bump the gen so
+            //the next same-id read is distinguishable from this one in the pipe.
+            else if (current_state[i] == READY & next_state[i] == READING)
+                read_gen[i] <= read_gen[i] + gen_t'(1);
+
             if (current_state[i] == READY) begin
                 saved_request[i].line <= request_line;
                 saved_request[i].id <= request_id;
+                saved_request[i].gen <= read_gen[i];
                 saved_request[i].evict <= request_evict;
                 saved_request[i].fill <= request_fill;
                 saved_request[i].way <= request_way;
@@ -242,6 +264,7 @@ module l2_databank
                 line[i] = request_line;
                 block[i] = request_block;
                 in_id[i] = request_id;
+                in_gen[i] = read_gen[i];
             end
             else begin
                 port_ready[i] = 0;
@@ -250,6 +273,7 @@ module l2_databank
                 line[i] = saved_request[i].line;
                 block[i] = saved_block[i];
                 in_id[i] = saved_request[i].id;
+                in_gen[i] = saved_request[i].gen;
             end
 
             unique case (current_state[i])
@@ -272,7 +296,14 @@ module l2_databank
                     port_fill_data_ready[i] = 0;
                     wbe[i] = '0;
                     wdata[i] = 'x;
-                    if (valid_pipeline[i][LATENCY] & ~out_fifo_push[i] & info_pipeline[i][LATENCY].id == saved_request[i].id)
+                    //Premature exit: the current read's data was discarded (a
+                    //speculative clean read-miss). Match BOTH id and gen so a
+                    //stale discarded beat from a prior read that REUSED this id
+                    //(e.g. a flush's FLUSH_ID) cannot abort this read at
+                    //LATENCY>=2.
+                    if (valid_pipeline[i][LATENCY] & ~out_fifo_push[i]
+                        & info_pipeline[i][LATENCY].id == saved_request[i].id
+                        & info_pipeline[i][LATENCY].gen == saved_request[i].gen)
                         next_state[i] = READY; //Read data was discarded; premature exit
                     else if (in_last[i] & en[i])
                         next_state[i] = saved_request[i].evict ? WRITING : READY;
@@ -541,6 +572,7 @@ module l2_databank
             info_pipeline[i][0].last <= in_last[i];
             info_pipeline[i][0].original_last <= in_original_last[i];
             info_pipeline[i][0].id <= in_id[i];
+            info_pipeline[i][0].gen <= in_gen[i];
             for (int j = 1; j <= LATENCY; j++)
                 info_pipeline[i][j] <= info_pipeline[i][j-1];
         end

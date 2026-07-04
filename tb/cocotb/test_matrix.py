@@ -134,6 +134,8 @@ ENRICH_MATRIX = [
     ("LRU",   2, 1, 1, 1),   # WAYS=2 + victim (deployment-like)
     ("LRU",   8, 1, 0, 1),   # WAYS=8
     ("SRRIP", 4, 1, 1, 1),   # non-LRU policy + victim
+    ("LRU",   4, 2, 1, 1),   # DB_LATENCY=2 (deep databank read; flush bug #27 guard)
+    ("LRU",   4, 2, 0, 1),   # DB_LATENCY=2, no victim
 ]
 
 
