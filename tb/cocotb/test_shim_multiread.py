@@ -163,38 +163,62 @@ async def test_distinct_id_multi_outstanding(dut):
 
 
 @cocotb.test()
-async def test_same_id_pipelined_serializes(dut):
-    """The contract path, driven at the wire level to remove cocotbext's own
-    same-id response pairing from the picture: issue N back-to-back ARs that all
-    share arid=0 to N distinct lines. l2_cache's inuse_stall serializes them to
-    <=1 in flight; per AXI, same-id R responses return in ISSUE ORDER, so the
-    Nth R word must equal golden(addr[N]). Data must be correct and nothing may
-    deadlock or drop/duplicate a response."""
-    import logging as _l
+async def test_distinct_id_backpressure(dut):
+    """Distinct-id multi-outstanding under random master s_rready backpressure:
+    N concurrent reads on distinct arids must still all return correct data with
+    zero protocol violations when the R channel is stalled in bursts (the fill
+    routing keys off m_rid/rid_offset_q, which backpressure only delays)."""
+    from test_backpressure import burst_pause  # reuse the shared pause generator
+    import random as _r
+    await reset_dut(dut)
+    master, _ram = attach(dut)
+    master.read_if.r_channel.set_pause_generator(burst_pause(_r.Random(0xBEEF), 12, 3))
+    mon = OutstandingMonitor(dut); cocotb.start_soon(mon.run())
+
+    N = 8
+    addrs = _line_addrs(N)
+    arids = list(range(N))
+    miss = await _pipeline_reads(dut, master, addrs, arids)
+
+    assert miss == 0, f"{miss}/{N} distinct-id reads returned wrong data under backpressure"
+    assert mon.ar == N and mon.r == N, (
+        f"AR/R count mismatch under backpressure: {mon.ar} ARs, {mon.r} Rs (expected {N})")
+    assert int(dut.pc_violations_total.value) == 0, (
+        f"AXI protocol violations under backpressure: {int(dut.pc_violations_total.value)}")
+    dut._log.info(f"[distinct-id/bp] {N} reads correct under s_rready backpressure, "
+                  f"peak in-flight={mon.peak}")
+
+
+async def _run_same_id(dut, N, bp_seed=None):
+    """Drive N back-to-back ARs all sharing arid=0 to N distinct lines and
+    scoreboard the in-order R stream. bp_seed!=None applies random s_rready
+    backpressure (stresses the rid_outstanding clear path -- the clear only
+    happens on the R handshake, so backpressure must delay, never corrupt)."""
+    import logging as _l, random as _r
     _l.getLogger("cocotb.dut_shim_cache").setLevel(_l.WARNING)
     await reset_dut(dut)
     _ram = _attach_mem(dut)              # backend only; drive s_ AR/R by hand
     mon = OutstandingMonitor(dut); cocotb.start_soon(mon.run())
 
-    N = 8
     addrs = _line_addrs(N)
     ARSIZE = (NARROW_B.bit_length() - 1)
+    rng = _r.Random(bp_seed) if bp_seed is not None else None
 
     # R collector: same-id responses arrive in order -> append to a list.
+    # s_rready is driven in the active region (random pauses under backpressure).
     got_words = []
     async def r_collector():
-        dut.s_rready.value = 1
         while True:
             await RisingEdge(dut.clk)
+            dut.s_rready.value = 0 if (rng is not None and rng.random() < 0.4) else 1
             await ReadOnly()
             if int(dut.s_rvalid) and int(dut.s_rready):
                 got_words.append((int(dut.s_rid), int(dut.s_rdata) & MASK))
     cocotb.start_soon(r_collector())
 
-    # AR driver: issue every read with arid=0, honouring s_arready (the cache
-    # will only raise it once the prior same-id read has drained). Sample
-    # s_arready in ReadOnly, then advance one edge past the accepting cycle
-    # before de-asserting so we never write a signal during ReadOnly.
+    # AR driver: issue every read with arid=0, honouring s_arready (raised only
+    # once the prior same-id read has drained). Sample s_arready in ReadOnly,
+    # then advance one edge past the accepting cycle before de-asserting.
     for addr in addrs:
         dut.s_araddr.value  = addr
         dut.s_arid.value    = 0
@@ -208,13 +232,14 @@ async def test_same_id_pipelined_serializes(dut):
             await ReadOnly()
         await RisingEdge(dut.clk)          # complete the accepted AR handshake
         dut.s_arvalid.value = 0
-    # wait for all N responses (with a bounded timeout so a deadlock fails loud)
-    for _ in range(20_000):
+    # wait for all N responses (bounded timeout so a deadlock fails loud)
+    for _ in range(40_000):
         await RisingEdge(dut.clk)
         if len(got_words) >= N:
             break
+    tag = "same-id/bp" if bp_seed is not None else "same-id"
     assert len(got_words) == N, (
-        f"same-id: only {len(got_words)}/{N} R responses returned "
+        f"{tag}: only {len(got_words)}/{N} R responses returned "
         f"(deadlock or dropped response); peak in-flight={mon.peak}")
 
     miss = 0
@@ -223,17 +248,32 @@ async def test_same_id_pipelined_serializes(dut):
         exp = golden(addr)
         if got != exp or rid != 0:
             miss += 1
-            dut._log.error(f"same-id R#{i} @0x{addr:08x} rid={rid} "
+            dut._log.error(f"{tag} R#{i} @0x{addr:08x} rid={rid} "
                            f"got=0x{got:08x} exp=0x{exp:08x}")
-    dut._log.info(f"[same-id] peak in-flight={mon.peak}, responses={len(got_words)}, miss={miss}")
-    assert miss == 0, f"{miss}/{N} same-id serialized reads returned wrong data/id"
-    # Reads sharing an id must NEVER overlap at the s_ interface (the cache is
-    # 1-outstanding-per-id; the shim holds both s_arready AND the wide m_arvalid
-    # until the prior same-id R drains). peak<=1 proves they did not overlap.
-    # (A hand-driven AR can race the monitor's ReadOnly sample to peak==0; the
-    # data-correct + full-count checks above are the real serialization proof.)
+    dut._log.info(f"[{tag}] peak in-flight={mon.peak}, responses={len(got_words)}, miss={miss}")
+    assert miss == 0, f"{miss}/{N} {tag} serialized reads returned wrong data/id"
+    # Reads sharing an id must NEVER overlap at the s_ interface (1-per-id
+    # contract). peak<=1 proves they did not overlap. (A hand-driven AR can race
+    # the monitor's ReadOnly sample to peak==0; data-correct + full-count above
+    # are the real serialization proof.)
     assert mon.peak <= 1, (
-        f"same-id reads reached {mon.peak} in flight; they must serialize "
+        f"{tag} reads reached {mon.peak} in flight; they must serialize "
         f"(1-outstanding-per-id contract)")
-    dut._log.info(f"[same-id] {N} reads serialized in-order (peak={mon.peak}), all correct")
+    dut._log.info(f"[{tag}] {N} reads serialized in-order (peak={mon.peak}), all correct")
+
+
+@cocotb.test()
+async def test_same_id_pipelined_serializes(dut):
+    """The contract path, driven at the wire level: N back-to-back same-id (0)
+    reads must serialize (peak<=1) and return correct data in issue order."""
+    await _run_same_id(dut, 8)
+
+
+@cocotb.test()
+async def test_same_id_backpressure(dut):
+    """Same-id serialization under random s_rready backpressure: the
+    rid_outstanding clear only fires on the R handshake, so backpressure must
+    only DELAY completion -- never let a 2nd same-id AR through or corrupt data.
+    This is the latency/backpressure hardening guard for the bug #26 fix."""
+    await _run_same_id(dut, 8, bp_seed=0x5EED)
 
