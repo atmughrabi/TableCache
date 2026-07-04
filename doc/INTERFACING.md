@@ -74,7 +74,7 @@ can mux read vs. write IDs on the same channel.
 
 Violating any of these will fire an `$error` in [l2_cache.sv assertion block](src/l2_cache.sv):
 
-1. **Address in range** `[ADDR_RANGE_L, ADDR_RANGE_H]` (default 0x80000000..0xFFFFFFFF). Range must be NAPOT.
+1. **Address in range** `[ADDR_RANGE_L, ADDR_RANGE_H]` (default 0x80000000..0xFFFFFFFF). Range must be NAPOT (a non-NAPOT range fails loudly at elaboration with a clear `$fatal`, rather than silently mis-decoding).
 2. **Single-line bursts only** — `arlen < LINE_W` and `awlen < LINE_W`. A request must NOT cross a cache-line boundary.
 3. **No fixed bursts** — `arburst`/`awburst` ∈ {INCR=01, WRAP=10}.
 4. **Full bus width** — `arsize`/`awsize` = `$clog2(BLOCK_W/8)`. No narrow transactions.
