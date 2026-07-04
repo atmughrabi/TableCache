@@ -177,6 +177,11 @@ EXTRA_ARGS += -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINCONNE
 EXTRA_ARGS += +define+TC_POLICY=$(POLICY) +define+TC_LINES=$(LINES) +define+TC_LINE_W=$(LINE_W) \
               +define+TC_WAYS=$(WAYS) \
               +define+TC_DB_LATENCY=$(DB_LATENCY) +define+TC_VICTIM=$(VICTIM) +define+TC_CBOM=$(CBOM)
+# Optional RTL diagnostic $display blocks (e.g. DIAG=DIAG_FINISH DIAG_STALL).
+# Harmless when unset; forwards each token as a +define+.
+ifdef DIAG
+EXTRA_ARGS += $(patsubst %,+define+%,$(DIAG))
+endif
 # DATABANK_SDP + SDP_WRITE_INPUT_REG: only forward when explicitly set so
 # pre-existing tests that don't set them keep the historical defaults.
 ifneq ($(DATABANK_SDP),)

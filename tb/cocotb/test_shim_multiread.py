@@ -263,6 +263,93 @@ async def _run_same_id(dut, N, bp_seed=None):
 
 
 @cocotb.test()
+async def test_same_id_burst_then_idle_liveness(dut):
+    """Reproduces the residual reported after the same-id serialization fix: a
+    back-to-back same-id (arid=0) read burst, drain, an IDLE window, then one
+    more read. The cache must stay LIVE -- the post-idle read must be serviced.
+    GraphBlox saw l2_cache accept the post-idle AR at S00 but never respond
+    (deferred per-id inuse/finish bookkeeping mis-clearing during idle)."""
+    import logging as _l
+    _l.getLogger("cocotb.dut_shim_cache").setLevel(_l.WARNING)
+    await reset_dut(dut)
+    _ram = _attach_mem(dut)
+    ARSIZE = (NARROW_B.bit_length() - 1)
+
+    got = []
+    async def r_collector():
+        dut.s_rready.value = 1
+        while True:
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.s_rvalid) and int(dut.s_rready):
+                got.append((int(dut.s_rid), int(dut.s_rdata) & MASK))
+    cocotb.start_soon(r_collector())
+
+    async def do_read(addr):
+        dut.s_araddr.value = addr; dut.s_arid.value = 0; dut.s_arlen.value = 0
+        dut.s_arsize.value = ARSIZE; dut.s_arburst.value = 1; dut.s_arvalid.value = 1
+        await ReadOnly()
+        ok = False
+        for _ in range(2000):
+            if int(dut.s_arready):
+                ok = True; break
+            await RisingEdge(dut.clk); await ReadOnly()
+        if not ok:
+            dut.s_arvalid.value = 0
+            return False
+        await RisingEdge(dut.clk)
+        dut.s_arvalid.value = 0
+        return True
+
+    N = 4
+    addrs = _line_addrs(N)
+    # TRUE back-to-back burst: hold s_arvalid high across the whole burst,
+    # advancing the address the cycle after each accepted handshake (the shim
+    # serializes via s_arready). Like the accelerator FIFO feeding queued same-id
+    # reads with no arvalid gap.
+    dut.s_arid.value = 0; dut.s_arlen.value = 0; dut.s_arsize.value = ARSIZE
+    dut.s_arburst.value = 1
+    dut.s_araddr.value = addrs[0]; dut.s_arvalid.value = 1
+    idx = 0
+    for _ in range(40_000):
+        await ReadOnly()
+        accepted = int(dut.s_arvalid) and int(dut.s_arready)
+        await RisingEdge(dut.clk)        # into the active region
+        if accepted:
+            idx += 1
+            if idx >= N:
+                dut.s_arvalid.value = 0
+                break
+            dut.s_araddr.value = addrs[idx]   # s_arvalid stays high
+    for _ in range(40_000):
+        await RisingEdge(dut.clk)
+        if len(got) >= N:
+            break
+    assert len(got) == N, f"burst delivered only {len(got)}/{N}"
+    dut._log.info(f"[burst+idle] burst delivered {len(got)}/{N}")
+
+    dut.s_arvalid.value = 0
+    for _ in range(400):                 # IDLE window (the trigger)
+        await RisingEdge(dut.clk)
+
+    n_before = len(got)
+    probe = addrs[0]                     # resident line
+    assert await do_read(probe), "post-idle AR was not even accepted at s_arready"
+    live = False
+    for _ in range(5000):
+        await RisingEdge(dut.clk); await ReadOnly()
+        if len(got) > n_before:
+            live = True; break
+    assert live, (
+        "CACHE WEDGE: post-idle same-id read accepted but NEVER responded "
+        "(l2_cache produced no R after a back-to-back same-id burst + idle)")
+    rid, data = got[-1]
+    assert data == golden(probe) and rid == 0, \
+        f"post-idle read data wrong: got 0x{data:08x} exp 0x{golden(probe):08x}"
+    dut._log.info("[burst+idle] post-idle read serviced -- cache stayed live")
+
+
+@cocotb.test()
 async def test_same_id_pipelined_serializes(dut):
     """The contract path, driven at the wire level: N back-to-back same-id (0)
     reads must serialize (peak<=1) and return correct data in issue order."""

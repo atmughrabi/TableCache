@@ -28,7 +28,10 @@ cd "$REPO/tb/cocotb"
 source .venv/bin/activate 2>/dev/null || { echo "ERROR: tb/cocotb/.venv missing" >&2; exit 2; }
 
 DEFAULT_POLICY="${POLICY_DEFAULT:-LRU}"
-KNOBS="DB_LATENCY=3 SDP_WRITE_INPUT_REG=1 DATABANK_SDP=1${N_BANKS:+ N_BANKS=$N_BANKS}"
+# DB_LATENCY capped at 2 (bug #27: whole-cache flush is not correct for >2, and
+# l2_cache $fatal-s at elaboration for DB_LATENCY>2). 2 is the recommended
+# URAM/large-cache config, so exercise the gate at the deepest supported latency.
+KNOBS="DB_LATENCY=2 SDP_WRITE_INPUT_REG=1 DATABANK_SDP=1${N_BANKS:+ N_BANKS=$N_BANKS}"
 
 # ---- 1. module regression ----
 echo "==== experiment/verify.sh: cocotb regression at $KNOBS ===="
@@ -92,6 +95,31 @@ for mod in test_eviction test_flush; do
     else
         printf "  %-24s BUILD/SIM ERROR (see %s)\n" "${mod} (base-0)" "$log"
         fail=$((fail + 1)); failed_modules+=("${mod}-base0")
+    fi
+done
+
+# ---- 1c. bug #28 guard: same-id pipelined eviction wedge ----
+# Back-to-back same-id reads that pipeline dirty evictions must NOT wedge the
+# cache (needs_rdata double-set left inuse stuck SET). Needs a small geometry so
+# the round-robin burst actually evicts dirty lines; run at LINES=2 WAYS=2.
+echo ""
+echo "==== experiment/verify.sh: bug #28 guard (same-id eviction burst, LINES=2 WAYS=2) ===="
+for dbl in 1 2; do
+    rm -rf sim_build results.xml
+    log="$OUT/burst_idle_db${dbl}.log"
+    if eval "POLICY=$DEFAULT_POLICY MODULE=test_burst_idle LINES=2 WAYS=2 DB_LATENCY=$dbl make -s" > "$log" 2>&1; then
+        summary=$(grep -oE "TESTS=[0-9]+\s+PASS=[0-9]+\s+FAIL=[0-9]+\s+SKIP=[0-9]+" "$log" | head -1)
+        nfail=$(echo "$summary" | grep -oE "FAIL=[0-9]+" | sed 's/FAIL=//')
+        if [[ "${nfail:-1}" == "0" ]]; then
+            printf "  %-24s %s ✓\n" "burst_idle (DB=$dbl)" "$summary"
+            pass=$((pass + 1))
+        else
+            printf "  %-24s %s ✗\n" "burst_idle (DB=$dbl)" "$summary"
+            fail=$((fail + 1)); failed_modules+=("burst_idle-db${dbl}")
+        fi
+    else
+        printf "  %-24s BUILD/SIM ERROR (see %s)\n" "burst_idle (DB=$dbl)" "$log"
+        fail=$((fail + 1)); failed_modules+=("burst_idle-db${dbl}")
     fi
 done
 

@@ -186,8 +186,19 @@ class MemRangeMonitor:
         self.ar = 0
         self.aw = 0
         self.errors: list[str] = []
+        # The pre-mask debug taps are only exposed by DUTs that thread them out
+        # (dut_cocotb.sv, dut_flush.sv). Wrappers that don't (e.g.
+        # dut_l2top_flush.sv) still run the shared multitag flush tests -- in
+        # that case the range check simply no-ops instead of crashing.
+        self.enabled = hasattr(dut, "dbg_m_araddr_full") and \
+            hasattr(dut, "dbg_m_awaddr_full")
+        if not self.enabled:
+            dut._log.info("MemRangeMonitor: dbg_m_*addr_full taps absent on this "
+                          "DUT -- range check disabled")
 
     async def run(self):
+        if not self.enabled:
+            return
         while True:
             await RisingEdge(self.dut.clk)
             await ReadOnly()

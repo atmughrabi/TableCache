@@ -362,7 +362,18 @@ module l2_cache
     cache_id_t rdata_set_addr;
     cache_id_t rdata_raddr;
     logic rdata_clear;
-    assign rdata_set = tb_pushing_write ? ~tb_hit & ~tb_out_full_write : req_arready & req_ar.arvalid;
+    // rdata_set (reads): gate on the ARBITRATED advance (chosen_arready), NOT the
+    // slave-port accept (req_arready = ~saved_arvalid). needs_rdata is a per-id
+    // TOGGLE memory; req_arready can accept a 2nd same-id read into the skid while
+    // the 1st is still in flight (inuse_stall holds chosen_arready low), toggling
+    // needs_rdata[id] twice -> 0. That made rdata_rdata read "fill done" at a
+    // writeback whose fill was still pending, so a read-with-eviction cleared inuse
+    // twice (writeback via cond A + fill via cond C) and left inuse_id/inuse_line
+    // stuck SET -> the cache wedged on the next same-id/same-set read (bug #28).
+    // Gating on chosen_arready sets needs_rdata exactly once per read, consistent
+    // with rdata_set_addr = {1'b1, chosen_arid} and with how inuse itself is set
+    // (tb_advance), preserving the 1-set-per-outstanding-read balance.
+    assign rdata_set = tb_pushing_write ? ~tb_hit & ~tb_out_full_write : chosen_arready & chosen_ar.arvalid;
     assign rdata_set_addr = tb_pushing_write ? tb_out_id : {1'b1, chosen_arid};
     assign rdata_raddr = bvalid_invalid ? finish_output.wid : finish_output.bid;
     assign rdata_clear = finish_valid & bvalid_invalid & ~rvalid_invalid;

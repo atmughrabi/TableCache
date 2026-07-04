@@ -126,6 +126,19 @@ jobs:
             timeout 300 make MODULE=$mod
           done
 
+      - name: Same-id eviction-burst wedge (bug #28 guard)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # Back-to-back same-id reads that pipeline dirty evictions must not
+          # wedge the cache (needs_rdata double-set -> inuse stuck SET). Small
+          # geometry so the round-robin burst actually evicts; both DB latencies.
+          for dbl in 1 2; do
+            rm -rf sim_build
+            timeout 300 make MODULE=test_burst_idle LINES=2 WAYS=2 DB_LATENCY=$dbl
+          done
+
       - name: VICTIM=1 path (smoke + cbom + victim directed)
         working-directory: tb/cocotb
         run: |

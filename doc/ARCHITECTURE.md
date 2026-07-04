@@ -203,7 +203,15 @@ zoo is the source of most subtle bugs.
 
 The `set_clear_memory` and `toggle_memory_set` primitives are
 **XOR-backed**: setting and clearing the same bit twice = stuck. That’s
-why finish-FIFO bookkeeping is so picky (see bugs #3, #6).
+why finish-FIFO bookkeeping is so picky (see bugs #3, #6). The same
+fragility applies to **set timing**: these trackers must be set on the
+*arbitrated advance* (`chosen_arready`/`tb_advance`), never on the AXI
+slave-port accept (`req_arready = ~saved_arvalid`, which buffers a 2nd
+same-id request into the 1-deep skid while the 1st is still in flight).
+Setting `needs_rdata_table` on `req_arready` let two back-to-back same-id
+reads toggle the same id-bit twice → 0, so a writeback that retired before
+its paired fill saw "fill done" and cleared `inuse` a second time → stuck
+SET → the cache wedged on the next same-id/same-set read (bug #28).
 
 ---
 
