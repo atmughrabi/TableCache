@@ -111,6 +111,29 @@ async def test_prefill_race_no_extra_ar(dut):
     dut.s_araddr.value  = line_r
     dut.s_arid.value    = 2
     dut.s_arvalid.value = 1
+
+    # Concurrently serve the read, decoupled from the AW/W handshake waits
+    # below. Deassert s_arvalid on the FIRST accept (so a lingering AR is not
+    # re-served as a buffer hit once the fill lands) and capture its R data.
+    # This makes the functional check robust to the exact cycle the read AR
+    # fires: with the same-id serialization fix the read AR issues right after
+    # the prefill R, which can race the AW-handshake wait below.
+    read_result = {}
+    async def _serve_read():
+        for _ in range(400):
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.s_arvalid) and int(dut.s_arready):
+                break
+        await RisingEdge(dut.clk)
+        dut.s_arvalid.value = 0
+        for _ in range(100):
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.s_rvalid) and int(dut.s_rready) and int(dut.s_rid) == 2:
+                read_result["data"] = int(dut.s_rdata) & ((1 << NARROW_W) - 1)
+                return
+    read_task = cocotb.start_soon(_serve_read())
     # Wait for AW handshake.
     awseen = False
     for _ in range(50):
@@ -130,30 +153,14 @@ async def test_prefill_race_no_extra_ar(dut):
     dut.s_awvalid.value = 0
     dut.s_wvalid.value  = 0
 
-    # 2. s_ar is already asserted from step 1; just wait for the AR handshake.
-    arseen = False
-    for _ in range(200):
-        await RisingEdge(dut.clk)
-        await ReadOnly()
-        if int(dut.s_arvalid) and int(dut.s_arready):
-            arseen = True
-            break
-    assert arseen, "AR did not handshake within 200 cycles"
-    await RisingEdge(dut.clk)
-    dut.s_arvalid.value = 0
-
-    # 3. Wait for R for the read.
-    for _ in range(50):
-        await RisingEdge(dut.clk)
-        await ReadOnly()
-        if int(dut.s_rvalid) and int(dut.s_rready):
-            got = int(dut.s_rdata) & ((1 << NARROW_W) - 1)
-            exp_lo = line_r & 0xFFFF
-            exp    = int.from_bytes(seed[exp_lo:exp_lo + NARROW_B], "little")
-            assert got == exp, f"read mismatch: got=0x{got:08x} exp=0x{exp:08x}"
-            break
-    else:
-        assert False, "no R returned"
+    # 2+3. Await the concurrent read-server: it deasserts s_arvalid on the AR
+    #      handshake and captures the read's R data (correct value = seed).
+    await read_task
+    assert "data" in read_result, "no R returned for the user read"
+    exp_lo = line_r & 0xFFFF
+    exp    = int.from_bytes(seed[exp_lo:exp_lo + NARROW_B], "little")
+    assert read_result["data"] == exp, \
+        f"read mismatch: got=0x{read_result['data']:08x} exp=0x{exp:08x}"
     await Timer(200, "ns")
     mon.kill()
 

@@ -121,7 +121,7 @@ jobs:
         run: |
           . .venv/bin/activate
           set -e
-          for mod in test_narrow_shim test_shim_cache test_shim_throughput; do
+          for mod in test_narrow_shim test_shim_cache test_shim_throughput test_shim_multiread; do
             rm -rf sim_build sim_build_shim
             timeout 300 make MODULE=$mod
           done

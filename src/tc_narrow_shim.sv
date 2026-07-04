@@ -234,7 +234,8 @@ module tc_narrow_shim
                            & ~prefill_active;        // hold AR while prefill owns the bus
     assign ar_miss_accept = ~ar_hits_buffer  & m_arready
                            & ~rid_outstanding_q[s_arid]
-                           & ~prefill_ar_fire;        // prefill wins the wide AR slot
+                           & ~prefill_ar_fire         // prefill wins the wide AR slot
+                           & ~prefill_active;         // and holds the miss AR for the whole prefill
 
     assign s_arready = ar_buf_accept | ar_miss_accept;
 
@@ -288,7 +289,16 @@ module tc_narrow_shim
     end
 
     // Wide AR mux: prefill takes priority over the narrow miss path.
-    assign m_arvalid = prefill_ar_fire | (s_arvalid & ~ar_hits_buffer & ~prefill_active);
+    // The narrow-miss term must carry the SAME `~rid_outstanding_q[s_arid]` gate
+    // as `ar_miss_accept`/`s_arready` below: otherwise, while a same-id read is
+    // still in flight, the shim would keep asserting m_arvalid and the cache
+    // (which is 1-outstanding-per-id) could accept a SECOND same-id AR even
+    // though s_arready is held low -- clobbering the cache's per-id slot and
+    // returning the previous line's data ("one line off"). Gating here makes the
+    // wide AR and the narrow accept consistent so same-id reads truly serialize.
+    assign m_arvalid = prefill_ar_fire
+                     | (s_arvalid & ~ar_hits_buffer & ~prefill_active
+                        & ~rid_outstanding_q[s_arid]);
     assign m_araddr  = prefill_ar_fire
                      ? {prefill_tag_q, {ALIGN_LSB{1'b0}}}
                      : {s_araddr[ADDR_W-1:ALIGN_LSB], {ALIGN_LSB{1'b0}}};

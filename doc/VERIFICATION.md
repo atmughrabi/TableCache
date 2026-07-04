@@ -6,7 +6,7 @@ bug history.
 
 ## 1. Test inventory
 
-20 modules. Listed in roughly the order you'd add
+21 modules. Listed in roughly the order you'd add
 them when verifying from scratch. (`test_matrix` is a pytest aggregate of 44
 config cells; the others are direct cocotb modules.)
 
@@ -29,6 +29,7 @@ config cells; the others are direct cocotb modules.)
 | `test_narrow_shim` | 10 | shim alone against `AxiRam` |
 | `test_shim_latency` | 1 | shim cold/hot/write/merge cycle counts |
 | `test_shim_throughput` | 1 | sustained 1 beat/cycle hit rate |
+| `test_shim_multiread` | 2 | pipelined multi-outstanding reads through shim+cache: distinct-id overlap (peak>1, all correct) + same-id serialization (bug #26 regression) |
 | `test_eviction` | 2 | heavy aligned + non-aligned eviction round-trip; `WritebackMonitor` (each writeback burst covers one line) + `MemRangeMonitor` (mem AR/AW in cacheable range) |
 | `test_flush` | 7 | whole-cache by-index flush incl. multi-tag/all-ways + scattered high-tag (FIX-B tag coverage); writeback + range monitors |
 | `test_matrix` (pytest) | 44 | policy x ways x DB-latency x victim x CBOM smoke/random + eviction/flush enrichment + cacheable-range sweep (`ADDR_L`/`ADDR_H`, OMITTED_ADDR_W 0-3) |
@@ -428,6 +429,8 @@ Useful fixtures and patterns:
 | `WriteEvict` (snoop=0b101) | random, workload, cbom |
 | ACE-CBOM snoops | cbom, scoreboard, workload |
 | multiple IDs (=4) | random, graph_patterns, reset_recovery, shim-* |
+| multi-outstanding reads (distinct-id overlap + same-id serialize) | shim-multiread |
+| 1-outstanding-per-id contract (`inuse_stall` + shim `rid_outstanding`) | shim-multiread, shim-prefill-race |
 | back-pressure (default randomized) | random, scoreboard, workload, shim-* |
 | back-pressure (adversarial pause) | backpressure |
 | mid-burst reset | reset_recovery |
