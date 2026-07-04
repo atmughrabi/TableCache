@@ -31,6 +31,16 @@ module dut_cocotb
         parameter int BLOCK_W   = 32,
         parameter int READ_ID_WIDTH  = 4,
         parameter int WRITE_ID_WIDTH = 4,
+`ifdef TC_ADDR_L
+        parameter logic [31:0] ADDR_RANGE_L = `TC_ADDR_L,
+`else
+        parameter logic [31:0] ADDR_RANGE_L = 32'h80000000,
+`endif
+`ifdef TC_ADDR_H
+        parameter logic [31:0] ADDR_RANGE_H = `TC_ADDR_H,
+`else
+        parameter logic [31:0] ADDR_RANGE_H = 32'hFFFFFFFF,
+`endif
 `ifdef TC_DB_LATENCY
         parameter int DB_LATENCY     = `TC_DB_LATENCY,
 `else
@@ -175,7 +185,13 @@ module dut_cocotb
         input  logic [GRASP_HIGH_REGIONS*32-1:0]      grasp_high_addr_l,
         input  logic [GRASP_HIGH_REGIONS*32-1:0]      grasp_high_addr_h,
         input  logic [GRASP_MODERATE_REGIONS*32-1:0]  grasp_moderate_addr_l,
-        input  logic [GRASP_MODERATE_REGIONS*32-1:0]  grasp_moderate_addr_h
+        input  logic [GRASP_MODERATE_REGIONS*32-1:0]  grasp_moderate_addr_h,
+
+        // Debug: the FULL reconstructed mem-side addresses BEFORE the MEM_MASK
+        // fold below. Exposed so a testbench monitor can verify absolute address
+        // reconstruction (OMITTED_CONSTANT high bits) that MEM_MASK would hide.
+        output logic [31:0]                           dbg_m_araddr_full,
+        output logic [31:0]                           dbg_m_awaddr_full
     );
 
     // -- Slave-side: pack flat signals into ar_t/aw_t/w_t structs --
@@ -214,6 +230,8 @@ module dut_cocotb
     r_t  m_r;
     b_t  m_b;
     assign m_araddr   = m_ar.araddr & MEM_MASK;
+    assign dbg_m_araddr_full = m_ar.araddr;   // pre-mask, for range monitor
+    assign dbg_m_awaddr_full = m_aw.awaddr;   // pre-mask, for range monitor
     assign m_arlen    = m_ar.arlen;
     assign m_arsize   = m_ar.arsize;
     assign m_arburst  = m_ar.arburst;
@@ -246,6 +264,8 @@ module dut_cocotb
         .BLOCK_W        (BLOCK_W),
         .READ_ID_WIDTH  (READ_ID_WIDTH),
         .WRITE_ID_WIDTH (WRITE_ID_WIDTH),
+        .ADDR_RANGE_L   (ADDR_RANGE_L),
+        .ADDR_RANGE_H   (ADDR_RANGE_H),
         .DB_LATENCY     (DB_LATENCY),
         .INCLUDE_CBOM   (INCLUDE_CBOM),
         .INCLUDE_VICTIM (INCLUDE_VICTIM),

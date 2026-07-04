@@ -6,8 +6,9 @@ bug history.
 
 ## 1. Test inventory
 
-16 modules, 50 individual tests. Listed in roughly the order you'd add
-them when verifying from scratch.
+20 modules. Listed in roughly the order you'd add
+them when verifying from scratch. (`test_matrix` is a pytest aggregate of 44
+config cells; the others are direct cocotb modules.)
 
 | Module | Tests | Purpose |
 |---|---:|---|
@@ -28,7 +29,9 @@ them when verifying from scratch.
 | `test_narrow_shim` | 10 | shim alone against `AxiRam` |
 | `test_shim_latency` | 1 | shim cold/hot/write/merge cycle counts |
 | `test_shim_throughput` | 1 | sustained 1 beat/cycle hit rate |
-| `test_matrix` (pytest) | 22 | 5 policies x ways x DB-latency x victim x CBOM |
+| `test_eviction` | 2 | heavy aligned + non-aligned eviction round-trip; `WritebackMonitor` (each writeback burst covers one line) + `MemRangeMonitor` (mem AR/AW in cacheable range) |
+| `test_flush` | 7 | whole-cache by-index flush incl. multi-tag/all-ways + scattered high-tag (FIX-B tag coverage); writeback + range monitors |
+| `test_matrix` (pytest) | 44 | policy x ways x DB-latency x victim x CBOM smoke/random + eviction/flush enrichment + cacheable-range sweep (`ADDR_L`/`ADDR_H`, OMITTED_ADDR_W 0-3) |
 
 Each test file's module docstring explains what bug class it catches.
 Read the file directly; the source is the spec.
@@ -439,6 +442,7 @@ Useful fixtures and patterns:
 | replacement policy sweep | matrix |
 | victim cache on/off, CBOM on/off | matrix |
 | DB latency 1/2/3 | matrix |
+| cacheable-range sweep (`ADDR_L`/`ADDR_H`, OMITTED_ADDR_W 0-3 incl. base-0 full 4 GiB) | eviction, flush, matrix (range sweep); VIP (`VIP_ADDR_L=0`) |
 
 ## 6. What is not covered
 
@@ -454,4 +458,8 @@ for the residual-risk analysis and proposed Xilinx VIP plan. Headline gaps:
 - post-synth / post-route gate-level mismatches
 - multi-master arbitration shim
 - intermediate `BLOCK_W` (only 32 and 512 verified end-to-end)
-- `LINES`, `ID_W`, `ADDR_RANGE` sweeps beyond defaults
+- `LINES`, `ID_W` sweeps beyond defaults (`ADDR_RANGE` is now swept: cocotb
+  eviction/flush range matrix `ADDR_L`/`ADDR_H` at OMITTED_ADDR_W 0-3, plus VIP
+  `VIP_ADDR_L=0`; note the cocotb mem model folds high bits via `MEM_MASK`, so
+  absolute high-address bits are asserted by `MemRangeMonitor` on the pre-mask
+  `dbg_m_*addr_full` taps and end-to-end by the VIP against a full-range `AxiRam`)

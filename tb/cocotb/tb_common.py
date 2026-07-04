@@ -15,6 +15,13 @@ from cocotbext.axi import AxiBus, AxiMaster, AxiRam
 
 CLK_PERIOD_NS = 10
 
+# Cacheable base address the tests build transactions at. Mirrors the RTL
+# ADDR_RANGE_L (Makefile ADDR_L -> TC_ADDR_L). Default matches the cache's own
+# default [0x80000000,0xFFFFFFFF]. Set ADDR_L=0 for a base-0 full range. The
+# golden() pattern below only depends on addr[15:0], so it is BASE-independent.
+BASE = int(os.environ.get("TC_ADDR_L") or "0x80000000", 0)
+RANGE_H = int(os.environ.get("TC_ADDR_H") or "0xFFFFFFFF", 0)
+
 
 def golden(addr: int) -> int:
     return ((addr & 0xFFFF) << 16) | 0xCAFE
@@ -156,3 +163,48 @@ class WritebackMonitor:
 
     def check(self):
         assert not self.errors, "WritebackMonitor: " + " | ".join(self.errors)
+
+
+# ---------------------------------------------------------------------------
+# Memory-side absolute-address range monitor (enrichment)
+#
+# The dut_cocotb wrapper folds mem addresses through MEM_MASK (low 27 bits)
+# before the cocotb AxiRam sees them, so the masked m_araddr/m_awaddr CANNOT
+# reveal the reconstructed high bits (OMITTED_CONSTANT). This monitor instead
+# watches the PRE-MASK debug taps dbg_m_araddr_full / dbg_m_awaddr_full and
+# asserts every mem-side AR/AW lands inside the configured cacheable range
+# [range_l, range_h]. It is the fast-flow net for the base-0/full-range fix
+# (bug #25): a dropped or mis-placed OMITTED_CONSTANT sends the reconstructed
+# address outside the range and fails here, which the self-referential golden
+# scoreboard (folded + internally consistent) cannot catch on its own.
+# ---------------------------------------------------------------------------
+class MemRangeMonitor:
+    def __init__(self, dut, range_l: int = None, range_h: int = None):
+        self.dut = dut
+        self.range_l = range_l if range_l is not None else BASE
+        self.range_h = range_h if range_h is not None else RANGE_H
+        self.ar = 0
+        self.aw = 0
+        self.errors: list[str] = []
+
+    async def run(self):
+        while True:
+            await RisingEdge(self.dut.clk)
+            await ReadOnly()
+            if int(self.dut.m_arvalid) and int(self.dut.m_arready):
+                a = int(self.dut.dbg_m_araddr_full)
+                self.ar += 1
+                if not (self.range_l <= a <= self.range_h):
+                    self.errors.append(
+                        f"mem AR 0x{a:08x} outside cacheable range "
+                        f"[0x{self.range_l:08x},0x{self.range_h:08x}]")
+            if int(self.dut.m_awvalid) and int(self.dut.m_awready):
+                a = int(self.dut.dbg_m_awaddr_full)
+                self.aw += 1
+                if not (self.range_l <= a <= self.range_h):
+                    self.errors.append(
+                        f"mem AW 0x{a:08x} outside cacheable range "
+                        f"[0x{self.range_l:08x},0x{self.range_h:08x}]")
+
+    def check(self):
+        assert not self.errors, "MemRangeMonitor: " + " | ".join(self.errors[:8])

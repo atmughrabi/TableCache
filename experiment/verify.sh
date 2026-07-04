@@ -69,6 +69,32 @@ for mod in "${MODULES[@]}"; do
     fi
 done
 
+# ---- 1b. base-0 full-range guard (bug #25, OMITTED_ADDR_W=0) ----
+# The default range is OMITTED_ADDR_W=1; a base-0 full 4 GiB range is the case
+# that used to be un-elaboratable (H-L+1 overflow). Run the heavy eviction +
+# flush suites there so a regression in the range-decode/reconstruct math (or
+# the NAPOT/cast plumbing) fails the per-commit gate, not just nightly.
+echo ""
+echo "==== experiment/verify.sh: base-0 full-range guard (ADDR_L=0) ===="
+for mod in test_eviction test_flush; do
+    rm -rf sim_build results.xml
+    log="$OUT/${mod}_base0.log"
+    if eval "$KNOBS POLICY=$DEFAULT_POLICY MODULE=$mod ADDR_L=0 ADDR_H=0xFFFFFFFF make -s" > "$log" 2>&1; then
+        summary=$(grep -oE "TESTS=[0-9]+\s+PASS=[0-9]+\s+FAIL=[0-9]+\s+SKIP=[0-9]+" "$log" | head -1)
+        nfail=$(echo "$summary" | grep -oE "FAIL=[0-9]+" | sed 's/FAIL=//')
+        if [[ "${nfail:-1}" == "0" ]]; then
+            printf "  %-24s %s ✓\n" "${mod} (base-0)" "$summary"
+            pass=$((pass + 1))
+        else
+            printf "  %-24s %s ✗\n" "${mod} (base-0)" "$summary"
+            fail=$((fail + 1)); failed_modules+=("${mod}-base0")
+        fi
+    else
+        printf "  %-24s BUILD/SIM ERROR (see %s)\n" "${mod} (base-0)" "$log"
+        fail=$((fail + 1)); failed_modules+=("${mod}-base0")
+    fi
+done
+
 # ---- 2. GRASP mutation suite ----
 echo ""
 echo "==== experiment/verify.sh: GRASP mutation suite ===="

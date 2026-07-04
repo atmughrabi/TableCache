@@ -16,11 +16,10 @@ import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ReadOnly, Timer, with_timeout
-from tb_common import WritebackMonitor
+from tb_common import WritebackMonitor, MemRangeMonitor, BASE
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
 
 CLK_NS      = 10
-BASE        = 0x80000000
 BLOCK_BYTES = 4
 LINE_W      = int(os.environ.get("TC_LINE_W", "8"))
 LINE_BYTES  = LINE_W * BLOCK_BYTES
@@ -262,6 +261,7 @@ async def test_flush_multitag_all_ways(dut):
     await reset_dut(dut)
     master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
+    rangemon = MemRangeMonitor(dut); cocotb.start_soon(rangemon.run())
 
     SET = 5
     HIGH_TAG = 0x30
@@ -300,6 +300,7 @@ async def test_flush_multitag_all_ways(dut):
         got = int.from_bytes(op.data, "little")
         assert got == val, f"E6 read-back @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}"
     dut._log.info(f"[flush_multitag_all_ways] PASS: {WAYS_E6} high-tag ways flushed, AWs={aw_during}")
+    rangemon.check()   # every reconstructed writeback AW landed in the cacheable range
 
 
 @cocotb.test()
@@ -316,6 +317,7 @@ async def test_flush_scattered_multitag(dut):
     mon = WritebackMonitor(dut, line_w=LINE_W, mem_mask=MEM_MASK)
     cocotb.start_soon(mon.run())
     counter = MAwCounter(dut); cocotb.start_soon(counter.run())
+    rangemon = MemRangeMonitor(dut); cocotb.start_soon(rangemon.run())
 
     rng = random.Random(0xF10E)
     NSET = min(LINES, 8)
@@ -361,3 +363,4 @@ async def test_flush_scattered_multitag(dut):
         assert got == val, f"scattered read-back @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}"
     dut._log.info(f"[flush_scattered_multitag] PASS: {len(written)} scattered ways over "
                   f"{NSET} sets flushed+invalidated, writeback_bursts={mon.bursts}")
+    rangemon.check()   # every reconstructed writeback AW landed in the cacheable range

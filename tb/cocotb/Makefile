@@ -200,6 +200,18 @@ endif
 ifneq ($(GRASP_MODERATE_REGIONS),)
 EXTRA_ARGS += +define+TC_GRASP_MODERATE_REGIONS=$(GRASP_MODERATE_REGIONS)
 endif
+# ADDR_L / ADDR_H: cacheable address range (must be NAPOT). Only forwarded when
+# set so existing tests keep the default [0x80000000,0xFFFFFFFF] (OMITTED_ADDR_W=1).
+# Set ADDR_L=0 ADDR_H=0xFFFFFFFF for a base-0 full range (OMITTED_ADDR_W=0).
+# Values are normalized to a plain decimal literal so a 0x.. knob is legal Verilog.
+ifneq ($(ADDR_L),)
+ADDR_L_DEC := $(shell printf '%u' $(ADDR_L))
+EXTRA_ARGS += +define+TC_ADDR_L=$(ADDR_L_DEC)
+endif
+ifneq ($(ADDR_H),)
+ADDR_H_DEC := $(shell printf '%u' $(ADDR_H))
+EXTRA_ARGS += +define+TC_ADDR_H=$(ADDR_H_DEC)
+endif
 ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
 endif
@@ -219,6 +231,10 @@ export TC_RATIO_FULL := $(RATIO_FULL)
 export TC_LINES    := $(LINES)
 export TC_LINE_W   := $(LINE_W)
 export TC_WAYS     := $(WAYS)
+# Cacheable base: exported so tests build addresses at the configured range.
+# Empty unless ADDR_L is set; tb_common falls back to 0x80000000.
+export TC_ADDR_L   := $(ADDR_L)
+export TC_ADDR_H   := $(ADDR_H)
 ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache),)
 export TC_BLOCK_W  := $(BLOCK_W)
 endif

@@ -83,7 +83,7 @@ module victim_cache
     localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
     //33-bit span so a full 32-bit cached range (base-0 [0,0xFFFFFFFF]) does not
     //overflow H-L+1 to 0. OMITTED_ADDR_W==0 for a full-range cache.
-    localparam int unsigned RANGE_SPAN_LOG2 = $clog2(({1'b0, ADDR_RANGE_H} - {1'b0, ADDR_RANGE_L}) + 33'd1);
+    localparam int unsigned RANGE_SPAN_LOG2 = $clog2((33'(ADDR_RANGE_H) - 33'(ADDR_RANGE_L)) + 33'd1);
     localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
     localparam int unsigned CONSTANT_LOWER_W = $clog2(BLOCK_W/8);
     localparam int unsigned TAG_W = RANGE_SPAN_LOG2 - BLOCK_ADDR_W - CONSTANT_LOWER_W;

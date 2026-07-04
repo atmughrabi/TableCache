@@ -106,6 +106,16 @@ jobs:
           rm -rf sim_build
           timeout 300 make MODULE=test_random
 
+      - name: Base-0 full-range (bug #25 guard, OMITTED_ADDR_W=0)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          for mod in test_eviction test_flush; do
+            rm -rf sim_build
+            timeout 400 make MODULE=$mod ADDR_L=0 ADDR_H=0xFFFFFFFF
+          done
+
       - name: Shim regression (3 modules)
         working-directory: tb/cocotb
         run: |

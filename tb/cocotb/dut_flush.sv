@@ -52,7 +52,17 @@ module dut_flush
 `else
         parameter logic INCLUDE_VICTIM = 0,
 `endif
-        parameter int VICTIM_LINES = 8
+        parameter int VICTIM_LINES = 8,
+`ifdef TC_ADDR_L
+        parameter logic [31:0] ADDR_RANGE_L = `TC_ADDR_L,
+`else
+        parameter logic [31:0] ADDR_RANGE_L = 32'h80000000,
+`endif
+`ifdef TC_ADDR_H
+        parameter logic [31:0] ADDR_RANGE_H = `TC_ADDR_H
+`else
+        parameter logic [31:0] ADDR_RANGE_H = 32'hFFFFFFFF
+`endif
     ) (
         input  logic clk,
         input  logic rst,
@@ -153,7 +163,11 @@ module dut_flush
         input  logic                        m_bvalid,
         input  logic [1:0]                  m_bresp,
         input  logic [WRITE_ID_WIDTH:0]     m_bid,
-        output logic                        m_bready
+        output logic                        m_bready,
+
+        // Debug: FULL reconstructed mem-side addresses BEFORE the MEM_MASK fold.
+        output logic [31:0]                 dbg_m_araddr_full,
+        output logic [31:0]                 dbg_m_awaddr_full
     );
 
     localparam logic[READ_ID_WIDTH-1:0] FLUSH_ID = '1;
@@ -171,7 +185,7 @@ module dut_flush
         .LINE_W  (LINE_W),
         .BLOCK_W (BLOCK_W),
         .ID_W    (READ_ID_WIDTH),
-        .ADDR_BASE(32'h80000000)
+        .ADDR_BASE(ADDR_RANGE_L)
     ) flush_ctrl (
         .clk(clk), .rst(rst),
         .flush_req(flush_req), .flush_mode(flush_mode),
@@ -268,6 +282,8 @@ module dut_flush
     localparam logic [31:0] MEM_MASK = 32'h07FF_FFFF;
     ar_t m_ar_struct;  aw_t m_aw_struct;  w_t m_w_struct;  r_t m_r_struct;  b_t m_b_struct;
     assign m_araddr   = m_ar_struct.araddr & MEM_MASK;
+    assign dbg_m_araddr_full = m_ar_struct.araddr;   // pre-mask, for range monitor
+    assign dbg_m_awaddr_full = m_aw_struct.awaddr;   // pre-mask, for range monitor
     assign m_arlen    = m_ar_struct.arlen;
     assign m_arsize   = m_ar_struct.arsize;
     assign m_arburst  = m_ar_struct.arburst;
@@ -300,6 +316,8 @@ module dut_flush
         .BLOCK_W        (BLOCK_W),
         .READ_ID_WIDTH  (READ_ID_WIDTH),
         .WRITE_ID_WIDTH (WRITE_ID_WIDTH),
+        .ADDR_RANGE_L   (ADDR_RANGE_L),
+        .ADDR_RANGE_H   (ADDR_RANGE_H),
         .DB_LATENCY     (DB_LATENCY),
         .INCLUDE_CBOM   (INCLUDE_CBOM),
         .INCLUDE_VICTIM (INCLUDE_VICTIM),

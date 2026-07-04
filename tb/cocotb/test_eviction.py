@@ -22,9 +22,9 @@ import os
 import random
 import cocotb
 from cocotb.triggers import RisingEdge, with_timeout
-from tb_common import reset_dut, attach_master, attach_mem, golden, WritebackMonitor
+from tb_common import (reset_dut, attach_master, attach_mem, golden,
+                       WritebackMonitor, MemRangeMonitor, BASE)
 
-BASE        = 0x80000000
 BLOCK_BYTES = 4
 LINE_W      = int(os.environ.get("TC_LINE_W", "8"))
 LINE_BYTES  = LINE_W * BLOCK_BYTES
@@ -54,6 +54,8 @@ async def _run(dut, aligned: bool):
     master = attach_master(dut)
     mon = WritebackMonitor(dut, line_w=LINE_W, mem_mask=MEM_MASK)
     cocotb.start_soon(mon.run())
+    rangemon = MemRangeMonitor(dut)      # asserts mem AR/AW stay in cacheable range
+    cocotb.start_soon(rangemon.run())
 
     ref: dict[int, int] = {}
     targets = [(rng.randrange(NSET), rng.randrange(NTAG)) for _ in range(NTXN)]
@@ -77,9 +79,11 @@ async def _run(dut, aligned: bool):
             dut._log.error(f"stale @0x{addr:08x} got=0x{got:08x} exp=0x{exp:08x}")
 
     mon.check()          # every writeback burst covered exactly one line
+    rangemon.check()     # every mem AR/AW landed in the cacheable range
     dut._log.info(f"[evict {'aligned' if aligned else 'nonaligned'}] "
                   f"txns={NTXN} uniq={len(ref)} writeback_bursts={mon.bursts} "
-                  f"beats={mon.beats} miss={miss}")
+                  f"beats={mon.beats} miss={miss} "
+                  f"mem_ar={rangemon.ar} mem_aw={rangemon.aw}")
     assert mon.bursts > 0, "no evictions observed -- working set too small to test writeback"
     assert miss == 0, f"{miss}/{len(ref)} read-backs stale after heavy eviction"
 

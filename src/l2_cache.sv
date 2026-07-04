@@ -124,7 +124,7 @@ module l2_cache
     //Compute the cached-range span in 33-bit arithmetic so a FULL 32-bit range
     //(e.g. base-0 [0, 0xFFFFFFFF]) does not overflow H-L+1 to 0. RANGE_SPAN_LOG2
     //is the number of address bits the cache actually decodes (32 for full range).
-    localparam logic[32:0] RANGE_SPAN = ({1'b0, ADDR_RANGE_H} - {1'b0, ADDR_RANGE_L}) + 33'd1;
+    localparam logic[32:0] RANGE_SPAN = (33'(ADDR_RANGE_H) - 33'(ADDR_RANGE_L)) + 33'd1;
     localparam int unsigned RANGE_SPAN_LOG2 = $clog2(RANGE_SPAN);
     localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
     localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
@@ -138,7 +138,7 @@ module l2_cache
     initial begin
         assert ((RANGE_SPAN & (RANGE_SPAN - 33'd1)) == 33'd0)
         else $fatal(1, "l2_cache: cacheable range [0x%08h,0x%08h] span 0x%09h is not a power of two; ADDR_RANGE must be NAPOT.", ADDR_RANGE_L, ADDR_RANGE_H, RANGE_SPAN);
-        assert (({1'b0, ADDR_RANGE_L} & (RANGE_SPAN - 33'd1)) == 33'd0)
+        assert ((33'(ADDR_RANGE_L) & (RANGE_SPAN - 33'd1)) == 33'd0)
         else $fatal(1, "l2_cache: ADDR_RANGE_L=0x%08h not aligned to span 0x%09h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L, RANGE_SPAN);
     end
 
