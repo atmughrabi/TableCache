@@ -146,6 +146,11 @@ if command -v vivado >/dev/null 2>&1; then
         timeout 1800 "$HERE/../vip/run_vip.sh" > "$OUT/phase6_vip_512.log" 2>&1 || rc=$?
     log "PHASE 6 512/GRASP: rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_512.log" | tail -1)"
     [[ $rc -eq 0 ]] || fail=$((fail+1))
+    rc=0
+    VIP_BUILD="$OUT/vip_build_fullrange" VIP_ADDR_L=0 VIP_LINES=8 VIP_WAYS=4 VIP_LINE_W=8 VIP_POLICY=GRASP \
+        timeout 1200 "$HERE/../vip/run_vip.sh" > "$OUT/phase6_vip_fullrange.log" 2>&1 || rc=$?
+    log "PHASE 6 full-4GB range (base-0): rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_fullrange.log" | tail -1)"
+    [[ $rc -eq 0 ]] || fail=$((fail+1))
 else
     log "PHASE 6 SKIPPED: vivado not on PATH"
 fi

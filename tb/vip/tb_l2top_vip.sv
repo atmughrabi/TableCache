@@ -30,6 +30,14 @@ module tb_l2top_vip;
     localparam int BW    = 32;
     localparam int AW    = 32;
     localparam logic [31:0] BASE = 32'h8000_0000;
+    // Cacheable-range base. Default BASE ([BASE,0xFFFFFFFF], OMITTED_ADDR_W=1).
+    // Set VIP_ADDR_L=0 to exercise a base-0 FULL 4GB range [0,0xFFFFFFFF]
+    // (OMITTED_ADDR_W=0) -- the case that used to fail elaboration (bug #25).
+`ifdef TC_ADDR_L
+    localparam logic [31:0] CACHE_ADDR_L = `TC_ADDR_L;
+`else
+    localparam logic [31:0] CACHE_ADDR_L = BASE;
+`endif
 
     // Cache geometry / policy -- overridable via +define so the same tb can
     // run a small fast config or the GraphBlox-scale config (LINES=512, GRASP).
@@ -161,7 +169,7 @@ module tb_l2top_vip;
     assign cs_rready = route_to_flush ? flush_rready : s_rready;
 
     l2_top #(
-        .ADDR_L(BASE), .ADDR_H(32'hFFFF_FFFF),
+        .ADDR_L(CACHE_ADDR_L), .ADDR_H(32'hFFFF_FFFF),
         .WAYS(VWAYS), .LINES(VLINES), .LINE_W(VLINE_W), .DB_LATENCY(1),
         .REPLACEMENT_POLICY(VPOLICY), .INCLUDE_VICTIM(0), .INCLUDE_CBOM(1),
         .C_S00_AXI_ID_WIDTH(ID_W), .C_S00_AXI_DATA_WIDTH(BW), .C_S00_AXI_ADDR_WIDTH(AW)

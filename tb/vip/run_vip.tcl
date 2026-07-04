@@ -54,6 +54,7 @@ set defs {}
 if {[info exists ::env(VIP_LINES)]}  { lappend defs "TC_LINES=$::env(VIP_LINES)" }
 if {[info exists ::env(VIP_WAYS)]}   { lappend defs "TC_WAYS=$::env(VIP_WAYS)" }
 if {[info exists ::env(VIP_LINE_W)]} { lappend defs "TC_LINE_W=$::env(VIP_LINE_W)" }
+if {[info exists ::env(VIP_ADDR_L)]} { lappend defs "TC_ADDR_L=$::env(VIP_ADDR_L)" }
 if {[info exists ::env(VIP_POLICY)]} {
     array set pmap {LRU 0 FRQ 1 SECOND_CHANCE 2 RANDOM 3 SRRIP 4 GRASP 5}
     if {[info exists pmap($::env(VIP_POLICY))]} {

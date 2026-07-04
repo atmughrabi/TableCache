@@ -121,12 +121,20 @@ module l2_cache
     localparam int unsigned MAX_ADDR_HASH_WIDTH = 8; //Line addresses are hashed to at most this width
 
     //Derived parameters
-    localparam int unsigned OMITTED_ADDR_W = 32-$clog2(ADDR_RANGE_H-ADDR_RANGE_L+1);
+    //Compute the cached-range span in 33-bit arithmetic so a FULL 32-bit range
+    //(e.g. base-0 [0, 0xFFFFFFFF]) does not overflow H-L+1 to 0. RANGE_SPAN_LOG2
+    //is the number of address bits the cache actually decodes (32 for full range).
+    localparam int unsigned RANGE_SPAN_LOG2 = $clog2(({1'b0, ADDR_RANGE_H} - {1'b0, ADDR_RANGE_L}) + 33'd1);
+    localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
     localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
     localparam int unsigned LINE_ADDR_W = $clog2(LINES);
-    localparam int unsigned TAG_W = 32 - (32-$clog2(ADDR_RANGE_H-ADDR_RANGE_L+1)) - $clog2(LINES) - $clog2(LINE_W) - $clog2(BLOCK_W/8);
+    localparam int unsigned TAG_W = RANGE_SPAN_LOG2 - $clog2(LINES) - $clog2(LINE_W) - $clog2(BLOCK_W/8);
 
-    localparam logic[OMITTED_ADDR_W-1:0] OMITTED_CONSTANT = ADDR_RANGE_L[31-:OMITTED_ADDR_W];
+    //The fixed high bits of the cached range, held in place in a full 32-bit word
+    //(all-zero for a full-range cache where OMITTED_ADDR_W==0). Reconstructed
+    //addresses are `OMITTED_CONSTANT | {tag, line, block, 0}` (see below), which
+    //degrades cleanly when there are no omitted bits.
+    localparam logic[31:0] OMITTED_CONSTANT = ADDR_RANGE_L & (32'hFFFFFFFF << RANGE_SPAN_LOG2);
     localparam int unsigned LOG2_BLOCK_BYTES = $clog2(BLOCK_W/8);
     localparam int unsigned HASH_WIDTH = LINE_ADDR_W > MAX_ADDR_HASH_WIDTH ? MAX_ADDR_HASH_WIDTH : LINE_ADDR_W;
 
@@ -824,7 +832,7 @@ module l2_cache
     assign victim_invalidate = ar_fifo_valid & ar_fifo_data_out.cbom;
     assign victim_ar.arvalid = ar_fifo_valid & ~ar_fifo_data_out.cbom;
     assign victim_arid = ar_fifo_data_out.id;
-    assign victim_ar.araddr = {OMITTED_CONSTANT, ar_fifo_data_out.tag, ar_fifo_data_out.line, ar_fifo_data_out.block, {LOG2_BLOCK_BYTES{1'b0}}};
+    assign victim_ar.araddr = OMITTED_CONSTANT | 32'({ar_fifo_data_out.tag, ar_fifo_data_out.line, ar_fifo_data_out.block, {LOG2_BLOCK_BYTES{1'b0}}});
     assign victim_ar.arlen = 8'(LINE_W-1);
     assign victim_ar.arburst = |ar_fifo_data_out.block ? 2'b10 : 2'b01; //Incr when aligned
     assign victim_ar.arsize = 3'(LOG2_BLOCK_BYTES);
@@ -1307,7 +1315,7 @@ module l2_cache
         if (start_evict) begin
             evict_port <= next_evict_port;
             victim_awid <= db_out_id[next_evict_port];
-            victim_awaddr <= {OMITTED_CONSTANT, db_out_saved[next_evict_port].tag, db_out_saved[next_evict_port].line, db_out_saved[next_evict_port].block, {LOG2_BLOCK_BYTES{1'b0}}};
+            victim_awaddr <= OMITTED_CONSTANT | 32'({db_out_saved[next_evict_port].tag, db_out_saved[next_evict_port].line, db_out_saved[next_evict_port].block, {LOG2_BLOCK_BYTES{1'b0}}});
             uncacheable_write <= db_out_saved[next_evict_port].clean;
         end
     end

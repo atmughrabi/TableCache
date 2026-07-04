@@ -81,21 +81,19 @@ module victim_cache
 
     //Constants
     localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
-    localparam int unsigned OMITTED_ADDR_W = 32-$clog2(ADDR_RANGE_H-ADDR_RANGE_L+1);
+    //33-bit span so a full 32-bit cached range (base-0 [0,0xFFFFFFFF]) does not
+    //overflow H-L+1 to 0. OMITTED_ADDR_W==0 for a full-range cache.
+    localparam int unsigned RANGE_SPAN_LOG2 = $clog2(({1'b0, ADDR_RANGE_H} - {1'b0, ADDR_RANGE_L}) + 33'd1);
+    localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
     localparam int unsigned CONSTANT_LOWER_W = $clog2(BLOCK_W/8);
-    localparam int unsigned TAG_W = 32-OMITTED_ADDR_W-BLOCK_ADDR_W-CONSTANT_LOWER_W;
+    localparam int unsigned TAG_W = RANGE_SPAN_LOG2 - BLOCK_ADDR_W - CONSTANT_LOWER_W;
+    //Bit offset of the tag within a 32-bit address: {tag, block, byte-offset}.
+    localparam int unsigned TAG_LSB = CONSTANT_LOWER_W + BLOCK_ADDR_W;
 
     typedef logic[TAG_W-1:0] tag_t;
     typedef logic[BLOCK_ADDR_W-1:0] block_t;
     typedef logic[BLOCK_W-1:0] block_data_t;
     typedef logic[READ_ID_WIDTH-1:0] rid_t;
-
-    typedef struct packed {
-        logic[OMITTED_ADDR_W-1:0] upper_constant;
-        tag_t tag;
-        block_t block;
-        logic[CONSTANT_LOWER_W-1:0] lower_constant;
-    } addr_t;
 
     typedef logic[$clog2(LINES)-1:0] line_t;
     typedef logic[$bits(line_t)+$bits(block_t)-1:0] index_t;
@@ -115,10 +113,16 @@ module victim_cache
 
     ////////////////////////////////////////////////////
     //Implementation
-    addr_t r_addr;
-    addr_t w_addr;
+    logic[31:0] r_addr;
+    logic[31:0] w_addr;
     assign r_addr = cache_ar.araddr;
     assign w_addr = cache_aw.awaddr;
+    // Address fields by position (valid for OMITTED_ADDR_W==0, i.e. a full-range
+    // cache, where there are no fixed high bits): {tag, block, byte-offset}.
+    wire tag_t   r_tag   = r_addr[TAG_LSB +: TAG_W];
+    wire tag_t   w_tag   = w_addr[TAG_LSB +: TAG_W];
+    wire block_t r_block = r_addr[CONSTANT_LOWER_W +: BLOCK_ADDR_W];
+    wire block_t w_block = w_addr[CONSTANT_LOWER_W +: BLOCK_ADDR_W];
 
     ////////////////////////////////////////////////////
     //Replacement
@@ -154,7 +158,7 @@ module victim_cache
             end
         end
         if (cache_aw.awvalid & cache_awready & buffer_tag)
-            tags[replacement_index] <= w_addr.tag;
+            tags[replacement_index] <= w_tag;
     end
 
     //Hit detection
@@ -164,8 +168,8 @@ module victim_cache
         write_hit_one_hot = '0;
         hit_index = 'x;
         for (int i = 0; i < LINES; i++) begin
-            write_hit_one_hot[i] = tags[i] == w_addr.tag;
-            if (tags_valid[i] & tags[i] == r_addr.tag) begin
+            write_hit_one_hot[i] = tags[i] == w_tag;
+            if (tags_valid[i] & tags[i] == r_tag) begin
                 hit_one_hot[i] = 1;
                 hit_index = line_t'(i);
             end
@@ -191,7 +195,7 @@ module victim_cache
     assign pending_writes_data_in = '{
         buffer : buffer_tag,
         line : replacement_index,
-        block : w_addr.block
+        block : w_block
     };
     assign write_line = pending_writes_data_out.line;
 
@@ -249,7 +253,7 @@ module victim_cache
     assign pending_reads_data_in = '{
         id : cache_arid,
         line : hit_index,
-        block : r_addr.block
+        block : r_block
     };
 
     fifo #(.WIDTH($bits(pending_hit_t)), .FIFO_DEPTH(MAX_READ_PENDING)) pending_reads_inst (
