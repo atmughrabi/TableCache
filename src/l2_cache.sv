@@ -124,11 +124,23 @@ module l2_cache
     //Compute the cached-range span in 33-bit arithmetic so a FULL 32-bit range
     //(e.g. base-0 [0, 0xFFFFFFFF]) does not overflow H-L+1 to 0. RANGE_SPAN_LOG2
     //is the number of address bits the cache actually decodes (32 for full range).
-    localparam int unsigned RANGE_SPAN_LOG2 = $clog2(({1'b0, ADDR_RANGE_H} - {1'b0, ADDR_RANGE_L}) + 33'd1);
+    localparam logic[32:0] RANGE_SPAN = ({1'b0, ADDR_RANGE_H} - {1'b0, ADDR_RANGE_L}) + 33'd1;
+    localparam int unsigned RANGE_SPAN_LOG2 = $clog2(RANGE_SPAN);
     localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
     localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
     localparam int unsigned LINE_ADDR_W = $clog2(LINES);
     localparam int unsigned TAG_W = RANGE_SPAN_LOG2 - $clog2(LINES) - $clog2(LINE_W) - $clog2(BLOCK_W/8);
+
+    //ADDR_RANGE must be NAPOT (naturally aligned power of two): the decode assumes
+    //the span is 2^RANGE_SPAN_LOG2 and ADDR_RANGE_L is aligned to it. A non-NAPOT
+    //range would silently mis-decode (RANGE_SPAN_LOG2 rounds a non-power-of-two
+    //span up), so fail loudly instead. Base-0 full range [0,0xFFFFFFFF] is valid.
+    initial begin
+        assert ((RANGE_SPAN & (RANGE_SPAN - 33'd1)) == 33'd0)
+        else $fatal(1, "l2_cache: cacheable range [0x%08h,0x%08h] span 0x%09h is not a power of two; ADDR_RANGE must be NAPOT.", ADDR_RANGE_L, ADDR_RANGE_H, RANGE_SPAN);
+        assert (({1'b0, ADDR_RANGE_L} & (RANGE_SPAN - 33'd1)) == 33'd0)
+        else $fatal(1, "l2_cache: ADDR_RANGE_L=0x%08h not aligned to span 0x%09h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L, RANGE_SPAN);
+    end
 
     //The fixed high bits of the cached range, held in place in a full 32-bit word
     //(all-zero for a full-range cache where OMITTED_ADDR_W==0). Reconstructed
