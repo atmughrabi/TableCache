@@ -142,6 +142,16 @@ module l2_cache
         else $fatal(1, "l2_cache: ADDR_RANGE_L=0x%08h not aligned to span 0x%09h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L, RANGE_SPAN);
     end
 
+    // DB_LATENCY supported range (ELABORATION-time check so it fails the BUILD,
+    // not just a sim). The whole-cache by-index flush is only verified for
+    // DB_LATENCY<=2 (the recommended URAM/large-cache config); at deeper read
+    // pipelines a same-id flush stream (every CBOM reuses one FLUSH_ID) clobbers
+    // per-id databank/way_table state and hangs -- see bug #27. Regular
+    // reads/writes/evictions work at higher DB_LATENCY, but the flush does not.
+    if (DB_LATENCY < 1 || DB_LATENCY > 2) begin : gen_db_latency_guard
+        $fatal(1, "l2_cache: DB_LATENCY=%0d unsupported; must be 1..2 (whole-cache flush is not correct for DB_LATENCY>2, bug #27).", DB_LATENCY);
+    end
+
     //The fixed high bits of the cached range, held in place in a full 32-bit word
     //(all-zero for a full-range cache where OMITTED_ADDR_W==0). Reconstructed
     //addresses are `OMITTED_CONSTANT | {tag, line, block, 0}` (see below), which
