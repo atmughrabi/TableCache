@@ -693,11 +693,30 @@ module l2_cache
     logic req_fifo_full;
     logic ar_fifo_full;
     logic awid_fifo_full;
+    logic accept_conflict; //Incoming accept would collide with a same-cycle finish_clear (bug #29)
     assign inuse_stall = inuse_id_rdata | inuse_line_rdata;
     assign fifo_stall = req_fifo_full | ar_fifo_full;
 
-    assign chosen_awready = ~try_read & ~inuse_stall & ~fifo_stall & ~awid_fifo_full;
-    assign chosen_arready = try_read & ~inuse_stall & ~fifo_stall;
+    // Accept/finish same-cycle collision guard (bug #29, the invariant asserted
+    // by inuse_id/line_no_same_cycle_collide). inuse_id/inuse_line are XOR-toggle
+    // memories set on tb_advance and cleared on finish_clear. If a freshly
+    // accepted request's (in_id/in_hash) equals a finishing entry's
+    // (finish_id/finish_hash) in the SAME cycle, the bit is set AND cleared ->
+    // double-toggle -> nets to no-change -> stuck (the new request's occupancy is
+    // lost, wedging every later request to that id/set). The ~same_target guard
+    // only suppresses a finish RE-clearing an already-cleared (id,hash); it does
+    // NOT cover a new accept colliding with a finish. A multi-phase combined
+    // finish (bid->rid->wid, e.g. a read-miss evicting a dirty line) makes this
+    // reachable: an earlier phase drops inuse, so inuse_stall reads 0 and the new
+    // request would be accepted the same cycle a later phase clears the same
+    // id/hash. Defer the accept one cycle (the finish clears now; inuse is settled
+    // next cycle, when the request is accepted cleanly). finish_clear is transient
+    // and per-set finishes are serialized (inuse_line = 1 outstanding/set), so
+    // this never livelocks.
+    assign accept_conflict = finish_clear & ((in_id == finish_id) | (in_hash == finish_hash));
+
+    assign chosen_awready = ~try_read & ~inuse_stall & ~fifo_stall & ~awid_fifo_full & ~accept_conflict;
+    assign chosen_arready = try_read & ~inuse_stall & ~fifo_stall & ~accept_conflict;
     assign req_awready = ~saved_awvalid;
     assign req_arready = ~saved_arvalid;
 

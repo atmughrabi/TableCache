@@ -123,6 +123,28 @@ for dbl in 1 2; do
     fi
 done
 
+# ---- 1d. bug #29 guard: accept/finish same-cycle inuse collision (ASSERT=1) ----
+# Mixed read/write eviction stress with Verilator SVA checking ON so the
+# inuse_id/line_no_same_cycle_collide invariants are actually enforced.
+echo ""
+echo "==== experiment/verify.sh: bug #29 guard (accept/finish inuse collision, ASSERT=1) ===="
+rm -rf sim_build results.xml
+log="$OUT/inuse_race_assert.log"
+if eval "POLICY=$DEFAULT_POLICY MODULE=test_inuse_race LINES=16 WAYS=2 VICTIM=1 ASSERT=1 make -s" > "$log" 2>&1; then
+    summary=$(grep -oE "TESTS=[0-9]+\s+PASS=[0-9]+\s+FAIL=[0-9]+\s+SKIP=[0-9]+" "$log" | head -1)
+    nfail=$(echo "$summary" | grep -oE "FAIL=[0-9]+" | sed 's/FAIL=//')
+    if [[ "${nfail:-1}" == "0" ]]; then
+        printf "  %-24s %s ✓\n" "inuse_race (ASSERT)" "$summary"
+        pass=$((pass + 1))
+    else
+        printf "  %-24s %s ✗\n" "inuse_race (ASSERT)" "$summary"
+        fail=$((fail + 1)); failed_modules+=("inuse_race-assert")
+    fi
+else
+    printf "  %-24s BUILD/SIM ERROR (see %s)\n" "inuse_race (ASSERT)" "$log"
+    fail=$((fail + 1)); failed_modules+=("inuse_race-assert")
+fi
+
 # ---- 2. GRASP mutation suite ----
 echo ""
 echo "==== experiment/verify.sh: GRASP mutation suite ===="

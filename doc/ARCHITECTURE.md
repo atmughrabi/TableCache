@@ -213,6 +213,17 @@ reads toggle the same id-bit twice → 0, so a writeback that retired before
 its paired fill saw "fill done" and cleared `inuse` a second time → stuck
 SET → the cache wedged on the next same-id/same-set read (bug #28).
 
+The same double-toggle also bites in the **time** dimension: a fresh accept
+(`tb_advance`) and a `finish_clear` on the **same id/hash the same cycle**
+set-and-clear the bit → no-change → the new request's occupancy is lost →
+stuck. `~same_target` only suppresses a finish *re-clearing* an
+already-cleared `(id,hash)` — it does not cover accept-vs-finish. A combined
+multi-phase finish (`bid→rid→wid`) opens the window: an early phase drops
+`inuse` so `inuse_stall` reads 0, and the new accept lands on a later
+phase's clear. Guarded by `accept_conflict` (defer the accept one cycle when
+`finish_clear` targets the incoming id/hash) and asserted by
+`inuse_id/line_no_same_cycle_collide` (bug #29).
+
 ---
 
 ## 5. ASCII pipeline / data-path

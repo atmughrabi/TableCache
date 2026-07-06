@@ -139,6 +139,16 @@ jobs:
             timeout 300 make MODULE=test_burst_idle LINES=2 WAYS=2 DB_LATENCY=$dbl
           done
 
+      - name: Accept/finish inuse collision (bug #29 guard, ASSERT=1)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # Mixed-R/W eviction stress with Verilator SVA checking on, so the
+          # inuse_id/line_no_same_cycle_collide invariants are enforced.
+          rm -rf sim_build
+          timeout 400 make MODULE=test_inuse_race LINES=16 WAYS=2 VICTIM=1 ASSERT=1
+
       - name: VICTIM=1 path (smoke + cbom + victim directed)
         working-directory: tb/cocotb
         run: |

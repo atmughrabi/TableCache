@@ -182,6 +182,12 @@ EXTRA_ARGS += +define+TC_POLICY=$(POLICY) +define+TC_LINES=$(LINES) +define+TC_L
 ifdef DIAG
 EXTRA_ARGS += $(patsubst %,+define+%,$(DIAG))
 endif
+# Enable Verilator SVA checking (concurrent assert property). OFF by default
+# because the cocotb flow historically ran without it; ASSERT=1 turns on the
+# internal invariants (e.g. inuse_id_no_same_cycle_collide) as real failures.
+ifeq ($(ASSERT),1)
+EXTRA_ARGS += --assert
+endif
 # DATABANK_SDP + SDP_WRITE_INPUT_REG: only forward when explicitly set so
 # pre-existing tests that don't set them keep the historical defaults.
 ifneq ($(DATABANK_SDP),)

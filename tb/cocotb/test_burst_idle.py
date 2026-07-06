@@ -66,6 +66,7 @@ async def test_burst_idle_liveness(dut):
         dut.s_arlen.value   = 0            # single-word read
         dut.s_arsize.value  = ARSIZE
         dut.s_arburst.value = 1
+        dut.s_arcache.value = 0xF          # write-back read+write allocate (ASSERT=1)
 
     async def wait_ar_accept(limit=3000):
         await ReadOnly()
@@ -175,6 +176,7 @@ async def test_evict_burst_idle_liveness(dut):
     async def wr(addr, data):
         dut.s_awaddr.value = addr; dut.s_awid.value = 0; dut.s_awlen.value = 0
         dut.s_awsize.value = ARSIZE; dut.s_awburst.value = 1; dut.s_awvalid.value = 1
+        dut.s_awcache.value = 0xF          # write-back read+write allocate (ASSERT=1)
         for _ in range(3000):
             await ReadOnly()
             if int(dut.s_awready): break
@@ -210,6 +212,7 @@ async def test_evict_burst_idle_liveness(dut):
     def setup_ar(addr):
         dut.s_araddr.value = addr; dut.s_arid.value = 0; dut.s_arlen.value = 0
         dut.s_arsize.value = ARSIZE; dut.s_arburst.value = 1
+        dut.s_arcache.value = 0xF          # write-back read+write allocate (ASSERT=1)
 
     wb_before = wb[0]
     setup_ar(burst[0]); dut.s_arvalid.value = 1
