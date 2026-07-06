@@ -159,6 +159,20 @@ jobs:
             VICTIM=1 timeout 300 make MODULE=$mod
           done
 
+      - name: WAYS=1 direct-mapped (bug #30 build + correctness)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # WAYS=1 (the direct-mapped deployment config) must build under
+          # Verilator (POLICY_W + zero-width way-index guards) and function.
+          for mod in test_smoke test_eviction test_flush test_random; do
+            rm -rf sim_build
+            timeout 400 make MODULE=$mod WAYS=1
+          done
+          rm -rf sim_build
+          timeout 400 make MODULE=test_inuse_race WAYS=1 LINES=16 VICTIM=1 ASSERT=1
+
       - name: DATABANK_SDP=1 (UltraRAM mode smoke + correctness)
         working-directory: tb/cocotb
         run: |

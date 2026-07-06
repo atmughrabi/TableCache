@@ -65,7 +65,7 @@ module replacement_policy
 
     localparam int unsigned POLICY_W =
         POLICY == RANDOM ? 0 :
-        POLICY == LRU ? (WAYS <= 4 ? 2*(WAYS-1)-1 : WAYS*$clog2(WAYS)) :
+        POLICY == LRU ? (WAYS <= 1 ? 0 : (WAYS <= 4 ? 2*(WAYS-1)-1 : WAYS*$clog2(WAYS))) :
         POLICY == FRQ ? $clog2(WAYS) :
         POLICY == SECOND_CHANCE ? $clog2(WAYS)+WAYS :
         POLICY == SRRIP ? RRIP_WIDTH*WAYS :

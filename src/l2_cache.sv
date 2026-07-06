@@ -171,7 +171,7 @@ module l2_cache
     typedef logic[TAG_W-1:0] tag_t;
     typedef logic[LINE_ADDR_W-1:0] line_t;
     typedef logic[BLOCK_ADDR_W-1:0] block_t;
-    typedef logic[$clog2(WAYS)-1:0] way_t;
+    typedef logic[($clog2(WAYS) == 0 ? 0 : $clog2(WAYS)-1):0] way_t;
     typedef logic[BLOCK_W-1:0] block_data_t;
     typedef logic[BLOCK_W/8-1:0] wbe_t;
     typedef logic[$clog2(REQ_FIFO_DEPTH):0] fifo_count_t;

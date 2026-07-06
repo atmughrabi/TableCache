@@ -74,7 +74,7 @@ module l2_tagbank
         output logic out_hit,
         output logic out_dirty,
         output logic[TAG_W-1:0] out_tag,
-        output logic[$clog2(WAYS)-1:0] out_way //Either replacement or hit way
+        output logic[($clog2(WAYS) == 0 ? 0 : $clog2(WAYS)-1):0] out_way //Either replacement or hit way
     );
 
     ////////////////////////////////////////////////////
@@ -91,7 +91,7 @@ module l2_tagbank
     typedef logic[TAG_W-1:0] tag_t;
     typedef logic[$clog2(LINES)-1:0] line_t;
     typedef logic[$clog2(LINE_W)-1:0] block_t;
-    typedef logic[$clog2(WAYS)-1:0] way_t;
+    typedef logic[($clog2(WAYS) == 0 ? 0 : $clog2(WAYS)-1):0] way_t;
 
     typedef struct packed {
         logic valid;

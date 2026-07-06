@@ -55,7 +55,7 @@ module l2_databank
         input logic[BLOCK_ADDR_W-1:0] request_block,
         input logic[ID_W-1:0] request_id,
         input logic[BLOCK_ADDR_W-1:0] request_len,
-        input logic[$clog2(WAYS)-1:0] request_way,
+        input logic[($clog2(WAYS) == 0 ? 0 : $clog2(WAYS)-1):0] request_way,
         input logic request_fill,
         
         output logic ready,
@@ -72,7 +72,7 @@ module l2_databank
 
         //Lookup ports when data is ready at entrance to output FIFOs
         output logic[ID_W-1:0] lookup_id[2],
-        input logic[$clog2(WAYS)-1:0] lookup_way[2],
+        input logic[($clog2(WAYS) == 0 ? 0 : $clog2(WAYS)-1):0] lookup_way[2],
         input logic lookup_discard[2],
         input logic lookup_evict[2],
         input logic[SAVED_LEN-1:0] lookup_saved[2],
@@ -119,7 +119,7 @@ module l2_databank
         gen_t gen;
         logic evict;
         logic fill;
-        logic[$clog2(WAYS)-1:0] way;
+        logic[($clog2(WAYS) == 0 ? 0 : $clog2(WAYS)-1):0] way;
         block_t last_block;
         block_t original_last_block;
     } saved_t;
