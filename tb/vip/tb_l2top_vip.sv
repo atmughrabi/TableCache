@@ -61,6 +61,11 @@ module tb_l2top_vip;
 `else
     localparam int VPOLICY = 0;
 `endif
+`ifdef TC_VICTIM
+    localparam int VVICTIM = `TC_VICTIM;
+`else
+    localparam int VVICTIM = 0;
+`endif
     // The tag/valid array is cleared by an LFSR walk that needs >= LINES cycles;
     // the inuse toggle-memories need <= 256. Hold reset generously from geometry
     // (this is exactly the wrapper-side TC_INIT_CYCLES contract: scale with the
@@ -159,7 +164,14 @@ module tb_l2top_vip;
         end
     end
     assign s_arready = flush_active ? 1'b0 : cs_arready;
-    wire route_to_flush = flush_active & (cs_rid == FLUSH_ID);
+    // route_to_flush must be gated on cs_rvalid: cs_rid is a don't-care (X in
+    // 4-state) while cs_rvalid=0, so comparing it against FLUSH_ID during a
+    // flush's R-wait drives route_to_flush -> X -> cs_rready -> X. That X on the
+    // read-ready is exactly the "demux gated by flush_active is necessary but
+    // NOT sufficient" hazard: an X-sensitive interconnect breaks the flush
+    // R-beat handshake -> tc_flush_controller hangs in WAIT_R. Gating on
+    // cs_rvalid keeps rready defined (= s_rready) while waiting.
+    wire route_to_flush = flush_active & cs_rvalid & (cs_rid == FLUSH_ID);
     assign flush_r  = '{ rvalid: cs_rvalid & route_to_flush, rlast: cs_rlast, rresp: {2'b00, cs_rresp} };
     assign s_rvalid = cs_rvalid & ~route_to_flush;
     assign s_rid    = cs_rid;
@@ -171,7 +183,7 @@ module tb_l2top_vip;
     l2_top #(
         .ADDR_L(CACHE_ADDR_L), .ADDR_H(32'hFFFF_FFFF),
         .WAYS(VWAYS), .LINES(VLINES), .LINE_W(VLINE_W), .DB_LATENCY(1),
-        .REPLACEMENT_POLICY(VPOLICY), .INCLUDE_VICTIM(0), .INCLUDE_CBOM(1),
+        .REPLACEMENT_POLICY(VPOLICY), .INCLUDE_VICTIM(VVICTIM), .INCLUDE_CBOM(1),
         .C_S00_AXI_ID_WIDTH(ID_W), .C_S00_AXI_DATA_WIDTH(BW), .C_S00_AXI_ADDR_WIDTH(AW)
     ) dut (
         .s00_axi_aclk(aclk), .s00_axi_aresetn(aresetn),
@@ -266,7 +278,11 @@ module tb_l2top_vip;
                         cs_arvalid, cs_arready, cs_rvalid, cs_rready,
                         m_awvalid, m_awready, m_wvalid, m_wready, m_bvalid, m_bready,
                         m_arvalid, m_arready, m_rvalid, m_rready})) begin
-            $display("FAIL Xmon @%0t: a valid/ready handshake bit is X", $time); xmon_errors++;
+            $display("FAIL Xmon @%0t: a valid/ready handshake bit is X | s:aw v%b r%b w v%b r%b b v%b r%b | cs ar v%b r%b r v%b r%b | m:aw v%b r%b w v%b r%b b v%b r%b ar v%b r%b r v%b r%b",
+                $time, s_awvalid,s_awready,s_wvalid,s_wready,s_bvalid,s_bready,
+                cs_arvalid,cs_arready,cs_rvalid,cs_rready,
+                m_awvalid,m_awready,m_wvalid,m_wready,m_bvalid,m_bready,
+                m_arvalid,m_arready,m_rvalid,m_rready); xmon_errors++;
         end
         if (cs_arvalid && $isunknown({cs_araddr, cs_arlen, cs_arsize, cs_arsnoop})) begin
             $display("FAIL Xmon @%0t: s00 AR payload X while arvalid", $time); xmon_errors++; end
@@ -297,6 +313,21 @@ module tb_l2top_vip;
         aresetn = 1;
         repeat (20) @(posedge aclk);
         mon_active = 1;   // arm the 4-state X-monitor once the cold reset settled
+
+        // T0: COLD whole-cache flush BEFORE any warming traffic (all lines
+        // invalid). This is the GraphBlox Experimental-BFS blocker: on
+        // INCLUDE_VICTIM=1 the invalid-line by-index CBOM was reported to hang
+        // the tc_flush_controller in WAIT_R (its R-beat never completing). The
+        // warm T5 flush below does NOT cover it. Require flush_done within a bound.
+        flush_req = 1; @(posedge aclk); flush_req = 0;
+        for (int fcyc = 0; fcyc < 8*VLINES*VWAYS + 4000; fcyc++) begin
+            @(posedge aclk);
+            if (flush_done) break;
+        end
+        if (!flush_done) begin
+            $display("FAIL T0 COLD flush: flush_done never pulsed (cold+victim flush WEDGED in WAIT_R)"); errors++;
+        end else
+            $display("PASS T0 cold whole-cache flush completed");
 
         // Preload backing memory for the line we read cold (both words of the line).
         slv.mem_model.backdoor_memory_write_4byte(BASE + 32'h0, 32'hCAFE_BABE);

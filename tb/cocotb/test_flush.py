@@ -234,6 +234,39 @@ async def test_flush_cold_cache_cleaninvalid(dut):
     dut._log.info(f"[flush_cold_cache_cleaninvalid] PASS: mem ARs={n_ar}, mem AWs={mon.n}")
 
 
+@cocotb.test()
+async def test_flush_cold_cache_byindex(dut):
+    """Flush an unwarmed (cold) cache with the tc_flush_controller's ACTUAL
+    default mode = CleanInvalidByIndex (4'b1011) -- the whole-set/all-ways sweep
+    the deployment uses. A cold set is all-invalid so there is nothing to write
+    back, but every by-index CBOM must still return its R-beat so the controller
+    advances past WAIT_R and reaches FINISH (flush_done). Regression for the
+    GraphBlox Experimental-BFS wedge: on INCLUDE_VICTIM=1 the CBOM for an invalid
+    line was suspected to route to the victim path whose R never completes ->
+    controller hangs in WAIT_R on line 0. Run at the deployment geometry
+    (WAYS=1 LINES=16 LINE_W=8 VICTIM=1 CBOM=1)."""
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    mon = MAwCounter(dut); cocotb.start_soon(mon.run())
+    n_ar = 0
+    async def ar_mon():
+        nonlocal n_ar
+        while True:
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.m_arvalid) and int(dut.m_arready):
+                n_ar += 1
+    cocotb.start_soon(ar_mon())
+
+    # mode=0 -> controller uses DEFAULT_MODE = 4'b1011 (CleanInvalidByIndex).
+    # request_flush asserts flush_done pulsed within its timeout, else the
+    # controller wedged (WAIT_R) -- exactly the reported hang.
+    await request_flush(dut, mode=0)
+    await Timer(200, "ns")
+    assert mon.n == 0, f"cold by-index flush produced {mon.n} mem AWs (expected 0)"
+    dut._log.info(f"[flush_cold_cache_byindex] PASS: reached FINISH; mem ARs={n_ar}, mem AWs={mon.n}")
+
+
 # ---------------------------------------------------------------------------
 # FIX B regression (E6): whole-cache flush must clean ALL ways of a set,
 # regardless of the resident tag. Prior to the by-index (CleanInvalidByIndex,
