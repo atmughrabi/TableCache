@@ -392,6 +392,7 @@ every AXI bus of every wrapper; one combined regression produces zero
 | 25 | `l2_cache.sv`, `victim_cache.sv` | A **base-0 full 32-bit cacheable range** (`ADDR_RANGE_L=0, ADDR_RANGE_H=0xFFFFFFFF`) was un-elaboratable — and it is the natural config when memory is addressed from 0 (and the vendored wrapper's own default). `OMITTED_ADDR_W = 32 - $clog2(ADDR_RANGE_H-ADDR_RANGE_L+1)` computes the span in 32-bit, so `0xFFFFFFFF-0+1` overflows to 0 → `$clog2(0)=0` → `OMITTED_ADDR_W=32` → `araddr[31-32:2]=araddr[-1:2]` (VRFC 10-1219 at `l2_cache.sv:583`). Once that is fixed, a full range gives `OMITTED_ADDR_W=0`, and the `OMITTED_ADDR_W`-wide `OMITTED_CONSTANT` / victim `upper_constant` become `logic[-1:0]` (same shape as the `FIFO_AW=0` bug #22). | (1) Compute the span in 33-bit: `RANGE_SPAN_LOG2 = $clog2(({1'b0,ADDR_RANGE_H}-{1'b0,ADDR_RANGE_L})+33'd1)`, `OMITTED_ADDR_W = 32-RANGE_SPAN_LOG2`. (2) Make `OMITTED_CONSTANT` a full 32-bit value (fixed high bits in place, all-zero for a full range) and reconstruct addresses as `OMITTED_CONSTANT \| 32'({tag,line,block,0})`; in `victim_cache` replace the `addr_t` struct (zero-width `upper_constant`) with position-based part-selects. | `tb/vip` at `VIP_ADDR_L=0` (`[0,0xFFFFFFFF]`, `OMITTED_ADDR_W=0`) T1-T6 PASS in strict xsim; negative control (original RTL, same range) fails elaboration with VRFC 10-1219. No regression at the default `[0x80000000,0xFFFFFFFF]`. Nightly Phase 6 adds a full-range run. |
 | 26 | `tc_narrow_shim.sv` | **Same-id pipelined reads returned the previous read's line ("one line off").** `l2_cache` is strictly **1-outstanding-per-id** (a 2nd read sharing an in-flight id is stalled by `inuse_stall`, `l2_cache.sv:670-679`; the bundled AXI protocol checker also assumes 1-per-id). The shim's wide-side `m_arvalid = prefill_ar_fire \| (s_arvalid & ~ar_hits_buffer & ~prefill_active)` lacked the `~rid_outstanding_q[s_arid]` gate that `s_arready`/`ar_miss_accept` already carry. So while a same-id read was in flight the shim kept asserting `m_arvalid`; whenever the cache's `m_arready` was high it accepted a **second** same-id AR (though `s_arready` was held low), clobbering the cache's per-id line slot -> the fill returned the previous read's line. A master pipelining reads on a single id (all `rid=0`) hits this on every read after the first. Distinct-id multi-outstanding was always correct. | (1) Gate the narrow-miss term of `m_arvalid` on `~rid_outstanding_q[s_arid]`. (2) Add `~prefill_active` to `ar_miss_accept` (it only had the 1-cycle `~prefill_ar_fire`) so accept and wide-AR-issue stay consistent -- without it, a read accepted mid-prefill sets `rid_outstanding` without issuing a wide AR, and (1) then wedges it. | `tb/cocotb/test_shim_multiread.py`: distinct-id (8 concurrent, peak 3 in flight, all correct) + same-id (8 reads arid=0, serialized, all correct). Before the fix same-id returned 6/8 wrong and the shim->cache checker fired "AR re-issued for ID 0 while R burst pending"; after, 0 violations. Full shim regression green incl. `test_shim_prefill_race` (`TC_PROMOTE_WMISS=1`). |
 | 27 | `l2_databank.sv`, `l2_cache.sv` | **Whole-cache by-index flush hung at `DB_LATENCY>=2`** when a set held multiple dirty ways (`test_flush_multitag_all_ways`). The flush issues every CBOM with one reserved `FLUSH_ID`. The databank READING **premature-exit** (aborts a discarded speculative clean read-miss) matched the discarded pipeline beat to the current read by `info_pipeline[LATENCY].id == saved_request.id` — **id only**. At `DB_LATENCY>=2` the deeper read pipeline still holds a prior same-`FLUSH_ID` discarded beat when the next dirty-eviction read enters READING, so its id falsely matches and aborts the eviction read after ~`LATENCY` beats → the writeback burst never completes → the flush hangs. Only reproduced at `DB_LATENCY>=2` (the flush matrix ran only `DB_LATENCY=1`) and with multiple dirty ways of one set evicted back-to-back. Regular eviction works at higher `DB_LATENCY`. | Tag every read with a per-port **generation** `GEN_W=$clog2(LATENCY+2)` carried through the read info pipeline; match the premature-exit on **both** id and gen so a stale prior same-id beat cannot abort the current read. For `DB_LATENCY>2` a SEPARATE clobber remains (the id-keyed `way_table` lookup in `l2_cache`; its fix needs gen-threading through the 3-stage `l2_tagbank`), so **cap `DB_LATENCY<=2`** with an elaboration-time `$fatal` in `l2_cache` (the flush is unsupported there — fail the build loudly rather than hang). `DB_LATENCY=2` is the recommended URAM/large-cache config (`syn/vivado/sweep_results.md`). | `test_matrix` `ENRICH_MATRIX` gains `DB_LATENCY=2` cells (eviction + flush, 7/7 was an infinite hang); no regression at `DB_LATENCY=1` (28/28 across smoke/random/cbom/eviction/flush/workload/scoreboard/l2top/lru); `DB_LATENCY=3` build fails loudly with the cap message. |
+| 31 | `tc_narrow_shim.sv` | **Concurrent reads to consecutive lines that HIT returned the sibling block (off by one `BLOCK_W`).** The shim issues one wide AR with `arlen=0`, so it expects exactly one R beat. But when two reads to consecutive lines are paired in `l2_cache`'s 2-port databank read pipeline, a **hit** emits an extra R beat: first the requested block (`rlast=1`), then a spurious `rlast=0` beat carrying the line's *other* block. The shim forwarded a narrow response on **every** `m_rvalid`, so the trailing beat overwrote the response with the sibling block. Cold misses correctly return one beat, so it surfaced only under concurrent hits — reachable by any multi-id master (a protocol-checking `AxiMaster` rejects the extra beat as "unexpected burst ID") and exposed by the `READ_REORDER_DEPTH>1` reorder buffer (bugs #28-#30 are documented in `README.md`; the ARCHITECTURE prose covers #28/#29). | Classify a cache R beat: `cache_r_resp = m_rvalid & ~m_r_is_prefill & m_rlast` (forward) vs `cache_r_extra = m_rvalid & ~m_rlast` (drain only). Forward the narrow word **only** on `cache_r_resp`; add `cache_r_extra` to `m_rready` so trailing beats drain even under master back-pressure; gate the `rid_outstanding_q`/`cbom_outstanding_q` clears and the line-buffer fill on `& m_rlast`. The requested block always carries `rlast=1` (upper or lower block), so the word is always kept and the sibling always dropped; no-op for the normal single-beat response. | `test_shim_multiread::test_distinct_id_hit_concurrency` (plain multi-id master, concurrent hits, both blocks, DB_LATENCY 1/2) + `test_shim_reorder::test_reorder_out_of_order_completion`; full shim regression green. |
 
 All twenty-five fixes were caught by tests in this repo. Bugs #1-#3 by the
 upstream SV directed suite, #4-#6 by the cocotb random scoreboard at
@@ -499,6 +500,7 @@ parameterised; the cache RTL is unchanged.
 | Buffer never holds CBOM data | CBOM rdata is `'x`; `cbom_outstanding_q[rid]` suppresses lb_fill on that response, and a CBOM AR that matches lb invalidates it |
 | Buffer never holds aliased line | Tag = address bits `[ADDR_W-1:ALIGN_LSB]` (no hashing); only one line of state |
 | Write back-pressure can never lose a W beat | `s_wready` gated by `~aw_fifo_empty` AND `m_wready`; `s_awready` gated by `~aw_fifo_full` |
+| Exactly one narrow response per read (bug #31) | The shim issues `arlen=0` (one beat). A cache R beat is a response only when `rlast=1` (`cache_r_resp`); a trailing `rlast=0` beat (`cache_r_extra`, the databank's sibling-block leak on paired concurrent hits) is drained and dropped. The `rid_outstanding_q`/`cbom_outstanding_q` clears and the lb fill are all gated on `& m_rlast`. |
 
 ### 8.5 What is NOT in the shim
 
@@ -521,10 +523,36 @@ parameterised; the cache RTL is unchanged.
 | [test_narrow_shim.py](../tb/cocotb/test_narrow_shim.py) | 10 directed (cold/hot, buffer merge, AW FIFO, sub-word) + heavy random (50 000 ops × 5 seeds, byte-granular golden, 0 mismatches) |
 | [test_shim_latency.py](../tb/cocotb/test_shim_latency.py) | per-op latency: cold-R=4, hot-R=3, write=5, merged-R=3 cycles |
 | [test_shim_throughput.py](../tb/cocotb/test_shim_throughput.py) | hand-driven AR pump: 16 buffered reads in 18 cycles, ≈1 narrow R beat/cycle steady state |
+| [test_shim_multiread.py](../tb/cocotb/test_shim_multiread.py) | distinct-id multi-outstanding overlap + same-id serialise (bug #26); `test_distinct_id_hit_concurrency` — concurrent hits to consecutive lines, both blocks, DB_LATENCY 1/2 (bug #31 extra-beat drop) |
+| [test_shim_reorder.py](../tb/cocotb/test_shim_reorder.py) | `READ_REORDER_DEPTH>1`: a single engine id keeps N reads outstanding (engine + cache concurrency proven), delivered strictly in issue order; out-of-order cache completion (head miss + warm hits) reordered correctly |
 
-All run shim-only against `AxiRam` (no `l2_cache` in the loop). Wiring
-the shim in front of `l2_cache` end-to-end at `BLOCK_W=512` is the next
-verification milestone.
+All run shim-only against `AxiRam` (no `l2_cache` in the loop) except
+`test_shim_multiread`/`test_shim_reorder`, which run the shim in front of
+`l2_cache` end-to-end at `BLOCK_W=512`.
+
+### 8.7 Optional read reorder buffer (`READ_REORDER_DEPTH`)
+
+`tc_narrow_shim` is a thin wrapper. At the default `READ_REORDER_DEPTH=1` it
+instantiates `tc_narrow_shim_core` straight through — byte-identical to the
+historical shim, one read outstanding per id. At `READ_REORDER_DEPTH=N` (>1) it
+inserts `tc_read_reorder` on the read path so a **single-id, in-order engine**
+(one that cannot rotate `arid`) can still keep `N` reads outstanding:
+
+* Each engine AR is allocated a ROB slot; the slot index becomes a **distinct
+  core id** (`0..N-1`), so the cache — which serves one outstanding read per id —
+  overlaps up to `N` of them. The engine id is recorded per slot.
+* The ROB always accepts the core response (`c_rready=1`); it captures the narrow
+  word into the slot and marks it ready. Responses are presented to the engine
+  strictly from the **head** slot, in issue order, tagged with the recorded
+  engine id — so a cache that completes reads out of order (e.g. a warm hit behind
+  a cold miss) is reordered back to in-order, single-id completion.
+* Constraint: `READ_REORDER_DEPTH <= 2**ID_W - 1` (the top id is reserved for the
+  RMW prefill). An elaboration assert enforces it. Write/AW/W/B and CBOM paths are
+  unchanged (bypass straight to the core).
+
+The reorder buffer is what first drives concurrent same-engine reads through the
+cache, which is how the bug #31 sibling-block extra beat was found; both live in
+`tc_narrow_shim.sv` so a re-vendor is a single-file drop-in.
 
 ---
 

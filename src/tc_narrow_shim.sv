@@ -53,7 +53,14 @@
 //     downstream of the mux in your top if FMAX bites.
 // -----------------------------------------------------------------------------
 
-module tc_narrow_shim
+// NOTE: this is the shim CORE (the original tc_narrow_shim logic, unchanged).
+// The public `tc_narrow_shim` module lives at the bottom of this file: it is a
+// thin wrapper that, by default (READ_REORDER_DEPTH=1), instantiates this core
+// straight through, and when READ_REORDER_DEPTH>1 inserts a read-only in-order
+// reorder buffer (tc_read_reorder) in front of it so a single-id, in-order
+// engine can have >1 read outstanding. The core still sees 1-outstanding-per-id;
+// the reorder buffer spreads reads across distinct core ids and restores order.
+module tc_narrow_shim_core
     #(
         parameter int unsigned NARROW_W           = 32,
         parameter int unsigned BLOCK_W            = 512,
@@ -331,7 +338,7 @@ module tc_narrow_shim
                 rid_outstanding_q[s_arid] <= 1'b1;
             if (prefill_ar_fire & m_arready)
                 rid_outstanding_q[PREFILL_ID] <= 1'b1;
-            if (m_rvalid & m_rready)
+            if (m_rvalid & m_rready & m_rlast)
                 rid_outstanding_q[m_rid] <= 1'b0;
             // Buffer-served R drain also frees the id.
             if (buf_pend_valid_q & s_rready & ~m_rvalid)
@@ -370,14 +377,25 @@ module tc_narrow_shim
     assign cache_r_word = m_rdata[cache_r_sel*NARROW_W +: NARROW_W];
     assign buf_r_word   = lb_data  [buf_pend_off_q*NARROW_W +: NARROW_W];
 
+    // The shim issues arlen=0, so exactly ONE data beat completes a read: the
+    // requested block, which the cache always marks with rlast=1. Some cache
+    // configurations, when concurrent reads to consecutive lines are paired in
+    // the databank's 2-port pipeline, emit an EXTRA sibling-block beat (rlast=0)
+    // AFTER the requested block. The shim only asked for one block, so a trailing
+    // rlast=0 beat is DRAINED and DROPPED (never forwarded, never latched). This
+    // keeps the shim robust to that databank behavior regardless of latency and
+    // is a no-op for the normal single-beat (rlast=1) response.
+    wire cache_r_resp  = m_rvalid & ~m_r_is_prefill & m_rlast;   // real response
+    wire cache_r_extra = m_rvalid & ~m_rlast;                    // trailing beat: drain only
+
     always_comb begin
-        if (m_rvalid & ~m_r_is_prefill) begin
+        if (cache_r_resp) begin
             s_rdata  = cache_r_word;
             s_rresp  = m_rresp;
             s_rlast  = 1'b1;                       // single-beat
             s_rid    = m_rid;
             s_rvalid = 1'b1;
-        end else if (buf_pend_valid_q) begin
+        end else if (buf_pend_valid_q & ~m_rvalid) begin
             s_rdata  = buf_r_word;
             s_rresp  = 2'b00;
             s_rlast  = 1'b1;
@@ -391,10 +409,10 @@ module tc_narrow_shim
             s_rvalid = 1'b0;
         end
     end
-    // Drain wide R always: normal-R is forwarded to s_rvalid (and gated by
-    // s_rready); prefill-R is consumed internally even when the master is
-    // not asserting s_rready.
-    assign m_rready = s_rready | m_r_is_prefill;
+    // Drain wide R always: a real response (rlast=1) is gated by s_rready; prefill
+    // R is consumed internally; a trailing extra beat (rlast=0) is drained
+    // unconditionally so the cache advances even while the master backpressures.
+    assign m_rready = s_rready | m_r_is_prefill | cache_r_extra;
 
     // ---- line buffer update ----
     // The buffer is filled from a wide R completion AND from a same-line W
@@ -417,8 +435,11 @@ module tc_narrow_shim
             if (rst) begin
                 lb_valid <= 1'b0;
             end else begin
-                // 1) Fill on wide R handshake (non-CBOM only).
-                if (m_rvalid & m_rready & ~cbom_outstanding_q[m_rid]) begin
+                // 1) Fill on wide R handshake (non-CBOM only). Only the real
+                //    response beat (rlast=1) carries the requested block for
+                //    r_resp_tag; a trailing extra beat (rlast=0) is the sibling
+                //    block and must NOT be latched under the requested tag.
+                if (m_rvalid & m_rready & m_rlast & ~cbom_outstanding_q[m_rid]) begin
                     lb_valid <= 1'b1;
                     lb_tag   <= r_resp_tag;
                     lb_data  <= m_rdata;
@@ -470,7 +491,7 @@ module tc_narrow_shim
                 cbom_outstanding_q[s_arid] <= (s_arsnoop != 4'd0);
             if (prefill_ar_fire & m_arready)
                 cbom_outstanding_q[PREFILL_ID] <= 1'b0;
-            if (m_rvalid & m_rready)
+            if (m_rvalid & m_rready & m_rlast)
                 cbom_outstanding_q[m_rid]  <= 1'b0;
         end
     end
@@ -587,4 +608,289 @@ module tc_narrow_shim
     end
 `endif
 
+endmodule
+
+
+// ============================================================================
+// tc_read_reorder — in-order read expansion + completion-reorder buffer.
+// Lets a single-id, in-order engine keep up to DEPTH reads outstanding: it
+// allocates a distinct core-side id (the ROB slot index) per accepted read so
+// the 1-outstanding-per-id core/cache serves them concurrently, then restores
+// the engine's issue order on the response channel. READ ONLY -- writes/AW/W/B
+// bypass it. Reads are single-beat (the shim issues one wide AR per narrow
+// read and the core returns one already-sliced NARROW_W word), so each slot
+// holds exactly one narrow word.
+// ============================================================================
+module tc_read_reorder
+    #(
+        parameter int unsigned DEPTH    = 8,
+        parameter int unsigned NARROW_W = 32,
+        parameter int unsigned ADDR_W   = 32,
+        parameter int unsigned ID_W     = 4
+    )
+    (
+        input  logic                clk,
+        input  logic                rst,
+        // ---- engine side (single-id, in-order) ----
+        input  logic [ADDR_W-1:0]   e_araddr,
+        input  logic [7:0]          e_arlen,
+        input  logic [2:0]          e_arsize,
+        input  logic [1:0]          e_arburst,
+        input  logic [3:0]          e_arsnoop,
+        input  logic [ID_W-1:0]     e_arid,
+        input  logic                e_arvalid,
+        output logic                e_arready,
+        output logic [NARROW_W-1:0] e_rdata,
+        output logic [1:0]          e_rresp,
+        output logic                e_rlast,
+        output logic [ID_W-1:0]     e_rid,
+        output logic                e_rvalid,
+        input  logic                e_rready,
+        // ---- core side (distinct ids 0..DEPTH-1) ----
+        output logic [ADDR_W-1:0]   c_araddr,
+        output logic [7:0]          c_arlen,
+        output logic [2:0]          c_arsize,
+        output logic [1:0]          c_arburst,
+        output logic [3:0]          c_arsnoop,
+        output logic [ID_W-1:0]     c_arid,
+        output logic                c_arvalid,
+        input  logic                c_arready,
+        input  logic [NARROW_W-1:0] c_rdata,
+        input  logic [1:0]          c_rresp,
+        input  logic                c_rlast,   // always 1 (single-beat); unused
+        input  logic [ID_W-1:0]     c_rid,
+        input  logic                c_rvalid,
+        output logic                c_rready
+    );
+
+    localparam int unsigned PW = (DEPTH <= 1) ? 1 : $clog2(DEPTH);
+
+    logic [DEPTH-1:0]    slot_valid;   // allocated, not yet retired
+    logic [DEPTH-1:0]    slot_ready;   // response captured
+    logic [NARROW_W-1:0] slot_data [DEPTH];
+    logic [1:0]          slot_rresp[DEPTH];
+    logic [ID_W-1:0]     slot_eid  [DEPTH];
+
+    logic [PW-1:0]       head, tail;
+    logic [PW:0]         count;
+    wire                 full = (count == (PW+1)'(DEPTH));
+
+    // Accept an engine AR when a slot is free AND the core will take it; issue
+    // it to the core tagged with the slot index (a distinct core id).
+    assign e_arready = c_arready & ~full;
+    assign c_arvalid = e_arvalid & ~full;
+    assign c_araddr  = e_araddr;
+    assign c_arlen   = e_arlen;
+    assign c_arsize  = e_arsize;
+    assign c_arburst = e_arburst;
+    assign c_arsnoop = e_arsnoop;
+    assign c_arid    = ID_W'(tail);
+    wire   alloc     = e_arvalid & e_arready;
+
+    // Always accept the core response (its slot is guaranteed allocated).
+    assign c_rready  = 1'b1;
+    wire   cap       = c_rvalid & c_rready;
+    wire [PW-1:0] cap_slot = c_rid[PW-1:0];
+
+    // Present the engine response from the head slot, strictly in issue order.
+    assign e_rvalid  = slot_valid[head] & slot_ready[head];
+    assign e_rdata   = slot_data [head];
+    assign e_rresp   = slot_rresp[head];
+    assign e_rid     = slot_eid  [head];
+    assign e_rlast   = 1'b1;
+    wire   retire    = e_rvalid & e_rready;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            slot_valid <= '0;
+            slot_ready <= '0;
+            head       <= '0;
+            tail       <= '0;
+            count      <= '0;
+        end else begin
+            if (alloc) begin
+                slot_valid[tail] <= 1'b1;
+                slot_ready[tail] <= 1'b0;
+                slot_eid  [tail] <= e_arid;
+                tail <= (tail == PW'(DEPTH-1)) ? '0 : (tail + 1'b1);
+            end
+            if (cap) begin
+                slot_ready[cap_slot] <= 1'b1;
+                slot_data [cap_slot] <= c_rdata;
+                slot_rresp[cap_slot] <= c_rresp;
+            end
+            if (retire) begin
+                slot_valid[head] <= 1'b0;
+                slot_ready[head] <= 1'b0;
+                head <= (head == PW'(DEPTH-1)) ? '0 : (head + 1'b1);
+            end
+            unique case ({alloc, retire})
+                2'b10:   count <= count + 1'b1;
+                2'b01:   count <= count - 1'b1;
+                default: count <= count;
+            endcase
+        end
+    end
+endmodule
+
+
+// ============================================================================
+// tc_narrow_shim — public shim. Thin wrapper over tc_narrow_shim_core. Default
+// (READ_REORDER_DEPTH=1) instantiates the core straight through (identical to
+// the historical shim). READ_REORDER_DEPTH>1 inserts tc_read_reorder on the
+// read path so a single-id, in-order engine can keep >1 read outstanding while
+// still seeing strict in-order, single-id completion.
+// ============================================================================
+module tc_narrow_shim
+    #(
+        parameter int unsigned NARROW_W           = 32,
+        parameter int unsigned BLOCK_W            = 512,
+        parameter int unsigned ID_W               = 4,
+        parameter int unsigned ADDR_W             = 32,
+        parameter int unsigned MAX_OUTSTANDING_W  = 16,
+        parameter bit          ENABLE_LINE_BUFFER = 1'b1,
+        parameter bit          PROMOTE_WMISS_TO_RW = 1'b0,
+        // 1 = original 1-outstanding-per-id behavior (no reorder buffer).
+        // N>1 = up to N reads outstanding on a single engine id, spread across N
+        // distinct core ids (0..N-1) and reordered back to issue order. Must be
+        // <= 2**ID_W-1 (the top id is reserved for the PROMOTE_WMISS prefill).
+        parameter int unsigned READ_REORDER_DEPTH = 1
+    )
+    (
+        input  logic                      clk,
+        input  logic                      rst,
+
+        // ---------------- narrow slave (accelerator) ----------------
+        input  logic [ADDR_W-1:0]         s_araddr,
+        input  logic [7:0]                s_arlen,
+        input  logic [2:0]                s_arsize,
+        input  logic [1:0]                s_arburst,
+        input  logic [3:0]                s_arsnoop,
+        input  logic [ID_W-1:0]           s_arid,
+        input  logic                      s_arvalid,
+        output logic                      s_arready,
+
+        output logic [NARROW_W-1:0]       s_rdata,
+        output logic [1:0]                s_rresp,
+        output logic                      s_rlast,
+        output logic [ID_W-1:0]           s_rid,
+        output logic                      s_rvalid,
+        input  logic                      s_rready,
+
+        input  logic [ADDR_W-1:0]         s_awaddr,
+        input  logic [7:0]                s_awlen,
+        input  logic [2:0]                s_awsize,
+        input  logic [1:0]                s_awburst,
+        input  logic [2:0]                s_awsnoop,
+        input  logic [ID_W-1:0]           s_awid,
+        input  logic                      s_awvalid,
+        output logic                      s_awready,
+
+        input  logic [NARROW_W-1:0]       s_wdata,
+        input  logic [NARROW_W/8-1:0]     s_wstrb,
+        input  logic                      s_wlast,
+        input  logic                      s_wvalid,
+        output logic                      s_wready,
+
+        output logic [1:0]                s_bresp,
+        output logic [ID_W-1:0]           s_bid,
+        output logic                      s_bvalid,
+        input  logic                      s_bready,
+
+        // ---------------- wide master (TableCache front end) ----------------
+        output logic [ADDR_W-1:0]         m_araddr,
+        output logic [7:0]                m_arlen,
+        output logic [2:0]                m_arsize,
+        output logic [1:0]                m_arburst,
+        output logic [3:0]                m_arsnoop,
+        output logic [ID_W-1:0]           m_arid,
+        output logic                      m_arvalid,
+        input  logic                      m_arready,
+
+        input  logic [BLOCK_W-1:0]        m_rdata,
+        input  logic [1:0]                m_rresp,
+        input  logic                      m_rlast,
+        input  logic [ID_W-1:0]           m_rid,
+        input  logic                      m_rvalid,
+        output logic                      m_rready,
+
+        output logic [ADDR_W-1:0]         m_awaddr,
+        output logic [7:0]                m_awlen,
+        output logic [2:0]                m_awsize,
+        output logic [1:0]                m_awburst,
+        output logic [2:0]                m_awsnoop,
+        output logic [ID_W-1:0]           m_awid,
+        output logic                      m_awvalid,
+        input  logic                      m_awready,
+
+        output logic [BLOCK_W-1:0]        m_wdata,
+        output logic [BLOCK_W/8-1:0]      m_wstrb,
+        output logic                      m_wlast,
+        output logic                      m_wvalid,
+        input  logic                      m_wready,
+
+        input  logic [1:0]                m_bresp,
+        input  logic [ID_W-1:0]           m_bid,
+        input  logic                      m_bvalid,
+        output logic                      m_bready
+    );
+
+    localparam int unsigned NUM_IDS_W = 1 << ID_W;
+
+`ifndef ASSERT_OFF
+    initial begin
+        assert (READ_REORDER_DEPTH >= 1)
+            else $error("tc_narrow_shim: READ_REORDER_DEPTH must be >= 1");
+        // Slots use core ids 0..DEPTH-1; the top id (all-ones) is the prefill id.
+        assert (READ_REORDER_DEPTH <= NUM_IDS_W - 1)
+            else $error("tc_narrow_shim: READ_REORDER_DEPTH (%0d) must be <= 2**ID_W-1 (%0d); widen ID_W",
+                        READ_REORDER_DEPTH, NUM_IDS_W - 1);
+    end
+`endif
+
+    generate
+    if (READ_REORDER_DEPTH <= 1) begin : gen_passthrough
+        // Original behavior: the core drives the engine ports directly.
+        tc_narrow_shim_core #(
+            .NARROW_W(NARROW_W), .BLOCK_W(BLOCK_W), .ID_W(ID_W), .ADDR_W(ADDR_W),
+            .MAX_OUTSTANDING_W(MAX_OUTSTANDING_W), .ENABLE_LINE_BUFFER(ENABLE_LINE_BUFFER),
+            .PROMOTE_WMISS_TO_RW(PROMOTE_WMISS_TO_RW)
+        ) core_i (.*);
+    end else begin : gen_reorder
+        // Reorder buffer on the read path; write/AW/W/B bypass straight to core.
+        logic [ADDR_W-1:0] r2c_araddr;  logic [7:0] r2c_arlen;  logic [2:0] r2c_arsize;
+        logic [1:0]        r2c_arburst; logic [3:0] r2c_arsnoop; logic [ID_W-1:0] r2c_arid;
+        logic              r2c_arvalid, r2c_arready;
+        logic [NARROW_W-1:0] c2r_rdata; logic [1:0] c2r_rresp; logic c2r_rlast;
+        logic [ID_W-1:0]     c2r_rid;   logic c2r_rvalid, c2r_rready;
+
+        tc_read_reorder #(
+            .DEPTH(READ_REORDER_DEPTH), .NARROW_W(NARROW_W), .ADDR_W(ADDR_W), .ID_W(ID_W)
+        ) rob_i (
+            .clk(clk), .rst(rst),
+            .e_araddr(s_araddr), .e_arlen(s_arlen), .e_arsize(s_arsize), .e_arburst(s_arburst),
+            .e_arsnoop(s_arsnoop), .e_arid(s_arid), .e_arvalid(s_arvalid), .e_arready(s_arready),
+            .e_rdata(s_rdata), .e_rresp(s_rresp), .e_rlast(s_rlast), .e_rid(s_rid),
+            .e_rvalid(s_rvalid), .e_rready(s_rready),
+            .c_araddr(r2c_araddr), .c_arlen(r2c_arlen), .c_arsize(r2c_arsize), .c_arburst(r2c_arburst),
+            .c_arsnoop(r2c_arsnoop), .c_arid(r2c_arid), .c_arvalid(r2c_arvalid), .c_arready(r2c_arready),
+            .c_rdata(c2r_rdata), .c_rresp(c2r_rresp), .c_rlast(c2r_rlast), .c_rid(c2r_rid),
+            .c_rvalid(c2r_rvalid), .c_rready(c2r_rready)
+        );
+
+        tc_narrow_shim_core #(
+            .NARROW_W(NARROW_W), .BLOCK_W(BLOCK_W), .ID_W(ID_W), .ADDR_W(ADDR_W),
+            .MAX_OUTSTANDING_W(MAX_OUTSTANDING_W), .ENABLE_LINE_BUFFER(ENABLE_LINE_BUFFER),
+            .PROMOTE_WMISS_TO_RW(PROMOTE_WMISS_TO_RW)
+        ) core_i (
+            // read AR/R go through the reorder buffer
+            .s_araddr(r2c_araddr), .s_arlen(r2c_arlen), .s_arsize(r2c_arsize), .s_arburst(r2c_arburst),
+            .s_arsnoop(r2c_arsnoop), .s_arid(r2c_arid), .s_arvalid(r2c_arvalid), .s_arready(r2c_arready),
+            .s_rdata(c2r_rdata), .s_rresp(c2r_rresp), .s_rlast(c2r_rlast), .s_rid(c2r_rid),
+            .s_rvalid(c2r_rvalid), .s_rready(c2r_rready),
+            // everything else (clk/rst, write path, wide master) straight through
+            .*
+        );
+    end
+    endgenerate
 endmodule

@@ -197,6 +197,9 @@ module dut_shim_cache
         .ADDR_W   (32),
         .MAX_OUTSTANDING_W (16),
         .ENABLE_LINE_BUFFER(1'b1)
+`ifdef TC_READ_REORDER_DEPTH
+        , .READ_REORDER_DEPTH(`TC_READ_REORDER_DEPTH)
+`endif
     ) u_shim (
         .clk(clk), .rst(rst),
         // s_* from accelerator

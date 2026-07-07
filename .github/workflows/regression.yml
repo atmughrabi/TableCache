@@ -126,6 +126,19 @@ jobs:
             timeout 300 make MODULE=$mod
           done
 
+      - name: Read reorder buffer + concurrent-hit extra-beat drop (bug #31 guard)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # Reorder buffer: a single engine id keeps N reads outstanding, delivered
+          # in issue order incl. out-of-order cache completion (miss + warm hits).
+          rm -rf sim_build; timeout 300 make MODULE=test_shim_reorder READ_REORDER_DEPTH=8
+          # bug #31: concurrent hits to consecutive lines must drop the databank's
+          # trailing sibling-block beat. Guard both blocks (lower/upper) + DB lat 2.
+          rm -rf sim_build; timeout 300 make MODULE=test_shim_multiread TESTCASE=test_distinct_id_hit_concurrency BLOCK_OFF=64
+          rm -rf sim_build; timeout 300 make MODULE=test_shim_multiread TESTCASE=test_distinct_id_hit_concurrency DB_LATENCY=2
+
       - name: Same-id eviction-burst wedge (bug #28 guard)
         working-directory: tb/cocotb
         run: |

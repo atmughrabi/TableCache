@@ -364,3 +364,45 @@ async def test_same_id_backpressure(dut):
     This is the latency/backpressure hardening guard for the bug #26 fix."""
     await _run_same_id(dut, 8, bp_seed=0x5EED)
 
+
+
+# --- Regression: plain multi-id master, concurrent HITS to consecutive cache
+#     lines. Guards the "extra sibling-block beat" databank behavior: when two
+#     reads to consecutive lines are paired in the 2-port databank pipeline, a
+#     hit can emit an EXTRA beat (rlast=0) carrying the line's other block after
+#     the requested block (rlast=1). The shim must drop that trailing beat; if it
+#     forwards it, the master gets the wrong block ("unexpected burst ID" in a
+#     protocol-checking master, or silently wrong data). This is the read-side
+#     complement of the same-id bug #26 and the case the reorder buffer exposes.
+@cocotb.test()
+async def test_distinct_id_hit_concurrency(dut):
+    from cocotb.triggers import Event
+    BLK = BLOCK_B
+    line_w = int(os.environ.get("TC_LINE_W", "8"))
+    line_b = line_w * BLK               # full cache line (LINE_W blocks) in bytes
+    await reset_dut(dut)
+    master = AxiMaster(AxiBus.from_prefix(dut, "s"), dut.clk, dut.rst, reset_active_level=True)
+    _attach_mem(dut)
+    N = int(os.environ.get("PROBE_N", "8"))
+    lanes = max(1, BLK // NARROW_B)
+    block_off = int(os.environ.get("BLOCK_OFF", "0"))   # 0=lower block, BLK=upper
+    addrs = [(BASE | (i * line_b)) | block_off | ((i % lanes) * NARROW_B) for i in range(N)]
+    # 1) warm every line with a blocking read (distinct ids round-robin)
+    for i, a in enumerate(addrs):
+        op = await master.read(a, NARROW_B, arid=(i % 8))
+        g = int.from_bytes(op.data, "little")
+        assert g == golden(a), f"warm @0x{a:08x} got 0x{g:08x} exp 0x{golden(a):08x}"
+    # 2) now issue all N CONCURRENTLY on distinct ids -> all HITS, pipelined to
+    #    consecutive lines (pairs them in the databank's 2-port read pipeline)
+    evs = []
+    for i, a in enumerate(addrs):
+        ev = Event(); master.init_read(a, NARROW_B, arid=(i % 8), event=ev); evs.append((a, ev))
+    miss = 0
+    for a, ev in evs:
+        await ev.wait()
+        g = int.from_bytes(ev.data.data, "little")
+        if g != golden(a):
+            miss += 1
+            dut._log.error(f"concurrent HIT @0x{a:08x} got 0x{g:08x} exp 0x{golden(a):08x}")
+    assert miss == 0, f"{miss}/{N} concurrent distinct-id HITS returned wrong data"
+    dut._log.info(f"[distinct-id hits] {N} concurrent hits all correct (extra-beat drop OK)")

@@ -145,6 +145,31 @@ else
     fail=$((fail + 1)); failed_modules+=("inuse_race-assert")
 fi
 
+# ---- 1e. bug #31 guard: reorder buffer + concurrent-hit extra-beat drop ----
+# The reorder buffer lets a single engine id keep N reads outstanding; concurrent
+# hits to consecutive lines must drop the databank's trailing sibling-block beat.
+echo ""
+echo "==== experiment/verify.sh: bug #31 guard (reorder buffer + concurrent-hit extra-beat) ===="
+run_bug31 () {  # $1=label  $2=make-args
+    rm -rf sim_build results.xml
+    local log="$OUT/bug31_$1.log"
+    if eval "$2 make -s" > "$log" 2>&1; then
+        local summary nfail
+        summary=$(grep -oE "TESTS=[0-9]+\s+PASS=[0-9]+\s+FAIL=[0-9]+\s+SKIP=[0-9]+" "$log" | head -1)
+        nfail=$(echo "$summary" | grep -oE "FAIL=[0-9]+" | sed 's/FAIL=//')
+        if [[ "${nfail:-1}" == "0" ]]; then
+            printf "  %-24s %s ✓\n" "$1" "$summary"; pass=$((pass + 1))
+        else
+            printf "  %-24s %s ✗\n" "$1" "$summary"; fail=$((fail + 1)); failed_modules+=("bug31-$1")
+        fi
+    else
+        printf "  %-24s BUILD/SIM ERROR (see %s)\n" "$1" "$log"
+        fail=$((fail + 1)); failed_modules+=("bug31-$1")
+    fi
+}
+run_bug31 "reorder"     "MODULE=test_shim_reorder READ_REORDER_DEPTH=8"
+run_bug31 "hit-concur"  "MODULE=test_shim_multiread TESTCASE=test_distinct_id_hit_concurrency BLOCK_OFF=64"
+
 # ---- 2. GRASP mutation suite ----
 echo ""
 echo "==== experiment/verify.sh: GRASP mutation suite ===="
