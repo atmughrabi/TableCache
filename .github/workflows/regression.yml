@@ -97,6 +97,22 @@ jobs:
             timeout 300 make MODULE=$mod
           done
 
+      - name: Read every block of a line incl. odd (matched-width data-correctness)
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # Every LINE_W block (incl. odd blocks) must return correct data after a
+          # cold fill, across the GraphBlox-reported WAYS/VICTIM/DB_LATENCY sweep at
+          # BLOCK_W=32/LINE_W=8. Guards against a databank fill/read that drops odd
+          # blocks (the mem-side must match BLOCK_W; see README AXI4 limitations).
+          for w in 1 2 4 8; do
+            rm -rf sim_build
+            timeout 300 make MODULE=test_line_allwords WAYS=$w VICTIM=1 LINE_W=8 POLICY=LRU
+          done
+          rm -rf sim_build
+          timeout 300 make MODULE=test_line_allwords WAYS=1 VICTIM=1 LINE_W=8 POLICY=LRU DB_LATENCY=2
+
       - name: Random (short)
         working-directory: tb/cocotb
         env:

@@ -414,6 +414,22 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
     single-id, in-order completion. Requires `ID_W >= $clog2(N)+1` (the top id is
     reserved for the RMW prefill). See `test_shim_reorder.py`.
 - Bursts must stay within a cache line.
+- **The memory-side data width must equal `BLOCK_W`.** `l2_cache`/`l2_top` drive the
+  mem port at `BLOCK_W` bits and fill a line with `LINE_W` beats of `arsize =
+  $clog2(BLOCK_W/8)` (critical-word-first `WRAP` when the fill starts mid-line, else
+  `INCR`). If a **wider** backend (e.g. a 512-bit DRAM/interconnect) sits behind a
+  narrower cache mem port (e.g. `BLOCK_W=32`), the width converter **must** correctly
+  downsize that narrow `INCR`/`WRAP` fill burst. A converter that mishandles it
+  typically returns **X (or stale data) on alternating sub-word lanes** (e.g. every odd
+  32-bit word, `addr mod 8 == 4`) — a *width-conversion* fault, not a cache fault (the
+  databank returns every block correctly at matched width; see
+  `test_line_allwords.py`, which reads every block of a line incl. odd blocks across
+  the WAYS/VICTIM/DB_LATENCY sweep). **Recommended for a narrow front-end + wide
+  backend:** set `BLOCK_W = backend width` (so the cache mem port matches the backend —
+  no mem-side converter) and use `tc_narrow_shim` with `NARROW_W = front-end width` to
+  do the narrowing (the `test_shim_cache` regime: `BLOCK_W=512`, `NARROW_W=32`, all 16
+  sub-word lanes verified). Do **not** set `BLOCK_W = NARROW_W` (1:1 shim) and then
+  bolt a wider backend behind the narrow mem port through an ad-hoc bridge.
 - `INCR` and `WRAP` only; `FIXED` is not supported.
 - `AxLOCK` (EXCLUSIVE) is not supported.
 - `arsnoop`: `CleanInvalid` (`4'b1001`), `CleanShared` (`4'b1000`), `MakeInvalid` (`4'b1101`), `CleanInvalidByIndex` (`4'b1011`, whole-set/all-tags clean used by the flush controller); other encodings treated as regular reads.
