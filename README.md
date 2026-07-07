@@ -400,7 +400,13 @@ For mid-burst reset / DDR latency: see `test_reset_recovery.py` and
 
 ## AXI4 limitations
 
-- One outstanding request per ID.
+- One outstanding request per ID. This is intentional (the core tracks in-flight
+  requests in per-ID tables, no CAM). **To pipeline multiple concurrent reads,
+  spread them across distinct `arid`s** — the cache overlaps up to `2**READ_ID_WIDTH`
+  reads in flight (one per id), and `tc_narrow_shim` serializes only *within* an id.
+  A master that issues every read on a single id (e.g. `TC_S_ID_W=1` → always id 0)
+  gets strictly one read in flight; widen the id and rotate `arid` to get concurrency.
+  See `test_shim_multiread.py::test_distinct_id_multi_outstanding`.
 - Bursts must stay within a cache line.
 - `INCR` and `WRAP` only; `FIXED` is not supported.
 - `AxLOCK` (EXCLUSIVE) is not supported.
