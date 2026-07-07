@@ -37,7 +37,12 @@ module sdp_ram_rst
 
     ////////////////////////////////////////////////////
     //Simple dual port RAM with synchronous reset routine
-    //Holding reset high for $clog2(ADDR_WIDTH) cycles will set all entries to rst_value
+    //RESET CONTRACT: the reset LFSR walks one address per cycle, so hold `rst`
+    //high for AT LEAST 2**ADDR_WIDTH cycles (= the array depth) to set every entry
+    //to `rst_value`. Under-holding leaves some entries un-swept -> in 4-state sim
+    //they (and anything sourced from them, e.g. this RAM's a_en/a_addr consumers)
+    //read X. Callers scale their reset with the array depth (the wrapper's
+    //TC_INIT_CYCLES contract; VIP RESET_CYCLES = 4*LINES+1024; cocotb 2*LINES).
 
     logic[ADDR_WIDTH-1:0] rst_addr;
     lfsr #(.WIDTH(ADDR_WIDTH)) reset_lfsr (

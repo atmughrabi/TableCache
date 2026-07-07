@@ -1560,14 +1560,19 @@ module l2_cache
     // Bug #3 root cause: tb_advance and finish_clear toggling the same id
     // same cycle leaves inuse_id permanently set. Cache is structured so
     // this can't happen (finish_clear gated by ~same_target); this asserts
-    // a future refactor doesn't undo that.
+    // a future refactor doesn't undo that. The leading finish_valid term is a
+    // belt-and-suspenders X-guard: finish_clear already implies finish_valid, but
+    // in 4-state cold-init finish_id/in_id can be X for a few cycles and make the
+    // (in_id==finish_id) compare X -> a combinational gate can't suppress an
+    // X-driven property, so xsim reports a spurious $error. finish_valid is reset
+    // to 0 (empty FIFO), so masking on it keeps the check off until a real finish.
     inuse_id_no_same_cycle_collide:
         assert property (@(posedge clk) disable iff (rst)
-            !(tb_advance && finish_clear && (in_id == finish_id))
+            !(finish_valid && tb_advance && finish_clear && (in_id == finish_id))
         ) else $error("tb_advance + finish_clear same cycle on same id (bug #3 class)");
     inuse_line_no_same_cycle_collide:
         assert property (@(posedge clk) disable iff (rst)
-            !(tb_advance && finish_clear && (in_hash == finish_hash))
+            !(finish_valid && tb_advance && finish_clear && (in_hash == finish_hash))
         ) else $error("tb_advance + finish_clear same cycle on same hash (bug #6 class)");
     finish_clear_implies_valid:
         assert property (@(posedge clk) disable iff (rst)
