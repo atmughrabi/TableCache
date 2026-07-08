@@ -151,19 +151,15 @@ Notes:
 - `BLOCK_W` is the **cache word** and equals the AXI slave data width.
   If your accelerator drives a narrower port (e.g. 32-bit master into
   a 256-bit cache), use the `tc_narrow_shim` adapter (§2b).
-- **`BLOCK_W` is *also* the master (memory-side) data width.** The cache fills a
+- `BLOCK_W` is *also* the master (memory-side) data width. The cache fills a
   line with `LINE_W` beats of `arsize = log2(BLOCK_W/8)` (critical-word-first
-  `WRAP` mid-line, else `INCR`). If a **wider** backend (e.g. a 512-bit
-  HBM/DDR/interconnect) sits behind a narrower cache mem port, the width converter
-  **must** correctly downsize that narrow `INCR`/`WRAP` fill burst; a converter that
-  mishandles it returns **X / stale data on alternating sub-word lanes** (e.g. every
-  odd 32-bit word) — a width-conversion fault, not a cache fault. **Recommended for a
-  narrow FE + wide backend:** set `BLOCK_W = backend width` (cache mem port matches
-  the backend → no mem-side converter) and use the shim (§2b) with
-  `NARROW_W = FE width` to narrow the front end. Do **not** set `BLOCK_W = NARROW_W`
-  (1:1 shim) and then attach a wider backend behind the narrow mem port through an
-  ad-hoc bridge. Guard: `test_line_allwords.py` reads every block of a line (incl.
-  odd blocks) and proves the cache is correct at matched width.
+  `WRAP` mid-line, else `INCR`). A **wider** backend (e.g. a 512-bit
+  HBM/DDR/interconnect) behind a narrower mem port is fine through a standard AXI
+  width converter — ordinary AXI, not a corruption source. `tc_narrow_shim` supports
+  both `BLOCK_W = NARROW_W` (1:1, `RATIO=1`, e.g. a 32-bit FE straight through — the
+  historical odd-4-byte-offset-X bug at this geometry was a shim slice bug, #32, now
+  fixed and covered by strict-xsim `tb/vip/tb_shim_ratio1.sv`) and `BLOCK_W > NARROW_W`
+  (the shim narrows, e.g. `BLOCK_W=512, NARROW_W=32`, the `test_shim_cache` regime).
 
 ## 2. Choose your topology
 

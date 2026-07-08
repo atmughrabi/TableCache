@@ -80,3 +80,9 @@ needs >= LINES cycles), mirroring the wrapper-side `TC_INIT_CYCLES` contract.
 - `tb_l2top_vip.sv` — the AXI VIP testbench.
 - `run_vip.tcl` — builds the project + IPs and emits the sim scripts.
 - `run_vip.sh` — strips `--relax` and runs compile → elaborate → simulate.
+- `tb_shim_ratio1.sv` — standalone self-checking TB for `tc_narrow_shim` at
+  `BLOCK_W == NARROW_W` (`RATIO=1`): odd 4-byte-offset reads must not return X and
+  odd writes must land on the lane (bug #32). **Needs 4-state xsim** — Verilator
+  masks the out-of-range part-select this guards.
+- `run_shim_ratio1.sh` — lightweight `xvlog`/`xelab -R` runner for the above
+  (no Vivado project); prints `run_shim_ratio1: PASS`/`FAIL`.

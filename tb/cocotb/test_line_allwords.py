@@ -10,11 +10,12 @@ l2_cache path at BLOCK_W=32 (the block == the AXI beat, so "block i" is the
      structure field-by-field after the line is warm)
 
 Motivated by a GraphBlox report of "odd 32-bit words return X" at
-BLOCK_W==NARROW_W==32 with a 512-bit backend. That symptom is a mem-side
-32b<->512b WIDTH-CONVERSION bug (the cache's block width must equal its memory
-port width; see README "AXI4 limitations"). With a matched-width backend the
-cache is correct for every block, which this test proves across the reported
-WAYS/VICTIM/DB_LATENCY sweep.
+BLOCK_W==NARROW_W==32. NOTE: that symptom was ultimately the shim's RATIO=1 word-
+offset slice (bug #32, fixed in tc_narrow_shim.sv; covered by the strict-xsim
+tb/vip/tb_shim_ratio1.sv, since Verilator masks the out-of-range part-select).
+This test runs the BARE l2_cache path (no shim), so it does NOT exercise that shim
+slice; it is a complementary guard that the databank fill + per-block read return
+every block correctly across the reported WAYS/VICTIM/DB_LATENCY sweep.
 """
 from __future__ import annotations
 import os

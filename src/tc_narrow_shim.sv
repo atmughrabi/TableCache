@@ -171,6 +171,15 @@ module tc_narrow_shim_core
     localparam int unsigned BLOCK_B   = BLOCK_W  / 8;
     localparam int unsigned RATIO     = BLOCK_W  / NARROW_W;
     localparam int unsigned OFF_LSB   = $clog2(NARROW_B);
+    // Width of the sub-block word offset. At RATIO==1 (BLOCK_W==NARROW_W) a block
+    // IS one narrow word: there is NO sub-block offset ($clog2(1)=0 address bits
+    // select it). OFF_W is held at 1 only to keep the offset signals from becoming
+    // an illegal zero-width [-1:0]; the VALUE must be forced to 0 at every capture
+    // (see OFF_ZERO uses) — otherwise s_araddr[OFF_LSB +: 1] = s_araddr[2] leaks in
+    // and indexes m_rdata/lb_data/m_wdata[1*NARROW_W +: NARROW_W] = bits[63:32] of a
+    // BLOCK_W(=32)-wide word → OUT OF RANGE → X on odd 4-byte reads / lost odd
+    // writes. xsim (4-state) returns X here; Verilator masks it, so this needs the
+    // xsim shim TB to catch. (RATIO>1: the slice is in range and OFF_W=$clog2(RATIO).)
     localparam int unsigned OFF_W     = (RATIO == 1) ? 1 : $clog2(RATIO);
     localparam int unsigned ALIGN_LSB = $clog2(BLOCK_B);
     localparam int unsigned NUM_IDS   = 1 << ID_W;
@@ -322,7 +331,9 @@ module tc_narrow_shim_core
             rid_alignaddr_q[PREFILL_ID] <= {prefill_tag_q, {ALIGN_LSB{1'b0}}};
             rid_offset_q   [PREFILL_ID] <= '0;
         end else if (s_arvalid & ar_miss_accept) begin
-            rid_offset_q   [s_arid] <= s_araddr[OFF_LSB +: OFF_W];
+            // RATIO==1: no sub-block offset — force 0 (see OFF_W note) so the read
+            // slice m_rdata[sel*NARROW_W +: NARROW_W] stays in range.
+            rid_offset_q   [s_arid] <= (RATIO == 1) ? '0 : s_araddr[OFF_LSB +: OFF_W];
             rid_alignaddr_q[s_arid] <= m_araddr;
         end
     end
@@ -358,7 +369,8 @@ module tc_narrow_shim_core
             if (s_arvalid & ar_buf_accept) begin
                 buf_pend_valid_q <= 1'b1;
                 buf_pend_id_q    <= s_arid;
-                buf_pend_off_q   <= s_araddr[OFF_LSB +: OFF_W];
+                // RATIO==1: no sub-block offset — force 0 (buf_r_word slice in range).
+                buf_pend_off_q   <= (RATIO == 1) ? '0 : s_araddr[OFF_LSB +: OFF_W];
             end
         end
     end
@@ -553,7 +565,10 @@ module tc_narrow_shim_core
             aw_fifo_rptr <= '0;
         end else begin
             if (s_awvalid & s_awready) begin
-                aw_fifo_mem[aw_wr_idx] <= s_awaddr[OFF_LSB +: OFF_W];
+                // RATIO==1: no sub-block offset — force 0 so the write lane select
+                // m_wdata/m_wstrb[sel*NARROW_W +: NARROW_W] and the lb write-merge
+                // stay in range (else odd 4-byte writes are silently dropped).
+                aw_fifo_mem[aw_wr_idx] <= (RATIO == 1) ? '0 : s_awaddr[OFF_LSB +: OFF_W];
                 aw_fifo_tag[aw_wr_idx] <= s_awaddr[ADDR_W-1:ALIGN_LSB];
                 aw_fifo_wptr <= aw_fifo_wptr + 1'b1;
             end

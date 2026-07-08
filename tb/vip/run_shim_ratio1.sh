@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Strict-xsim (4-state) regression for the tc_narrow_shim RATIO=1 (BLOCK_W==NARROW_W)
+# offset bug (bug #32). At RATIO=1 a block IS one narrow word, so the sub-block word
+# offset must be 0; a leaked address bit 2 indexes m_rdata/lb_data/m_wdata out of
+# range -> X on odd 4-byte reads / dropped odd writes. Verilator MASKS the
+# out-of-range part-select, so this can only be observed under xsim.
+#
+#   ./tb/vip/run_shim_ratio1.sh
+#
+# Exits non-zero (and prints FAIL) if any odd-offset read returns X or any odd
+# write is dropped. Requires Vivado/xsim on PATH (source settings64.sh first).
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
+BUILD="${SHIM_R1_BUILD:-$HERE/build_shim_ratio1}"
+
+command -v xvlog >/dev/null 2>&1 || { echo "ERROR: xvlog not on PATH (source Vivado settings64.sh)"; exit 2; }
+
+rm -rf "$BUILD"; mkdir -p "$BUILD"; cd "$BUILD"
+
+xvlog -sv "$REPO/src/tc_narrow_shim.sv" "$HERE/tb_shim_ratio1.sv" >/dev/null
+
+OUT="$(xelab tb_shim_ratio1 -timescale 1ns/1ps -R 2>&1)"
+echo "$OUT" | grep -iE "ok |FAIL|PASS|TIMEOUT" || true
+
+if echo "$OUT" | grep -q "TB_SHIM_RATIO1: PASS"; then
+    echo "run_shim_ratio1: PASS"
+    exit 0
+fi
+echo "run_shim_ratio1: FAIL (odd-offset read returned X or odd write dropped -- bug #32)"
+exit 1
