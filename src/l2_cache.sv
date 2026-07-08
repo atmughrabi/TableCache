@@ -1557,22 +1557,33 @@ module l2_cache
         assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (&req_ar.arcache)) else $error("Reads must be write-back read and write allocate");
 
     // ---- Internal invariants (catch bug #2/#3/#6-class regressions) ----
-    // Bug #3 root cause: tb_advance and finish_clear toggling the same id
-    // same cycle leaves inuse_id permanently set. Cache is structured so
-    // this can't happen (finish_clear gated by ~same_target); this asserts
-    // a future refactor doesn't undo that. The leading finish_valid term is a
-    // belt-and-suspenders X-guard: finish_clear already implies finish_valid, but
-    // in 4-state cold-init finish_id/in_id can be X for a few cycles and make the
-    // (in_id==finish_id) compare X -> a combinational gate can't suppress an
-    // X-driven property, so xsim reports a spurious $error. finish_valid is reset
-    // to 0 (empty FIFO), so masking on it keeps the check off until a real finish.
+    // Bug #3/#6 root cause: tb_advance and finish_clear toggling the same id/hash
+    // the same cycle leaves inuse_id/inuse_line permanently set. The accept_conflict
+    // gate (bug #29, ~line 716) makes this structurally impossible: it forces
+    // chosen_ar/awready (hence tb_advance) to 0 whenever finish_clear collides with
+    // the incoming (in_id/in_hash). These assertions prove a future refactor doesn't
+    // undo that. Because accept_conflict and the assertions read the SAME operands,
+    // a KNOWN-value collision can never make tb_advance=1 -> the property can only
+    // "fail" when an operand is X (4-state). That is NOT a real collision: in cold
+    // init or when an upstream master briefly drives an X arid/araddr (in_id/in_hash
+    // X) or a finish entry is X, (in_id==finish_id) evaluates to X and !(...) = X,
+    // which xsim reports as a spurious $error even though finish_valid is a real 1
+    // (so the earlier finish_valid-only guard did NOT suppress it). Guard the compare
+    // on all four operands being known ($isunknown, same idiom as the fifo.sv
+    // over/underflow SVAs, bug #24): X -> vacuous pass; a genuine known-value collision
+    // (e.g. accept_conflict removed) still fires. tb_advance depends on all four
+    // operands via accept_conflict, so all four must be known to evaluate it cleanly.
+    wire inuse_operands_known = ~$isunknown(in_id)   & ~$isunknown(finish_id)
+                              & ~$isunknown(in_hash) & ~$isunknown(finish_hash);
     inuse_id_no_same_cycle_collide:
         assert property (@(posedge clk) disable iff (rst)
-            !(finish_valid && tb_advance && finish_clear && (in_id == finish_id))
+            (finish_valid && finish_clear && tb_advance && inuse_operands_known)
+            |-> (in_id != finish_id)
         ) else $error("tb_advance + finish_clear same cycle on same id (bug #3 class)");
     inuse_line_no_same_cycle_collide:
         assert property (@(posedge clk) disable iff (rst)
-            !(finish_valid && tb_advance && finish_clear && (in_hash == finish_hash))
+            (finish_valid && finish_clear && tb_advance && inuse_operands_known)
+            |-> (in_hash != finish_hash)
         ) else $error("tb_advance + finish_clear same cycle on same hash (bug #6 class)");
     finish_clear_implies_valid:
         assert property (@(posedge clk) disable iff (rst)
