@@ -22,12 +22,25 @@ rm -rf "$BUILD"; mkdir -p "$BUILD"; cd "$BUILD"
 
 xvlog -sv "$REPO/src/tc_narrow_shim.sv" "$HERE/tb_shim_ratio1.sv" >/dev/null
 
-OUT="$(xelab tb_shim_ratio1 -timescale 1ns/1ps -R 2>&1)"
-echo "$OUT" | grep -iE "ok |FAIL|PASS|TIMEOUT" || true
+# Sweep RATIO=1 at several widths (BLOCK_W==NARROW_W) to prove the fix is
+# width-independent, not tied to 32-bit. Override the TB params via -generic_top.
+WIDTHS="${SHIM_R1_WIDTHS:-32 64 128}"
+fails=0
+for W in $WIDTHS; do
+    OUT="$(xelab tb_shim_ratio1 -timescale 1ns/1ps \
+              -generic_top "NARROW_W=$W" -generic_top "BLOCK_W=$W" -R 2>&1)"
+    if echo "$OUT" | grep -q "TB_SHIM_RATIO1: PASS"; then
+        echo "  NARROW_W=BLOCK_W=$W : PASS"
+    else
+        echo "  NARROW_W=BLOCK_W=$W : FAIL"
+        echo "$OUT" | grep -iE "FAIL|TIMEOUT|read 0x|write 0x" | head
+        fails=$((fails+1))
+    fi
+done
 
-if echo "$OUT" | grep -q "TB_SHIM_RATIO1: PASS"; then
-    echo "run_shim_ratio1: PASS"
+if [ "$fails" -eq 0 ]; then
+    echo "run_shim_ratio1: PASS (widths: $WIDTHS)"
     exit 0
 fi
-echo "run_shim_ratio1: FAIL (odd-offset read returned X or odd write dropped -- bug #32)"
+echo "run_shim_ratio1: FAIL ($fails width(s) -- odd-offset read X or odd write dropped, bug #32)"
 exit 1

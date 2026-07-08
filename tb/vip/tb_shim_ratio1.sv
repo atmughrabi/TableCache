@@ -3,9 +3,19 @@
 // place data on the (single) 32-bit lane. Verilator masks the out-of-range slice,
 // so this must run under xsim (4-state) to be meaningful.
 module tb_shim_ratio1;
-    localparam int NARROW_W = 32;
-    localparam int BLOCK_W  = 32;   // RATIO = 1
+    // Overridable via xelab -generic_top so the RATIO=1 slice bug is proven at
+    // multiple widths (BLOCK_W==NARROW_W). "odd word" generalizes: the offset the
+    // buggy capture leaked is address bit $clog2(NARROW_B), so consecutive narrow
+    // words (NARROW_B apart) alternate the leaked bit.
+    parameter int NARROW_W = 32;
+    parameter int BLOCK_W  = 32;   // RATIO = 1 (must equal NARROW_W)
     localparam int ID_W     = 4;
+    localparam int NB       = NARROW_W/8;   // narrow bytes; leaked bit = $clog2(NB)
+
+    // NARROW_W-wide, address-dependent data so a mis-slice shows up as X/mismatch.
+    function automatic logic [NARROW_W-1:0] genw(input logic [31:0] a);
+        genw = {(NARROW_W/32){a | 32'hCAFE_0000}};
+    endfunction
     localparam int ADDR_W   = 32;
 
     logic clk = 0, rst = 1;
@@ -50,7 +60,7 @@ module tb_shim_ratio1;
         // m_arready high up front.
         @(posedge clk);
         m_arready <= 1'b1; s_rready <= 1'b1;
-        s_araddr <= addr; s_arid <= '0; s_arlen <= 8'd0; s_arsize <= 3'd2;
+        s_araddr <= addr; s_arid <= '0; s_arlen <= 8'd0; s_arsize <= 3'($clog2(NB));
         s_arburst <= 2'b01; s_arsnoop <= '0; s_arvalid <= 1'b1;
         // wait AR accept
         do @(posedge clk); while (!s_arready);
@@ -81,7 +91,7 @@ module tb_shim_ratio1;
         // Issue one narrow write; capture the wide lane the shim drives; check it.
         @(posedge clk);
         m_wready <= 1'b1; m_awready <= 1'b1; s_bready <= 1'b1;
-        s_awaddr <= addr; s_awid <= '0; s_awlen <= 8'd0; s_awsize <= 3'd2;
+        s_awaddr <= addr; s_awid <= '0; s_awlen <= 8'd0; s_awsize <= 3'($clog2(NB));
         s_awburst <= 2'b01; s_awsnoop <= 3'b101; s_awvalid <= 1'b1;
         do @(posedge clk); while (!s_awready);
         s_awvalid <= 1'b0;
@@ -115,16 +125,15 @@ module tb_shim_ratio1;
         rst <= 1'b0;
         repeat (4) @(posedge clk);
 
-        // READS: even (bit2=0) and ODD (bit2=1) 4-byte offsets. Pre-fix the ODD
-        // ones slice m_rdata[63:32] on a 32-bit bus -> X.
-        do_read(32'h8000_1000, 32'hAAAA_0000);  // even
-        do_read(32'h8000_1004, 32'hBBBB_0004);  // ODD  <- bug
-        do_read(32'h8000_1008, 32'hCCCC_0008);  // even
-        do_read(32'h8000_100C, 32'hDDDD_000C);  // ODD  <- bug
+        // READS: consecutive narrow words (NARROW_B apart) alternate the leaked
+        // offset bit ($clog2(NARROW_B)); the "odd" ones pre-fix slice out of range
+        // -> X. Width-independent by construction (word 1,3,.. set the bit).
+        for (int k = 0; k < 4; k++)
+            do_read(32'h8000_1000 + k*NB, genw(32'h8000_1000 + k*NB));
 
-        // WRITES: odd offset must still put data on the single 32-bit lane.
-        do_write(32'h8000_2000, 32'h1111_2000); // even
-        do_write(32'h8000_2004, 32'h2222_2004); // ODD  <- bug (lane select OOB)
+        // WRITES: odd-offset write must still land on the single NARROW_W lane.
+        for (int k = 0; k < 4; k++)
+            do_write(32'h8000_2000 + k*NB, genw(32'h8000_2000 + k*NB));
 
         if (errors == 0) $display("TB_SHIM_RATIO1: PASS");
         else             $display("TB_SHIM_RATIO1: FAIL (%0d errors)", errors);
