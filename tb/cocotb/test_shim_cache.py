@@ -34,6 +34,7 @@ NARROW_B  = NARROW_W // 8
 BLOCK_B   = BLOCK_W  // 8
 RATIO     = BLOCK_W  // NARROW_W
 LINES     = int(os.environ.get("TC_LINES",  "128"))
+LINE_W    = int(os.environ.get("TC_LINE_W", "2"))
 WAYS      = int(os.environ.get("TC_WAYS",   "8"))
 MEM_SIZE  = 1 << 24                  # 16 MiB AxiRam (after MEM_MASK)
 SEED_SZ   = 1 << 20                  # 1 MiB seeded window
@@ -299,3 +300,238 @@ async def test_random_stack(dut):
     dut._log.info(f"[random_stack] {N} ops @ {rd_pct}%R hot={hot_pct_access}% "
                   f"-- 0 mismatches "
                   f"(POLICY=cfg LINES={LINES} WAYS={WAYS} BLOCK_W={BLOCK_W})")
+
+
+# ----------------------------------------------------------------------
+# Test — critical-word-first (mid-line) cold fill must populate EVERY word
+# ----------------------------------------------------------------------
+# Reproduces the GraphBlox "aux_1[13],[14] read 0" report at the deploy
+# geometry (RATIO=1 BLOCK_W==NARROW_W, LINE_W=8, WAYS=1, LRU). A line first
+# touched at a MID-LINE word makes l2_cache issue a WRAP (critical-word-first)
+# burst on the mem port (l2_cache.sv:889 arburst = |block ? WRAP : INCR).
+# The WRAP-tail words (the beats after the wrap seam) are exactly the aux_1
+# 13,14 analog. Every word of the filled line must read golden, not 0.
+# Run with: make MODULE=test_shim_cache WIDE_W=32 NARROW_W=32 \
+#           LINE_W=8 WAYS=1 READ_REORDER_DEPTH=8
+@cocotb.test(skip=(RATIO != 1))   # RATIO=1 deploy WRAP-fill regression
+async def test_wrap_fill_allwords(dut):
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    LW = LINE_W
+    bad = []
+    # Every possible critical offset (esp. LW-1 -> full WRAP, tail words last).
+    crit_list = list(range(LW))
+    for k, crit in enumerate(crit_list):
+        line_idx  = 3 + k * 5                 # spread across sets, cold each
+        line_base = BASE | (line_idx * LW * NARROW_B)
+        crit_addr = line_base + crit * NARROW_B
+        # (1) critical word FIRST -> cold miss -> WRAP/INCR line fill
+        d = await master.read(crit_addr, NARROW_B)
+        gc = int.from_bytes(d.data, "little")
+        if gc != golden(crit_addr):
+            bad.append((crit_addr, gc, golden(crit_addr), f"crit={crit}"))
+        # (2) now every word of the just-filled line must be golden
+        for w in range(LW):
+            a = line_base + w * NARROW_B
+            d = await master.read(a, NARROW_B)
+            got = int.from_bytes(d.data, "little")
+            exp = golden(a)
+            if got != exp:
+                bad.append((a, got, exp, f"crit={crit} w={w}"))
+    assert not bad, "WRAP-fill word corruption:\n" + "\n".join(
+        f"  @{a:#010x} got={g:#010x} exp={e:#010x} ({why})" for a, g, e, why in bad)
+    dut._log.info(f"[wrap_fill_allwords] LINE_W={LW}: all words correct "
+                  f"after {len(crit_list)} critical-first cold fills")
+
+
+# ----------------------------------------------------------------------
+# Test — EXACT aux_1 mimic: cold [0]*k ++ [1]*m region, mid-line 0->1
+# transition, critical word = the LAST '1' word of the boundary line.
+# ----------------------------------------------------------------------
+@cocotb.test(skip=(RATIO != 1))   # RATIO=1 deploy WRAP-fill regression
+async def test_aux1_boundary_zero_one(dut):
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    LW = LINE_W
+    # Boundary line: seed offsets [0..LW-1] as 0 for the low part and 1 for
+    # the words at/after the transition. Put the 0->1 flip mid-line (pos t).
+    line_idx  = 11
+    line_base = BASE | (line_idx * LW * NARROW_B)
+    t = LW // 2 + 1 if LW > 2 else 1          # transition offset (e.g. 5 @LW=8)
+    vals = [0] * t + [1] * (LW - t)
+    # Write the custom pattern straight into the backing RAM (ram off == addr
+    # low bits; BASE masks to 0). This is the READ-ONLY host-initialized store.
+    ram_off = line_idx * LW * NARROW_B
+    buf = b"".join(v.to_bytes(NARROW_B, "little") for v in vals)
+    ram.write(ram_off, buf)
+    # Critical word FIRST = the LAST word (offset LW-1): a '1' word past the
+    # transition -> forces a full WRAP fill; the wrap-tail lands on the '1'
+    # words just after the transition (the aux_1[13],[14] analog).
+    crit = LW - 1
+    d = await master.read(line_base + crit * NARROW_B, NARROW_B)
+    assert int.from_bytes(d.data, "little") == 1, "critical '1' word read wrong"
+    bad = []
+    for w in range(LW):
+        d = await master.read(line_base + w * NARROW_B, NARROW_B)
+        got = int.from_bytes(d.data, "little")
+        exp = vals[w]
+        if got != exp:
+            bad.append((w, got, exp))
+    assert not bad, ("aux1-boundary corruption (0->1 @off %d):\n" % t) + "\n".join(
+        f"  word off {w} got={g} exp={e}" for w, g, e in bad)
+    dut._log.info(f"[aux1_boundary] LINE_W={LW} flip@{t}: every word correct "
+                  f"(wrap-tail '1' words read 1, not 0)")
+
+
+# ----------------------------------------------------------------------
+# Test — PROOF: l2_cache emits a WRAP (critical-word-first) mem burst for a
+# mid-line first-touch. This is the necessary condition that a downstream
+# width converter (GraphBlox cu_axi_narrow_shim) MUST honor. Snoops m_arburst.
+# ----------------------------------------------------------------------
+@cocotb.test(skip=(RATIO != 1))   # RATIO=1 deploy WRAP-fill regression
+async def test_midline_fill_is_wrap(dut):
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    LW = LINE_W
+    seen = []   # (araddr, arlen, arburst)
+
+    async def snoop_ar():
+        while True:
+            await RisingEdge(dut.clk)
+            if dut.m_arvalid.value == 1 and dut.m_arready.value == 1:
+                try:
+                    seen.append((int(dut.m_araddr.value),
+                                 int(dut.m_arlen.value),
+                                 int(dut.m_arburst.value)))
+                except ValueError:
+                    pass
+    snoop = cocotb.start_soon(snoop_ar())
+
+    line_base = BASE | (17 * LW * NARROW_B)
+    # first-touch a MID-LINE word (offset LW-1) -> must be a WRAP fill
+    await master.read(line_base + (LW - 1) * NARROW_B, NARROW_B)
+    for _ in range(20):
+        await RisingEdge(dut.clk)
+    snoop.kill()
+
+    fills = [s for s in seen if s[1] == LW - 1]     # full-line (arlen=LW-1) bursts
+    assert fills, f"no full-line mem burst observed (seen={seen})"
+    araddr, arlen, arburst = fills[0]
+    # 2'b10 == WRAP, 2'b01 == INCR
+    assert arburst == 0b10, (
+        f"mid-line first-touch fill was NOT WRAP: arburst={arburst:#04b} "
+        f"araddr={araddr:#x} arlen={arlen} -- if the deploy converter assumes "
+        f"INCR it will misplace the wrap-tail words (aux_1[13],[14])")
+    dut._log.info(f"[midline_fill_is_wrap] confirmed WRAP: araddr={araddr:#x} "
+                  f"arlen={arlen} arburst=WRAP -- converter MUST honor WRAP")
+
+
+# ----------------------------------------------------------------------
+# Test — NEGATIVE CONTROL: a deliberately WRAP-IGNORING slave (returns beats
+# in INCR order regardless of arburst, like a converter that only implements
+# INCR) reproduces GraphBlox's EXACT symptom: the wrap-tail words read wrong,
+# every other word correct. Proves the defect is in the (non-vendored) slave,
+# not l2_cache/databank.
+# ----------------------------------------------------------------------
+@cocotb.test(skip=(RATIO != 1))   # RATIO=1 deploy WRAP-fill regression
+async def test_wrap_ignoring_slave_reproduces_bug(dut):
+    await reset_dut(dut)
+    master = AxiMaster(AxiBus.from_prefix(dut, "s"), dut.clk, dut.rst,
+                       reset_active_level=True)
+    LW = LINE_W
+
+    # Backing store: golden per NARROW_B word (same as attach()).
+    def gbytes(addr):
+        return golden(addr).to_bytes(NARROW_B, "little")
+
+    # Minimal WRAP-IGNORING AXI-read slave on the m_* port. It ACKS the AR,
+    # then returns LW beats in *linear INCR* order from the line base,
+    # IGNORING arburst (the classic converter defect). Data driven from the
+    # golden backing store so a correct WRAP consumer would still be right.
+    line_bytes = LW * NARROW_B
+
+    async def wrap_ignoring_slave():
+        dut.m_arready.value = 1
+        dut.m_rvalid.value = 0
+        dut.m_rlast.value = 0
+        while True:
+            await RisingEdge(dut.clk)
+            if dut.m_arvalid.value == 1 and dut.m_arready.value == 1:
+                araddr = int(dut.m_araddr.value)
+                arlen = int(dut.m_arlen.value)
+                arid = int(dut.m_arid.value) if hasattr(dut, "m_arid") else 0
+                dut.m_arready.value = 0
+                line_base = araddr - (araddr % line_bytes)   # ignore critical word
+                for beat in range(arlen + 1):
+                    a = line_base + beat * NARROW_B          # INCR from base
+                    val = int.from_bytes(gbytes(a), "little")
+                    dut.m_rdata.value = val
+                    dut.m_rid.value = arid
+                    dut.m_rresp.value = 0
+                    dut.m_rlast.value = 1 if beat == arlen else 0
+                    dut.m_rvalid.value = 1
+                    while True:
+                        await RisingEdge(dut.clk)
+                        if dut.m_rready.value == 1:
+                            break
+                    dut.m_rvalid.value = 0
+                    dut.m_rlast.value = 0
+                dut.m_arready.value = 1
+
+    # Tie off the m_* write channels (unused for read-only test).
+    for sig in ("m_awready", "m_wready", "m_bvalid"):
+        if hasattr(dut, sig):
+            getattr(dut, sig).value = 0
+    slave = cocotb.start_soon(wrap_ignoring_slave())
+
+    line_base = BASE | (23 * LW * NARROW_B)
+    # first-touch the LAST word -> l2_cache issues WRAP; slave returns INCR.
+    await master.read(line_base + (LW - 1) * NARROW_B, NARROW_B)
+    bad = []
+    for w in range(LW):
+        a = line_base + w * NARROW_B
+        d = await master.read(a, NARROW_B)
+        got = int.from_bytes(d.data, "little")
+        exp = golden(a)
+        if got != exp:
+            bad.append((w, got, exp))
+    slave.kill()
+    # We EXPECT corruption at the wrap-tail words -> this asserts the bug is
+    # reproduced by a WRAP-ignoring slave (negative control MUST find badness).
+    assert bad, ("WRAP-ignoring slave did NOT corrupt any word -- negative "
+                 "control failed (l2_cache may not be issuing WRAP)")
+    dut._log.info(f"[wrap_ignoring_slave] reproduced GraphBlox symptom: "
+                  f"{len(bad)} wrap-tail word(s) wrong "
+                  f"(offsets={[w for w,_,_ in bad]}) while the rest are correct "
+                  f"-- defect is the WRAP-ignoring converter, NOT the cache")
+
+
+# ----------------------------------------------------------------------
+# Test — CONCURRENT multi-outstanding gather of a COLD line while its fill
+# is in flight. Closes the test_random_stack docstring caveat ("reads of
+# not-yet-requested beats can see zeros") at the deploy geometry: even with
+# LW reads outstanding at once (critical WRAP fill in flight), every word is
+# correct. Mirrors GraphBlox max_outstanding=8 gather of aux_1.
+# ----------------------------------------------------------------------
+@cocotb.test(skip=(RATIO != 1))   # RATIO=1 deploy WRAP-fill regression
+async def test_wrap_fill_concurrent(dut):
+    await reset_dut(dut)
+    master, ram = attach(dut)
+    LW = LINE_W
+    line_base = BASE | (29 * LW * NARROW_B)
+    # Launch the mid-line critical word (offset LW-1, forces WRAP) first, then
+    # every sibling word -- all outstanding together while the fill is running.
+    order = [LW - 1] + [w for w in range(LW) if w != LW - 1]
+    tasks = [(w, cocotb.start_soon(
+                 master.read(line_base + w * NARROW_B, NARROW_B))) for w in order]
+    bad = []
+    for w, t in tasks:
+        d = await t
+        got = int.from_bytes(d.data, "little")
+        exp = golden(line_base + w * NARROW_B)
+        if got != exp:
+            bad.append((w, got, exp))
+    assert not bad, "concurrent wrap-fill corruption:\n" + "\n".join(
+        f"  w={w} got={g:#010x} exp={e:#010x}" for w, g, e in bad)
+    dut._log.info(f"[wrap_fill_concurrent] LINE_W={LW}: {LW} concurrent "
+                  f"multi-outstanding reads of a cold WRAP-filled line all correct")
