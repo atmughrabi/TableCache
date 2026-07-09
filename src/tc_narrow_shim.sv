@@ -271,7 +271,15 @@ module tc_narrow_shim_core
                         & (s_awaddr[ADDR_W-1:ALIGN_LSB] == lb_tag);
     wire aw_needs_prefill = PROMOTE_WMISS_TO_RW & s_awvalid
                           & ~aw_line_in_buf & ~prefill_active
-                          & ~rid_outstanding_q[PREFILL_ID]; // can't reuse PREFILL_ID id slot
+                          & ~rid_outstanding_q[PREFILL_ID]  // can't reuse PREFILL_ID id slot
+                          // ...nor launch the SAME cycle a read on PREFILL_ID is
+                          // accepted: rid_outstanding_q[PREFILL_ID] is set next edge,
+                          // but this cycle it still reads 0, so without this term a
+                          // prefill would start alongside a buffered/miss PREFILL_ID
+                          // read and the prefill's R would clear that read's
+                          // outstanding slot early (a master must not use PREFILL_ID,
+                          // but guard it so the 1-per-id invariant holds regardless).
+                          & ~(s_arvalid & s_arready & (s_arid == PREFILL_ID));
     // A prefill R must (a) be tagged with PREFILL_ID AND (b) actually be the
     // one we issued. Otherwise a master that uses arid==PREFILL_ID would have
     // its responses silently drained. The shim already gates outgoing prefill
