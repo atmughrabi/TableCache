@@ -132,7 +132,7 @@ jobs:
             timeout 400 make MODULE=$mod ADDR_L=0 ADDR_H=0xFFFFFFFF
           done
 
-      - name: Shim regression (3 modules)
+      - name: Shim regression (4 modules)
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
@@ -141,6 +141,25 @@ jobs:
             rm -rf sim_build sim_build_shim
             timeout 300 make MODULE=$mod
           done
+
+      - name: Critical-word-first WRAP line-fill contract
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # GraphBlox deployment geometry: every critical block/lane, AR metadata,
+          # backpressure, same-id ROB overlap, and deterministic refill.
+          rm -rf sim_build
+          timeout 400 make MODULE=test_shim_cache \
+           WIDE_W=32 NARROW_W=32 LINE_W=8 LINES=64 WAYS=1 \
+           POLICY=LRU DB_LATENCY=1 READ_REORDER_DEPTH=8 ASSERT=1 \
+           TESTCASE=test_wrap_fill_allwords,test_aux1_boundary_zero_one,test_midline_fill_is_wrap,test_wrap_fill_backpressure,test_wrap_fill_concurrent,test_wrap_fill_refill_direct_mapped
+          # Mutation analog of the historical downstream mod-RATIO vs
+          # mod-burst-boundary bug: must reproduce aux1[13],[14]=0 exactly.
+          rm -rf sim_build
+          timeout 300 make MODULE=test_shim_wrap_negative \
+           WIDE_W=32 NARROW_W=32 LINE_W=8 LINES=128 WAYS=1 \
+           POLICY=LRU DB_LATENCY=1 READ_REORDER_DEPTH=8 ASSERT=1
 
       - name: Read reorder buffer + concurrent-hit extra-beat drop (bug #31 guard)
         working-directory: tb/cocotb

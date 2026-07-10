@@ -142,6 +142,15 @@ module l2_cache
         else $fatal(1, "l2_cache: ADDR_RANGE_L=0x%08h not aligned to span 0x%09h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L, RANGE_SPAN);
     end
 
+    // A mid-line fill is emitted as an AXI WRAP burst with LINE_W beats.
+    // AXI permits only 2/4/8/16-beat WRAP bursts, and the databank's
+    // BLOCK_ADDR_W-wide fill counter relies on LINE_W being a power of two.
+    // Use a generate-time fatal rather than an assertion so the guard remains
+    // active in Verilator builds that do not pass --assert.
+    if (!(LINE_W == 2 || LINE_W == 4 || LINE_W == 8 || LINE_W == 16)) begin : gen_line_width_guard
+        $fatal(1, "l2_cache: LINE_W=%0d unsupported; must be one of {2,4,8,16} (AXI WRAP length and databank modulo counter requirement).", LINE_W);
+    end
+
     // DB_LATENCY supported range (ELABORATION-time check so it fails the BUILD,
     // not just a sim). The whole-cache by-index flush is only verified for
     // DB_LATENCY<=2 (the recommended URAM/large-cache config); at deeper read

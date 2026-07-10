@@ -113,7 +113,7 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 | `GRASP_MODERATE_REGIONS` | 1 | GRASP only: number of independent "moderate" address windows (insert at RRPV=1). |
 | `LINES` | 512 | Lines per way. |
 | `WAYS` | 4 | Set-associativity. |
-| `LINE_W` | 8 | Blocks per line. Line size = `LINE_W * BLOCK_W/8` bytes. |
+| `LINE_W` | 8 | Blocks per line; supported values are `{2,4,8,16}` (AXI WRAP beat-count requirement). Line size = `LINE_W * BLOCK_W/8` bytes. |
 | `BLOCK_W` | 32 | Data bus width (bits). |
 | `DB_LATENCY` | 1 | Pipeline depth of the data-bank RAMs. Each +1 adds 1 cycle to a hit. |
 | `INCLUDE_VICTIM` | 1 | Adds a small fully-associative victim cache between L2 and mem. |

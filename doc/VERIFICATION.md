@@ -6,9 +6,9 @@ bug history.
 
 ## 1. Test inventory
 
-21 modules. Listed in roughly the order you'd add
-them when verifying from scratch. (`test_matrix` is a pytest aggregate of 44
-config cells; the others are direct cocotb modules.)
+Core modules are listed in roughly the order you'd add them when verifying from
+scratch. Pytest files aggregate configuration matrices; the others are direct
+cocotb modules.
 
 | Module | Tests | Purpose |
 |---|---:|---|
@@ -25,14 +25,17 @@ config cells; the others are direct cocotb modules.)
 | `test_backpressure` | 6 | each AXI READY paused independently + combined |
 | `test_realism` | 4 | sustained mem-R latency (20/40/80) + long-idle reset |
 | `test_finish_fifo_stress` | 2 | hot-set + heavy response back-pressure targeting `cp_finish_fifo_full` / `cp_same_target_suppression` |
-| `test_shim_cache` | 7 | shim + cache at `BLOCK_W=512` (regression for bug #7) |
+| `test_shim_cache` | 13 | shim + cache integration: RMW plus generic critical-word-first WRAP fills, backpressure, concurrency, and refill |
 | `test_narrow_shim` | 10 | shim alone against `AxiRam` |
 | `test_shim_latency` | 1 | shim cold/hot/write/merge cycle counts |
 | `test_shim_throughput` | 1 | sustained 1 beat/cycle hit rate |
-| `test_shim_multiread` | 2 | pipelined multi-outstanding reads through shim+cache: distinct-id overlap (peak>1, all correct) + same-id serialization (bug #26 regression) |
+| `test_shim_multiread` | 6 | distinct-ID overlap/backpressure, same-ID serialization/liveness, and repeated concurrent hits with zero cache-side AXI violations |
+| `test_shim_reorder` | 2 | `READ_REORDER_DEPTH>1`: same engine ID overlaps cache reads; exactly N single-beat responses return in issue order |
+| `test_shim_wrap_negative` | 1 | isolated wrong-WRAP-boundary mutation reproduces only `aux1[13],[14]=0` |
 | `test_eviction` | 2 | heavy aligned + non-aligned eviction round-trip; `WritebackMonitor` (each writeback burst covers one line) + `MemRangeMonitor` (mem AR/AW in cacheable range) |
 | `test_flush` | 7 | whole-cache by-index flush incl. multi-tag/all-ways + scattered high-tag (FIX-B tag coverage); writeback + range monitors |
-| `test_matrix` (pytest) | 44 | policy x ways x DB-latency x victim x CBOM smoke/random + eviction/flush enrichment + cacheable-range sweep (`ADDR_L`/`ADDR_H`, OMITTED_ADDR_W 0-3) |
+| `test_matrix` (pytest) | 48 | policy x ways x DB-latency x victim x CBOM smoke/random + eviction/flush enrichment + cacheable-range sweep (`ADDR_L`/`ADDR_H`, OMITTED_ADDR_W 0-3) |
+| `test_shim_wrap_matrix` (pytest) | 11 | legal `LINE_W`/bus-ratio/TDP-SDP matrix, exact mutation negative control, and invalid-line-width rejection |
 
 Each test file's module docstring explains what bug class it catches.
 Read the file directly; the source is the spec.
@@ -78,7 +81,8 @@ cd tb/cocotb && source .venv/bin/activate
 for mod in test_smoke test_random test_scoreboard test_strobe test_latency \
            test_lru_sanity test_workload test_cbom test_reset_recovery \
            test_graph_patterns test_backpressure test_realism \
-           test_shim_cache test_narrow_shim test_shim_latency test_shim_throughput; do
+           test_shim_cache test_narrow_shim test_shim_latency test_shim_throughput \
+           test_shim_multiread; do
   rm -rf sim_build sim_build_shim
   if [[ $mod == test_random ]]; then
     NTXN=80 SEED=1 timeout 360 make MODULE=$mod > /tmp/pc_$mod.log 2>&1
@@ -89,13 +93,16 @@ for mod in test_smoke test_random test_scoreboard test_strobe test_latency \
   tests=$(grep '\*\* TESTS=' /tmp/pc_$mod.log | tail -1)
   printf "%-26s PC=%s | %s\n" "$mod" "$pc" "$tests"
 done
+rm -rf sim_build && timeout 600 make MODULE=test_shim_reorder READ_REORDER_DEPTH=8
 rm -rf sim_build .pytest_cache && pytest -q test_matrix.py
+rm -rf sim_build_wrap_* .pytest_cache && pytest -q test_shim_wrap_matrix.py
 ```
 
 Pass criteria:
 1. every module reports `FAIL=0`
 2. every module reports `PC=0`
-3. `pytest test_matrix.py` reports `22 passed`
+3. `pytest test_matrix.py` reports `48 passed`
+4. `pytest test_shim_wrap_matrix.py` reports `11 passed`
 
 ## 3.1 Coverage
 

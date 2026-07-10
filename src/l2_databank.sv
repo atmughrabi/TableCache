@@ -597,9 +597,20 @@ module l2_databank
     logic out_fifo_valid[2];
 
     logic past_original_last[2];
+    gen_t past_original_last_gen[2];
 
     generate for (i = 0; i < 2; i++) begin : gen_output_fifos
-        assign out_fifo_push[i] = valid_pipeline[i][LATENCY] & ~lookup_discard[i] & ~(~lookup_evict[i] & past_original_last[i]);
+        // A partial read keeps walking the physical line after its requested
+        // block has already been returned (original_last=1). Suppress those
+        // trailing beats only when they belong to the SAME read generation.
+        // The generation match is load-bearing when a new read starts before
+        // the old pipeline tail drains: clearing the flag on READY->READING
+        // let an old sibling beat escape after rlast (bug #31).
+        wire past_original_last_this_gen = past_original_last[i]
+            & (info_pipeline[i][LATENCY].gen == past_original_last_gen[i]);
+        assign out_fifo_push[i] = valid_pipeline[i][LATENCY]
+            & ~lookup_discard[i]
+            & ~(~lookup_evict[i] & past_original_last_this_gen);
         assign out_fifo_pop[i] = out_ready[i] & out_fifo_valid[i];
         assign out_fifo_data_in[i] = '{
             last : lookup_evict[i] ? info_pipeline[i][LATENCY].last : info_pipeline[i][LATENCY].original_last,
@@ -634,14 +645,26 @@ module l2_databank
         assign out_full[i] = out_counter[i] <= fifo_count_t'(-(OUTPUT_FIFO_DEPTH-LATENCY-1)) & |out_counter[i];
 
         always_ff @(posedge clk) begin
-            if (rst)
+            if (rst) begin
                 past_original_last[i] <= 0;
-            else if (current_state[i] == READY & next_state[i] == READING)
-                past_original_last[i] <= 0; //New READING request: reset stale flag from prior premature-exit
-            else if (valid_pipeline[i][LATENCY] & info_pipeline[i][LATENCY].last)
-                past_original_last[i] <= 0;
-            else if (valid_pipeline[i][LATENCY] & info_pipeline[i][LATENCY].original_last)
-                past_original_last[i] <= 1;
+                past_original_last_gen[i] <= '0;
+            end
+            else if (valid_pipeline[i][LATENCY]) begin
+                // Priority is intentional:
+                // 1) physical line tail completes the generation;
+                // 2) requested tail arms suppression for this generation;
+                // 3) a newer generation reaching the output proves any stale
+                //    premature-exit flag can be cleared without dropping it.
+                if (info_pipeline[i][LATENCY].last)
+                    past_original_last[i] <= 0;
+                else if (info_pipeline[i][LATENCY].original_last) begin
+                    past_original_last[i] <= 1;
+                    past_original_last_gen[i] <= info_pipeline[i][LATENCY].gen;
+                end
+                else if (past_original_last[i]
+                         & info_pipeline[i][LATENCY].gen != past_original_last_gen[i])
+                    past_original_last[i] <= 0;
+            end
         end
     end endgenerate
 

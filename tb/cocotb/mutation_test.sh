@@ -62,12 +62,13 @@ case "$FILE" in
         )
         ;;
     src/l2_databank.sv)
-        DEFAULT_TESTS="test_smoke test_random test_strobe test_workload"
+        DEFAULT_TESTS="test_smoke test_random test_strobe test_workload test_shim_multiread"
         MUTATIONS=(
             "swap_state_idle|0,/READY\s*:/{s/READY\s*:/IDLE:/}"
-            "negate_ready_combine|0,/assign ready = port_ready\[0\] | port_ready\[1\]/{s/port_ready\[0\] | port_ready\[1\]/port_ready[0] \& port_ready[1]/}"
+            "negate_ready_combine|0,/assign ready/{s/| (port_ready\[1\]/\& (port_ready[1]/}"
             "flip_write_fifo_data|0,/assign write_fifo_data_in = current_state\[0\] != READY/{s/!= READY/== READY/}"
-            "force_past_orig_keep|0,/past_original_last\[i\] <= 0; \/\/New READING/{s/<= 0; \/\/New READING/<= 1; \/\/MUT READING/}"
+            "drop_past_gen_match|0,/wire past_original_last_this_gen/{n;s/& (info_pipeline\[i\]\[LATENCY\]\.gen == past_original_last_gen\[i\]);/\& 1'b1;/}"
+            "zero_past_orig_gen|0,/past_original_last_gen\[i\] <= info_pipeline/{s/info_pipeline\[i\]\[LATENCY\]\.gen/gen_t'(0)/}"
             "negate_out_fifo_push|0,/assign out_fifo_push\[i\] = valid_pipeline/{s/valid_pipeline\[i\]\[LATENCY\]/~valid_pipeline[i][LATENCY]/}"
         )
         ;;

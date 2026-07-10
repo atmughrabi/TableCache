@@ -38,7 +38,7 @@ module dut_shim_cache
 `ifdef TC_LINE_W
         parameter int LINE_W   = `TC_LINE_W,
 `else
-        parameter int LINE_W   = 1,        // 1 beat per line at BLOCK_W=512 → 64B line
+        parameter int LINE_W   = 2,
 `endif
 `ifdef TC_WAYS
         parameter int WAYS     = `TC_WAYS,
@@ -61,6 +61,21 @@ module dut_shim_cache
         parameter logic INCLUDE_VICTIM = `TC_VICTIM,
 `else
         parameter logic INCLUDE_VICTIM = 0,
+`endif
+`ifdef TC_READ_REORDER_DEPTH
+        parameter int READ_REORDER_DEPTH = `TC_READ_REORDER_DEPTH,
+`else
+        parameter int READ_REORDER_DEPTH = 1,
+`endif
+`ifdef TC_DATABANK_SDP
+        parameter logic DATABANK_SDP = `TC_DATABANK_SDP,
+`else
+        parameter logic DATABANK_SDP = 0,
+`endif
+`ifdef TC_SDP_WRITE_INPUT_REG
+        parameter logic SDP_WRITE_INPUT_REG = `TC_SDP_WRITE_INPUT_REG,
+`else
+        parameter logic SDP_WRITE_INPUT_REG = 0,
 `endif
         parameter int VICTIM_LINES = 8
     ) (
@@ -196,10 +211,8 @@ module dut_shim_cache
         .ID_W     (READ_ID_WIDTH),
         .ADDR_W   (32),
         .MAX_OUTSTANDING_W (16),
-        .ENABLE_LINE_BUFFER(1'b1)
-`ifdef TC_READ_REORDER_DEPTH
-        , .READ_REORDER_DEPTH(`TC_READ_REORDER_DEPTH)
-`endif
+        .ENABLE_LINE_BUFFER(1'b1),
+        .READ_REORDER_DEPTH(READ_REORDER_DEPTH)
     ) u_shim (
         .clk(clk), .rst(rst),
         // s_* from accelerator
@@ -296,6 +309,8 @@ module dut_shim_cache
         .READ_ID_WIDTH (READ_ID_WIDTH),
         .WRITE_ID_WIDTH(WRITE_ID_WIDTH),
         .DB_LATENCY    (DB_LATENCY),
+        .DATABANK_SDP  (DATABANK_SDP),
+        .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG),
         .INCLUDE_CBOM  (INCLUDE_CBOM),
         .INCLUDE_VICTIM(INCLUDE_VICTIM),
         .VICTIM_LINES  (VICTIM_LINES)
@@ -333,7 +348,8 @@ module dut_shim_cache
         .DATA_W                  (NARROW_W),
         .ID_W                    (READ_ID_WIDTH),
         .CHECK_C6                (1'b0),
-        .CHECK_B1_RESPONSE_VALID (1'b0)
+        .CHECK_B1_RESPONSE_VALID (1'b0),
+        .CHECK_READ_ID_TRACKING  (READ_REORDER_DEPTH <= 1)
     ) pc_slave (
         .clk(clk), .rst(rst),
         .araddr(s_araddr), .arlen(s_arlen), .arsize(s_arsize), .arburst(s_arburst),

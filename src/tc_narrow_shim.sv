@@ -398,13 +398,11 @@ module tc_narrow_shim_core
     assign buf_r_word   = lb_data  [buf_pend_off_q*NARROW_W +: NARROW_W];
 
     // The shim issues arlen=0, so exactly ONE data beat completes a read: the
-    // requested block, which the cache always marks with rlast=1. Some cache
-    // configurations, when concurrent reads to consecutive lines are paired in
-    // the databank's 2-port pipeline, emit an EXTRA sibling-block beat (rlast=0)
-    // AFTER the requested block. The shim only asked for one block, so a trailing
-    // rlast=0 beat is DRAINED and DROPPED (never forwarded, never latched). This
-    // keeps the shim robust to that databank behavior regardless of latency and
-    // is a no-op for the normal single-beat (rlast=1) response.
+    // requested block, which the cache marks with rlast=1. Older cache revisions
+    // could emit a trailing sibling-block beat (rlast=0) after paired concurrent
+    // hits (bug #31; fixed at the databank generation boundary). Keep the shim's
+    // defensive drain/drop: it never forwards or latches an unrequested rlast=0
+    // beat and is a no-op for the normal single-beat response.
     wire cache_r_resp  = m_rvalid & ~m_r_is_prefill & m_rlast;   // real response
     wire cache_r_extra = m_rvalid & ~m_rlast;                    // trailing beat: drain only
 

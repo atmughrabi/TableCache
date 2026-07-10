@@ -31,12 +31,12 @@
 //   C6   WLAST timing: WLAST=1 iff this is the (AWLEN+1)-th W beat of the
 //        oldest outstanding AW
 //   C7   RLAST timing per ID: RLAST=1 iff this is the (ARLEN+1)-th R beat
-//        of the in-flight AR for `rid` (assumes 1-outstanding-per-ID, which
-//        the cache and shim enforce)
+//        of the in-flight AR for `rid` (1-outstanding-per-ID mode)
 //   D1   BVALID with no outstanding AW on `bid` (per ID)
 //   D2   RVALID with no outstanding AR on `rid` (per ID)
 //   D3   New AR with same ARID as an already-in-flight AR (illegal in
-//        1-outstanding-per-ID mode; reflects the cache's invariant)
+//        1-outstanding-per-ID mode; disable CHECK_READ_ID_TRACKING only on
+//        the reorder wrapper's engine-facing interface)
 //   D4   New AW with same AWID as an already-in-flight AW
 //
 // Rules NOT covered yet (phase 2 candidates, listed for traceability)
@@ -83,11 +83,18 @@ module axi4_protocol_checker
         //                               at t=0 and may flip during long
         //                               resets).
         //
+        //   CHECK_READ_ID_TRACKING    – C7/D2/D3 per-ID read tracking. The
+        //                               default checker assumes one outstanding
+        //                               read per ID. Disable only on an interface
+        //                               that deliberately accepts multiple reads
+        //                               on one ID and reorders them internally.
+        //
         // Disabling a rule on the side where its violation originates does
         // NOT hide DUT bugs: the rule remains active on every other checker
         // instance and would still catch a real RTL regression upstream.
-        parameter bit CHECK_C6               = 1'b1,
-        parameter bit CHECK_B1_RESPONSE_VALID = 1'b1
+        parameter bit CHECK_C6                = 1'b1,
+        parameter bit CHECK_B1_RESPONSE_VALID = 1'b1,
+        parameter bit CHECK_READ_ID_TRACKING  = 1'b1
     )
     (
         input  logic                clk,
@@ -445,49 +452,51 @@ module axi4_protocol_checker
     // ------------------------------------------------------------------
     // C7 + D2 + D3: Per-ID R tracking (1-outstanding-per-ID assumption)
     // ------------------------------------------------------------------
-    logic [7:0] r_remaining [0:NUM_IDS-1];
-    logic       r_active    [0:NUM_IDS-1];
+    generate if (CHECK_READ_ID_TRACKING) begin : gen_read_id_tracking
+        logic [7:0] r_remaining [0:NUM_IDS-1];
+        logic       r_active    [0:NUM_IDS-1];
 
-    always_ff @(posedge clk) begin
-        if (rst) begin
-            for (int i = 0; i < NUM_IDS; i++) begin
-                r_remaining[i] <= '0;
-                r_active   [i] <= 1'b0;
-            end
-        end else begin
-            // AR accept
-            if (arvalid & arready) begin
-                if (r_active[arid]) begin
-                    vcount <= vcount + 1;
-                    $display("AXI_PC_VIOLATION D3 [%m @ %0t]: AR re-issued for ID %0d while R burst still pending", $time, arid);
+        always_ff @(posedge clk) begin
+            if (rst) begin
+                for (int i = 0; i < NUM_IDS; i++) begin
+                    r_remaining[i] <= '0;
+                    r_active   [i] <= 1'b0;
                 end
-                r_active   [arid] <= 1'b1;
-                r_remaining[arid] <= arlen + 8'd1;
-            end
-            // R beat
-            if (rvalid & rready) begin
-                if (!r_active[rid]) begin
-                    vcount <= vcount + 1;
-                    $display("AXI_PC_VIOLATION D2 [%m @ %0t]: RVALID for ID %0d with no outstanding AR", $time, rid);
-                end else begin
-                    if (r_remaining[rid] == 8'd1) begin
-                        if (!rlast) begin
-                            vcount <= vcount + 1;
-                            $display("AXI_PC_VIOLATION C7 [%m @ %0t]: RLAST=0 on final R beat for ID %0d", $time, rid);
-                        end
-                        r_active[rid] <= 1'b0;
+            end else begin
+                // AR accept
+                if (arvalid & arready) begin
+                    if (r_active[arid]) begin
+                        vcount <= vcount + 1;
+                        $display("AXI_PC_VIOLATION D3 [%m @ %0t]: AR re-issued for ID %0d while R burst still pending", $time, arid);
+                    end
+                    r_active   [arid] <= 1'b1;
+                    r_remaining[arid] <= arlen + 8'd1;
+                end
+                // R beat
+                if (rvalid & rready) begin
+                    if (!r_active[rid]) begin
+                        vcount <= vcount + 1;
+                        $display("AXI_PC_VIOLATION D2 [%m @ %0t]: RVALID for ID %0d with no outstanding AR", $time, rid);
                     end else begin
-                        if (rlast) begin
-                            vcount <= vcount + 1;
-                            $display("AXI_PC_VIOLATION C7 [%m @ %0t]: RLAST asserted early for ID %0d (%0d beats remaining)", $time,
-                                   rid, r_remaining[rid]);
+                        if (r_remaining[rid] == 8'd1) begin
+                            if (!rlast) begin
+                                vcount <= vcount + 1;
+                                $display("AXI_PC_VIOLATION C7 [%m @ %0t]: RLAST=0 on final R beat for ID %0d", $time, rid);
+                            end
+                            r_active[rid] <= 1'b0;
+                        end else begin
+                            if (rlast) begin
+                                vcount <= vcount + 1;
+                                $display("AXI_PC_VIOLATION C7 [%m @ %0t]: RLAST asserted early for ID %0d (%0d beats remaining)", $time,
+                                       rid, r_remaining[rid]);
+                            end
+                            r_remaining[rid] <= r_remaining[rid] - 8'd1;
                         end
-                        r_remaining[rid] <= r_remaining[rid] - 8'd1;
                     end
                 end
             end
         end
-    end
+    end endgenerate
 
     // ------------------------------------------------------------------
     // D1 + D4: Per-ID B tracking (1-outstanding-per-ID assumption)

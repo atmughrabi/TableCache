@@ -94,6 +94,7 @@ async def _read_one(dut, addr):
 @cocotb.test()
 async def test_reorder_in_order_concurrency(dut):
     await reset_dut(dut)
+    pc_before = int(dut.pc_violations_total.value)
     _attach_mem(dut)                       # seeded backend on m_; no s master
     if hasattr(dut, "s_arsnoop"):
         dut.s_arsnoop.value = 0
@@ -157,12 +158,18 @@ async def test_reorder_in_order_concurrency(dut):
         if len(got) >= N:
             break
     assert len(got) >= N, f"only {len(got)}/{N} responses returned"
+    for _ in range(50):
+        await RisingEdge(dut.clk)
+    assert len(got) == N, (
+        f"expected exactly {N} responses, got {len(got)} "
+        "(duplicate/trailing response escaped the reorder buffer)")
 
     # ---- checks ----
     # 1) all responses carry the engine id (0) and are in ISSUE ORDER
     for k in range(N):
         rid, data, last = got[k]
         assert rid == 0, f"response {k} has rid={rid}, expected engine id 0"
+        assert last == 1, f"response {k} has rlast={last}, expected single-beat rlast=1"
         exp = golden(addrs[k])
         assert data == exp, (
             f"OUT-OF-ORDER/wrong data at response {k}: got 0x{data:08x} "
@@ -176,6 +183,12 @@ async def test_reorder_in_order_concurrency(dut):
     assert mrid.peak > 1, (
         f"cache did NOT service >1 memory read concurrently (m-side peak="
         f"{mrid.peak}); reads were serialized")
+    for _ in range(10):
+        await RisingEdge(dut.clk)
+    pc_after = int(dut.pc_violations_total.value)
+    assert pc_after == pc_before, (
+        f"AXI protocol violations during reorder concurrency: "
+        f"before={pc_before} after={pc_after}")
     dut._log.info(
         f"[shim reorder] N={N}: in-order OK, engine peak outstanding={eng_peak}, "
         f"cache memory-read peak concurrency={mrid.peak}, m-side completion order "
@@ -199,6 +212,7 @@ async def test_reorder_out_of_order_completion(dut):
         return  # passthrough depth: nothing to reorder
 
     await reset_dut(dut)
+    pc_before = int(dut.pc_violations_total.value)
     _attach_mem(dut)
     if hasattr(dut, "s_arsnoop"):
         dut.s_arsnoop.value = 0
@@ -229,7 +243,9 @@ async def test_reorder_out_of_order_completion(dut):
             if int(dut.s_rvalid) and int(dut.s_rready):
                 if taps["first_s_r_t"] is None:
                     taps["first_s_r_t"] = get_sim_time("ns")
-                got.append((int(dut.s_rid), int(dut.s_rdata) & ((1 << (NARROW_B*8)) - 1)))
+                got.append((int(dut.s_rid),
+                            int(dut.s_rdata) & ((1 << (NARROW_B*8)) - 1),
+                            int(dut.s_rlast)))
 
     cocotb.start_soon(_mem_watch())
     cocotb.start_soon(_eng_watch())
@@ -259,14 +275,20 @@ async def test_reorder_out_of_order_completion(dut):
         if len(got) >= N:
             break
     assert len(got) >= N, f"only {len(got)}/{N} responses returned"
+    for _ in range(50):
+        await RisingEdge(dut.clk)
+    assert len(got) == N, (
+        f"expected exactly {N} responses, got {len(got)} "
+        "(duplicate/trailing response escaped the reorder buffer)")
 
     # 1) strict issue-order delivery despite out-of-order cache completion. The
     #    trailing hits complete at the cache before the head miss; a databank that
     #    emits an extra sibling-block beat on paired hits would corrupt the word
     #    here (the shim must drop the rlast=0 extra and keep the requested block).
     for k in range(N):
-        rid, data = got[k]
+        rid, data, last = got[k]
         assert rid == 0, f"response {k} rid={rid} != engine id 0"
+        assert last == 1, f"response {k} has rlast={last}, expected single-beat rlast=1"
         exp = golden(addrs[k])
         assert data == exp, (
             f"OUT-OF-ORDER/wrong data at response {k}: got 0x{data:08x} exp "
@@ -281,6 +303,12 @@ async def test_reorder_out_of_order_completion(dut):
         f"engine saw a response at t={taps['first_s_r_t']}ns BEFORE the head miss "
         f"completed at t={taps['miss_rlast_t']}ns -- a trailing hit bypassed the "
         f"head; the ROB did not reorder")
+    for _ in range(10):
+        await RisingEdge(dut.clk)
+    pc_after = int(dut.pc_violations_total.value)
+    assert pc_after == pc_before, (
+        f"AXI protocol violations during out-of-order completion: "
+        f"before={pc_before} after={pc_after}")
     dut._log.info(
         f"[shim reorder OoO] N={N}: head miss (mem id {taps['miss_rid']}) done @"
         f"{taps['miss_rlast_t']}ns, first engine response @{taps['first_s_r_t']}ns "

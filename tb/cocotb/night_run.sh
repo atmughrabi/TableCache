@@ -83,6 +83,13 @@ rc=$?
 log "PHASE 3 done: rc=$rc | $(grep -E 'passed|failed' "$OUT/phase3.log" | tail -1)"
 [[ $rc -eq 0 ]] || fail=$((fail+1))
 
+log "PHASE 3b: critical-word-first WRAP matrix"
+rm -rf sim_build_wrap_* .pytest_cache
+timeout 1800 pytest -q test_shim_wrap_matrix.py > "$OUT/phase3b_wrap.log" 2>&1
+rc=$?
+log "PHASE 3b done: rc=$rc | $(grep -E 'passed|failed' "$OUT/phase3b_wrap.log" | tail -1)"
+[[ $rc -eq 0 ]] || fail=$((fail+1))
+
 # ----------------------------------------------------------------------
 # Phase 4 -- mutation re-baselines (sanity check that scores haven't drifted)
 # ----------------------------------------------------------------------

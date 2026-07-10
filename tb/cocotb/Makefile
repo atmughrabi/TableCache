@@ -32,7 +32,7 @@ RATIO_FULL ?= 70
 # override silently does nothing for the RTL while the Python harness still
 # expects 4-byte beats. Force-error instead of letting the test fail with a
 # confusing data-mismatch message.
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative),)
 ifneq ($(BLOCK_W),32)
 $(error BLOCK_W=$(BLOCK_W) is not supported on the bare-cocotb path (MODULE=$(MODULE)); only BLOCK_W=32 is wired end-to-end. Use MODULE=test_shim_cache to exercise wider buses (BLOCK_W=512).)
 endif
@@ -54,7 +54,7 @@ EXTRA_ARGS += +define+TC_NARROW_W=$(NARROW_W) +define+TC_BLOCK_W=$(WIDE_W)
 ifeq ($(TC_PROMOTE_WMISS),1)
 EXTRA_ARGS += +define+TC_PROMOTE_WMISS=1
 endif
-else ifneq (,$(filter $(MODULE),test_shim_cache test_shim_multiread test_shim_reorder))
+else ifneq (,$(filter $(MODULE),test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative))
 NARROW_W   ?= 32
 WIDE_W     ?= 512
 # Force LINES/LINE_W/WAYS overrides for the shim+cache integration target.
@@ -229,7 +229,7 @@ ifneq ($(ADDR_H),)
 ADDR_H_DEC := $(shell printf '%u' $(ADDR_H))
 EXTRA_ARGS += +define+TC_ADDR_H=$(ADDR_H_DEC)
 endif
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative),)
 EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
 endif
 # DIAG knobs: pass DIAG=1 (DB-level) or DIAG=2 (DB + stall) to enable per-cycle dumps.
@@ -252,7 +252,7 @@ export TC_WAYS     := $(WAYS)
 # Empty unless ADDR_L is set; tb_common falls back to 0x80000000.
 export TC_ADDR_L   := $(ADDR_L)
 export TC_ADDR_H   := $(ADDR_H)
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative),)
 export TC_BLOCK_W  := $(BLOCK_W)
 endif
 # workload knobs (test_workload.py); leave default if unset

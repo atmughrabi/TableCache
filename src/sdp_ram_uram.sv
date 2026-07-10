@@ -77,13 +77,34 @@ module sdp_ram_uram
         assign a_addr_q  = a_addr;
     end endgenerate
 
-    //A write (per-byte enables)
+    // Expand per-column enables to a per-bit mask. Verilator silently drops
+    // partial non-blocking assignments from wide for-loops once NUM_COL grows
+    // into the hundreds (the same bug #7 class fixed in tdp_ram.sv). Use one
+    // full-width masked NBA in cocotb simulation; keep the canonical per-column
+    // template for synthesis so Vivado still infers byte-enabled UltraRAM.
+    logic[DATA_WIDTH-1:0] a_wmask;
+    always_comb begin
+        for (int i = 0; i < NUM_COL; i++) begin
+            for (int b = 0; b < COL_WIDTH; b++)
+                a_wmask[i*COL_WIDTH + b] = a_wbe_q[i];
+        end
+    end
+
+`ifdef COCOTB_SIM
+    always_ff @(posedge clk) begin
+        if (a_en_q & |a_wbe_q)
+            mem[a_addr_q] <= (mem[a_addr_q] & ~a_wmask)
+                           | (a_wdata_q & a_wmask);
+    end
+`else
+    // Synthesis path: canonical per-column write-enable template.
     always_ff @(posedge clk) begin
         for (int i = 0; i < NUM_COL; i++) begin
             if (a_en_q & a_wbe_q[i])
                 mem[a_addr_q][i*COL_WIDTH +: COL_WIDTH] <= a_wdata_q[i*COL_WIDTH +: COL_WIDTH];
         end
     end
+`endif
 
     //B read
     logic[DATA_WIDTH-1:0] b_ram_output;

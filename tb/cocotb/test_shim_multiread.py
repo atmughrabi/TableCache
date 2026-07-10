@@ -381,6 +381,7 @@ async def test_distinct_id_hit_concurrency(dut):
     line_w = int(os.environ.get("TC_LINE_W", "8"))
     line_b = line_w * BLK               # full cache line (LINE_W blocks) in bytes
     await reset_dut(dut)
+    pc_before = int(dut.pc_violations_total.value)
     master = AxiMaster(AxiBus.from_prefix(dut, "s"), dut.clk, dut.rst, reset_active_level=True)
     _attach_mem(dut)
     N = int(os.environ.get("PROBE_N", "8"))
@@ -392,17 +393,34 @@ async def test_distinct_id_hit_concurrency(dut):
         op = await master.read(a, NARROW_B, arid=(i % 8))
         g = int.from_bytes(op.data, "little")
         assert g == golden(a), f"warm @0x{a:08x} got 0x{g:08x} exp 0x{golden(a):08x}"
-    # 2) now issue all N CONCURRENTLY on distinct ids -> all HITS, pipelined to
-    #    consecutive lines (pairs them in the databank's 2-port read pipeline)
-    evs = []
-    for i, a in enumerate(addrs):
-        ev = Event(); master.init_read(a, NARROW_B, arid=(i % 8), event=ev); evs.append((a, ev))
     miss = 0
-    for a, ev in evs:
-        await ev.wait()
-        g = int.from_bytes(ev.data.data, "little")
-        if g != golden(a):
-            miss += 1
-            dut._log.error(f"concurrent HIT @0x{a:08x} got 0x{g:08x} exp 0x{golden(a):08x}")
-    assert miss == 0, f"{miss}/{N} concurrent distinct-id HITS returned wrong data"
-    dut._log.info(f"[distinct-id hits] {N} concurrent hits all correct (extra-beat drop OK)")
+    rounds = int(os.environ.get("HIT_ROUNDS", "8"))
+    for round_idx in range(rounds):
+        # Issue all N CONCURRENTLY on distinct ids -> all HITS, pipelined to
+        # consecutive lines (pairs them in the databank's 2-port read pipeline).
+        # Multiple rounds intentionally wrap the small per-port generation tag.
+        evs = []
+        for i, a in enumerate(addrs):
+            ev = Event()
+            master.init_read(a, NARROW_B, arid=(i % 8), event=ev)
+            evs.append((a, ev))
+        for a, ev in evs:
+            await ev.wait()
+            g = int.from_bytes(ev.data.data, "little")
+            if g != golden(a):
+                miss += 1
+                dut._log.error(
+                    f"round {round_idx} concurrent HIT @0x{a:08x} "
+                    f"got 0x{g:08x} exp 0x{golden(a):08x}")
+
+    for _ in range(10):
+        await RisingEdge(dut.clk)
+    pc_after = int(dut.pc_violations_total.value)
+    assert miss == 0, (
+        f"{miss}/{N*rounds} concurrent distinct-id HITS returned wrong data")
+    assert pc_after == pc_before, (
+        f"cache emitted AXI-illegal extra/malformed R beats: "
+        f"protocol violations before={pc_before} after={pc_after}")
+    dut._log.info(
+        f"[distinct-id hits] {N} concurrent hits x {rounds} rounds all correct; "
+        "cache R channel emitted exactly one legal response per request")
