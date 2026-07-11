@@ -1,15 +1,9 @@
 """Generic cache-geometry and long-stress matrix."""
 from __future__ import annotations
 
-import os
-import re
-import shutil
-import subprocess
-
 import pytest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUMMARY_RE = re.compile(r"TESTS=(\d+)\s+PASS=(\d+)\s+FAIL=(\d+)\s+SKIP=(\d+)")
+from matrix_utils import assert_clean_summary, run_make
 
 LRU_WAYS = [2, 3, 4, 5, 8]
 ODD_POLICY_CELLS = [
@@ -94,32 +88,21 @@ STRESS_CELLS = [
         [("test_random", ["NTXN=600", "SEED=47"]),
          ("test_eviction", [])],
     ),
+    (
+        "mixed-sdp-victim-reset",
+        ["LINES=128", "WAYS=5", "LINE_W=8", "DB_LATENCY=2",
+         "POLICY=GRASP", "VICTIM=1", "VICTIM_LINES=5",
+         "DATABANK_SDP=1", "SDP_WRITE_INPUT_REG=1",
+         "N_BANKS=4", "CASCADE_DEPTH=2"],
+        [("test_random", ["NTXN=1000", "SEED=59"]),
+         ("test_reset_recovery", []),
+         ("test_eviction", [])],
+    ),
 ]
 
 
-def run_make(tag, args, timeout=600, clean=True):
-    build_name = f"sim_build_geometry_{tag}"
-    if clean:
-        shutil.rmtree(os.path.join(HERE, build_name), ignore_errors=True)
-    try:
-        os.remove(os.path.join(HERE, "results.xml"))
-    except FileNotFoundError:
-        pass
-    cmd = ["make", f"SIM_BUILD={build_name}", *args]
-    result = subprocess.run(
-        cmd, cwd=HERE, env=os.environ.copy(), capture_output=True,
-        text=True, timeout=timeout)
-    return result, result.stdout + result.stderr
-
-
 def assert_pass(tag, result, output):
-    assert result.returncode == 0, (
-        f"{tag}: build/sim failed\n---output tail---\n{output[-5000:]}")
-    assert "AXI_PC_VIOLATION" not in output, (
-        f"{tag}: protocol violation\n---output tail---\n{output[-4000:]}")
-    summaries = SUMMARY_RE.findall(output)
-    assert summaries and int(summaries[-1][2]) == 0, (
-        f"{tag}: bad/missing summary\n---output tail---\n{output[-3000:]}")
+    assert_clean_summary(tag, result, output)
 
 
 @pytest.mark.parametrize("ways", LRU_WAYS, ids=lambda ways: f"w{ways}")
@@ -128,7 +111,7 @@ def test_exact_lru_ways(ways):
         "MODULE=test_lru_exact", "POLICY=LRU", f"WAYS={ways}",
         "LINES=32", "LINE_W=8", "VICTIM=0",
     ]
-    result, output = run_make(f"lru_w{ways}", args)
+    result, output = run_make("geometry", f"lru_w{ways}", args)
     assert_pass(f"LRU-W{ways}", result, output)
 
 
@@ -141,7 +124,7 @@ def test_odd_way_policy_stress(tag, policy, ways):
         "LINES=32", "LINE_W=8", "DB_LATENCY=2",
         "NTXN=400", "SEED=37",
     ]
-    result, output = run_make(tag, args)
+    result, output = run_make("geometry", tag, args)
     assert_pass(tag, result, output)
 
 
@@ -151,7 +134,7 @@ def test_line_count_sweep(lines):
         "MODULE=test_random", f"LINES={lines}", "WAYS=2", "LINE_W=8",
         "POLICY=SRRIP", "DB_LATENCY=2", "NTXN=300", "SEED=31",
     ]
-    result, output = run_make(f"lines{lines}", args, timeout=900)
+    result, output = run_make("geometry", f"lines{lines}", args, timeout=900)
     assert_pass(f"LINES={lines}", result, output)
 
 
@@ -162,10 +145,11 @@ def test_victim_capacity_sweep(victim_lines):
         "WAYS=4", "LINE_W=8", "POLICY=LRU",
     ]
     result, output = run_make(
-        f"victim{victim_lines}", ["MODULE=test_victim", *common], timeout=700)
+        "geometry", f"victim{victim_lines}",
+        ["MODULE=test_victim", *common], timeout=700)
     assert_pass(f"victim-lines={victim_lines}", result, output)
     result, output = run_make(
-        f"victim{victim_lines}", ["MODULE=test_eviction", *common],
+        "geometry", f"victim{victim_lines}", ["MODULE=test_eviction", *common],
         timeout=700, clean=False)
     assert_pass(f"victim-lines={victim_lines}/eviction", result, output)
 
@@ -179,7 +163,7 @@ def test_sdp_bank_cascade(tag, banks, cascade, lines):
         f"LINES={lines}", "WAYS=4", "LINE_W=8", "DB_LATENCY=2",
         "POLICY=GRASP", "NTXN=400", "SEED=53",
     ]
-    result, output = run_make(tag, args, timeout=700)
+    result, output = run_make("geometry", tag, args, timeout=700)
     assert_pass(tag, result, output)
     assert f"+define+TC_N_BANKS={banks}" in output
     assert f"+define+TC_CASCADE_DEPTH={cascade}" in output
@@ -193,7 +177,8 @@ def test_invalid_geometry_rejected(tag, args, diagnostic):
         "LINES=64", "WAYS=4", "LINE_W=8", "POLICY=LRU",
         "DB_LATENCY=1",
     ]
-    result, output = run_make(tag, [*common, *args], timeout=300)
+    result, output = run_make(
+        "geometry", tag, [*common, *args], timeout=300)
     assert result.returncode != 0, f"{tag}: invalid geometry unexpectedly passed"
     if diagnostic is not None:
         assert diagnostic in output, (
@@ -208,7 +193,7 @@ def test_long_geometry_stress(tag, common, modules):
     first = True
     for module, extra in modules:
         result, output = run_make(
-            tag, [f"MODULE={module}", *common, *extra],
+            "geometry", tag, [f"MODULE={module}", *common, *extra],
             timeout=1200, clean=first)
         first = False
         assert_pass(f"{tag}/{module}", result, output)

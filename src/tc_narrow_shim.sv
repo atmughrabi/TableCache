@@ -1,65 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 //
-// tc_narrow_shim
-// -----------------------------------------------------------------------------
-// Narrow-port AXI shim in front of TableCache.
+// Single-beat narrow-to-wide AXI shim. Reads align and slice a BLOCK_W word;
+// writes place NARROW_W data/strb in one lane and force narrow WriteEvict to
+// normal RMW semantics. An optional one-line buffer serves repeated reads.
+// Narrow requests must be aligned, full-width, and single-beat.
 //
-//   accelerator (NARROW_W bits)
-//        │ AR/R, AW/W/B  single-beat narrow transactions
-//        ▼
-//   ┌─────────────────┐
-//   │ tc_narrow_shim  │  widens / aligns / slices  (+ optional L0 line buffer)
-//   └─────────────────┘
-//        │ AR/R, AW/W/B  single-beat wide (BLOCK_W) transactions
-//        ▼
-//   TableCache (BLOCK_W bits)
-//
-// Functional spec
-//   * READ : align narrow araddr to BLOCK_W boundary, issue ONE-beat wide AR.
-//            On the wide R beat, slice the NARROW_W-wide word indicated by
-//            the original byte offset.
-//   * If ENABLE_LINE_BUFFER=1 the shim caches the most recently returned wide
-//     line. Subsequent narrow reads to the same aligned line are served from
-//     the buffer without touching the cache. This is the bottleneck-killer
-//     for sequential 4-B / 8-B scans.
-//   * The line buffer is invalidated on (a) reset, (b) any accepted AW whose
-//     aligned address matches, (c) any CBOM read passed through to the cache.
-//   * WRITE: align narrow awaddr, issue ONE-beat wide AW. awsnoop=3'b101
-//     (WriteEvict) is REWRITTEN to 3'b000 because a narrow write cannot
-//     legitimately claim full-line coverage — let the cache RMW. Drive
-//     m_wdata with narrow s_wdata in the selected lane, m_wstrb=0 elsewhere
-//     so only the requested bytes mutate after the RMW merge.
-//   * AW offset is captured into an ordered FIFO on AW handshake and popped
-//     on each W beat. AXI4 guarantees W beat order follows AW arrival order
-//     across IDs, so one ordered FIFO is correct (independent of awid).
-//   * arsnoop passes through unchanged (cache_b will treat as CBOM on the
-//     full aligned line). awsnoop other than 3'b101 passes through unchanged.
-//
-// Narrow-side requirements (asserted)
-//   * Single beat per request:  arlen = awlen = 0
-//   * Full narrow bus per beat: arsize = awsize = $clog2(NARROW_W/8)
-//   * Address NARROW_W/8-aligned
-//   * NARROW_W divides BLOCK_W; both powers of two; MAX_OUTSTANDING_W is PoT
-//
-// Hard restrictions (cannot do through this shim)
-//   * Bursting narrow masters → put a Xilinx AXI Data Width Converter in front.
-//   * True full-line WriteEvict from a narrow port. If the accelerator needs
-//     to bypass RMW, give it a second wide path that joins the cache via an
-//     AXI crossbar (then this shim handles only the scalar accesses).
-//
-// FMAX notes
-//   * Combinational mux selects 1 of RATIO words from BLOCK_W. At BLOCK_W=1024
-//     RATIO=32 a 32→1 mux × NARROW_W bits may be the critical path. Register
-//     downstream of the mux in your top if FMAX bites.
-// -----------------------------------------------------------------------------
-
-// NOTE: this is the shim CORE (the original tc_narrow_shim logic, unchanged).
-// The public `tc_narrow_shim` module lives at the bottom of this file: it is a
-// thin wrapper that, by default (READ_REORDER_DEPTH=1), instantiates this core
-// straight through, and when READ_REORDER_DEPTH>1 inserts a read-only in-order
-// reorder buffer (tc_read_reorder) in front of it so a single-id, in-order
-// engine can have >1 read outstanding. The core still sees 1-outstanding-per-id;
-// the reorder buffer spreads reads across distinct core ids and restores order.
+// tc_narrow_shim_core remains one-outstanding-per-ID. The public wrapper can
+// insert tc_read_reorder to map one engine ID onto multiple core IDs.
 module tc_narrow_shim_core
     #(
         parameter int unsigned NARROW_W           = 32,
@@ -68,21 +15,8 @@ module tc_narrow_shim_core
         parameter int unsigned ADDR_W             = 32,
         parameter int unsigned MAX_OUTSTANDING_W  = 16,   // = 2^WRITE_ID_WIDTH at cache
         parameter bit          ENABLE_LINE_BUFFER = 1'b1,
-        // ----------------------------------------------------------------
-        // Legacy workaround for an l2_cache cold-write-miss byte-merge bug
-        // observed at BLOCK_W=512 LINE_W=8 (only the high byte of the lane
-        // survived). Root cause was bug #7 in tdp_ram.sv (Verilator wide-NBA
-        // quirk) which has since been fixed. The cache's design already
-        // RMWs correctly via parallel `wbe`-masked write (lane bytes) + fill
-        // (fill_wbe = ~stored_wbe, the OTHER bytes); the workaround is now
-        // redundant and is left at 0 by default.
-        //
-        // Set this to 1 ONLY if a new byte-merge regression resurfaces. The
-        // workaround issues a wide AR whenever the L0 line buffer does not
-        // hold the AW's line — including the common case where the line is
-        // already in L2 (just not in L0), which costs a full mem round-trip
-        // for every "far" write.
-        // ----------------------------------------------------------------
+        // Optional prefill workaround; normally leave disabled because it adds
+        // a wide read whenever the line is absent from the shim buffer.
         parameter bit          PROMOTE_WMISS_TO_RW = 1'b0
     )
     (
@@ -171,15 +105,8 @@ module tc_narrow_shim_core
     localparam int unsigned BLOCK_B   = BLOCK_W  / 8;
     localparam int unsigned RATIO     = BLOCK_W  / NARROW_W;
     localparam int unsigned OFF_LSB   = $clog2(NARROW_B);
-    // Width of the sub-block word offset. At RATIO==1 (BLOCK_W==NARROW_W) a block
-    // IS one narrow word: there is NO sub-block offset ($clog2(1)=0 address bits
-    // select it). OFF_W is held at 1 only to keep the offset signals from becoming
-    // an illegal zero-width [-1:0]; the VALUE must be forced to 0 at every capture
-    // (see OFF_ZERO uses) — otherwise s_araddr[OFF_LSB +: 1] = s_araddr[2] leaks in
-    // and indexes m_rdata/lb_data/m_wdata[1*NARROW_W +: NARROW_W] = bits[63:32] of a
-    // BLOCK_W(=32)-wide word → OUT OF RANGE → X on odd 4-byte reads / lost odd
-    // writes. xsim (4-state) returns X here; Verilator masks it, so this needs the
-    // xsim shim TB to catch. (RATIO>1: the slice is in range and OFF_W=$clog2(RATIO).)
+    // Keep a 1-bit signal at RATIO=1, but force its value to zero at capture:
+    // there is no sub-block lane in that configuration.
     localparam int unsigned OFF_W     = (RATIO == 1) ? 1 : $clog2(RATIO);
     localparam int unsigned ALIGN_LSB = $clog2(BLOCK_B);
     localparam int unsigned NUM_IDS   = 1 << ID_W;

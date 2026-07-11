@@ -120,10 +120,7 @@ module l2_cache
     localparam int unsigned OUT_FIFO_DEPTH = 2; //Should be >1 for performance
     localparam int unsigned MAX_ADDR_HASH_WIDTH = 8; //Line addresses are hashed to at most this width
 
-    //Derived parameters
-    //Compute the cached-range span in 33-bit arithmetic so a FULL 32-bit range
-    //(e.g. base-0 [0, 0xFFFFFFFF]) does not overflow H-L+1 to 0. RANGE_SPAN_LOG2
-    //is the number of address bits the cache actually decodes (32 for full range).
+    // 33-bit span keeps the base-0 full 32-bit range from overflowing.
     localparam logic[32:0] RANGE_SPAN = (33'(ADDR_RANGE_H) - 33'(ADDR_RANGE_L)) + 33'd1;
     localparam int unsigned RANGE_SPAN_LOG2 = $clog2(RANGE_SPAN);
     localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
@@ -134,10 +131,7 @@ module l2_cache
         - int'($clog2(BLOCK_W/8));
     localparam int unsigned TAG_W = TAG_W_CALC > 0 ? TAG_W_CALC : 1;
 
-    //ADDR_RANGE must be NAPOT (naturally aligned power of two): the decode assumes
-    //the span is 2^RANGE_SPAN_LOG2 and ADDR_RANGE_L is aligned to it. A non-NAPOT
-    //range would silently mis-decode (RANGE_SPAN_LOG2 rounds a non-power-of-two
-    //span up), so fail loudly instead. Base-0 full range [0,0xFFFFFFFF] is valid.
+    // Address reconstruction requires a naturally aligned power-of-two range.
     if ((RANGE_SPAN & (RANGE_SPAN - 33'd1)) != 33'd0) begin : gen_range_size_guard
         $fatal(1, "l2_cache: cacheable range [0x%08h,0x%08h] span 0x%09h is not a power of two; ADDR_RANGE must be NAPOT.", ADDR_RANGE_L, ADDR_RANGE_H, RANGE_SPAN);
     end
@@ -145,11 +139,7 @@ module l2_cache
         $fatal(1, "l2_cache: ADDR_RANGE_L=0x%08h not aligned to span 0x%09h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L, RANGE_SPAN);
     end
 
-    // A mid-line fill is emitted as an AXI WRAP burst with LINE_W beats.
-    // AXI permits only 2/4/8/16-beat WRAP bursts, and the databank's
-    // BLOCK_ADDR_W-wide fill counter relies on LINE_W being a power of two.
-    // Use a generate-time fatal rather than an assertion so the guard remains
-    // active in Verilator builds that do not pass --assert.
+    // AXI WRAP legality and the modulo block counter require these line lengths.
     if (!(LINE_W == 2 || LINE_W == 4 || LINE_W == 8 || LINE_W == 16)) begin : gen_line_width_guard
         $fatal(1, "l2_cache: LINE_W=%0d unsupported; must be one of {2,4,8,16} (AXI WRAP length and databank modulo counter requirement).", LINE_W);
     end
@@ -176,20 +166,12 @@ module l2_cache
         $fatal(1, "l2_cache: cache geometry consumes the entire address range (TAG_W=%0d); reduce LINES/LINE_W/BLOCK_W or enlarge ADDR_RANGE.", TAG_W_CALC);
     end
 
-    // DB_LATENCY supported range (ELABORATION-time check so it fails the BUILD,
-    // not just a sim). The whole-cache by-index flush is only verified for
-    // DB_LATENCY<=2 (the recommended URAM/large-cache config); at deeper read
-    // pipelines a same-id flush stream (every CBOM reuses one FLUSH_ID) clobbers
-    // per-id databank/way_table state and hangs -- see bug #27. Regular
-    // reads/writes/evictions work at higher DB_LATENCY, but the flush does not.
+    // Whole-cache flush is not correct beyond two databank stages.
     if (DB_LATENCY < 1 || DB_LATENCY > 2) begin : gen_db_latency_guard
         $fatal(1, "l2_cache: DB_LATENCY=%0d unsupported; must be 1..2 (whole-cache flush is not correct for DB_LATENCY>2, bug #27).", DB_LATENCY);
     end
 
-    //The fixed high bits of the cached range, held in place in a full 32-bit word
-    //(all-zero for a full-range cache where OMITTED_ADDR_W==0). Reconstructed
-    //addresses are `OMITTED_CONSTANT | {tag, line, block, 0}` (see below), which
-    //degrades cleanly when there are no omitted bits.
+    // Fixed high range bits; zero for the full 32-bit range.
     localparam logic[31:0] OMITTED_CONSTANT = ADDR_RANGE_L & (32'hFFFFFFFF << RANGE_SPAN_LOG2);
     localparam int unsigned LOG2_BLOCK_BYTES = $clog2(BLOCK_W/8);
     localparam int unsigned HASH_WIDTH = LINE_ADDR_W > MAX_ADDR_HASH_WIDTH ? MAX_ADDR_HASH_WIDTH : LINE_ADDR_W;
@@ -396,17 +378,8 @@ module l2_cache
     cache_id_t rdata_set_addr;
     cache_id_t rdata_raddr;
     logic rdata_clear;
-    // rdata_set (reads): gate on the ARBITRATED advance (chosen_arready), NOT the
-    // slave-port accept (req_arready = ~saved_arvalid). needs_rdata is a per-id
-    // TOGGLE memory; req_arready can accept a 2nd same-id read into the skid while
-    // the 1st is still in flight (inuse_stall holds chosen_arready low), toggling
-    // needs_rdata[id] twice -> 0. That made rdata_rdata read "fill done" at a
-    // writeback whose fill was still pending, so a read-with-eviction cleared inuse
-    // twice (writeback via cond A + fill via cond C) and left inuse_id/inuse_line
-    // stuck SET -> the cache wedged on the next same-id/same-set read (bug #28).
-    // Gating on chosen_arready sets needs_rdata exactly once per read, consistent
-    // with rdata_set_addr = {1'b1, chosen_arid} and with how inuse itself is set
-    // (tb_advance), preserving the 1-set-per-outstanding-read balance.
+    // Set the toggle on arbitrated advance, not skid acceptance: a stalled
+    // same-ID request may occupy the skid while the prior read is still active.
     assign rdata_set = tb_pushing_write ? ~tb_hit & ~tb_out_full_write : chosen_arready & chosen_ar.arvalid;
     assign rdata_set_addr = tb_pushing_write ? tb_out_id : {1'b1, chosen_arid};
     assign rdata_raddr = bvalid_invalid ? finish_output.wid : finish_output.bid;
@@ -727,26 +700,12 @@ module l2_cache
     logic req_fifo_full;
     logic ar_fifo_full;
     logic awid_fifo_full;
-    logic accept_conflict; //Incoming accept would collide with a same-cycle finish_clear (bug #29)
+    logic accept_conflict;
     assign inuse_stall = inuse_id_rdata | inuse_line_rdata;
     assign fifo_stall = req_fifo_full | ar_fifo_full;
 
-    // Accept/finish same-cycle collision guard (bug #29, the invariant asserted
-    // by inuse_id/line_no_same_cycle_collide). inuse_id/inuse_line are XOR-toggle
-    // memories set on tb_advance and cleared on finish_clear. If a freshly
-    // accepted request's (in_id/in_hash) equals a finishing entry's
-    // (finish_id/finish_hash) in the SAME cycle, the bit is set AND cleared ->
-    // double-toggle -> nets to no-change -> stuck (the new request's occupancy is
-    // lost, wedging every later request to that id/set). The ~same_target guard
-    // only suppresses a finish RE-clearing an already-cleared (id,hash); it does
-    // NOT cover a new accept colliding with a finish. A multi-phase combined
-    // finish (bid->rid->wid, e.g. a read-miss evicting a dirty line) makes this
-    // reachable: an earlier phase drops inuse, so inuse_stall reads 0 and the new
-    // request would be accepted the same cycle a later phase clears the same
-    // id/hash. Defer the accept one cycle (the finish clears now; inuse is settled
-    // next cycle, when the request is accepted cleanly). finish_clear is transient
-    // and per-set finishes are serialized (inuse_line = 1 outstanding/set), so
-    // this never livelocks.
+    // Toggle-based occupancy cannot accept and clear the same ID/set in one
+    // cycle; defer the accept until the finish has retired.
     assign accept_conflict = finish_clear & ((in_id == finish_id) | (in_hash == finish_hash));
 
     assign chosen_awready = ~try_read & ~inuse_stall & ~fifo_stall & ~awid_fifo_full & ~accept_conflict;
@@ -1300,7 +1259,6 @@ module l2_cache
     logic hit_port_r;
     rid_t out_cbom_rid;
 
-    //TODO: cleanup the inputs to the output FIFO
     assign req_ready_for_fill = ~will_hit & ~hitting & ~(out_cbom_valid & ~read_filling) & out_ready;
     assign will_hit = ~hitting & ~read_filling & ((~db_out_evict[0] & db_out_valid[0]) | (~db_out_evict[1] & db_out_valid[1])) & ~(db_out_last[hit_port] & (finish_full | (victim_r.rvalid & victim_r.rlast)));
     assign hit_port = ~db_out_evict[1] & db_out_valid[1];
@@ -1390,7 +1348,7 @@ module l2_cache
             if (victim_awready)
                 victim_awvalid <= 0;
             if (start_evict) begin
-                victim_awvalid <= 1; //TODO: this could be combinational to allow AW one cycle earlier
+                victim_awvalid <= 1;
                 evicting <= 1;
             end
             if (last_evict)
@@ -1588,23 +1546,7 @@ module l2_cache
     arcache_assertion:
         assert property (@(posedge clk) disable iff (rst) req_ar.arvalid |-> (&req_ar.arcache)) else $error("Reads must be write-back read and write allocate");
 
-    // ---- Internal invariants (catch bug #2/#3/#6-class regressions) ----
-    // Bug #3/#6 root cause: tb_advance and finish_clear toggling the same id/hash
-    // the same cycle leaves inuse_id/inuse_line permanently set. The accept_conflict
-    // gate (bug #29, ~line 716) makes this structurally impossible: it forces
-    // chosen_ar/awready (hence tb_advance) to 0 whenever finish_clear collides with
-    // the incoming (in_id/in_hash). These assertions prove a future refactor doesn't
-    // undo that. Because accept_conflict and the assertions read the SAME operands,
-    // a KNOWN-value collision can never make tb_advance=1 -> the property can only
-    // "fail" when an operand is X (4-state). That is NOT a real collision: in cold
-    // init or when an upstream master briefly drives an X arid/araddr (in_id/in_hash
-    // X) or a finish entry is X, (in_id==finish_id) evaluates to X and !(...) = X,
-    // which xsim reports as a spurious $error even though finish_valid is a real 1
-    // (so the earlier finish_valid-only guard did NOT suppress it). Guard the compare
-    // on all four operands being known ($isunknown, same idiom as the fifo.sv
-    // over/underflow SVAs, bug #24): X -> vacuous pass; a genuine known-value collision
-    // (e.g. accept_conflict removed) still fires. tb_advance depends on all four
-    // operands via accept_conflict, so all four must be known to evaluate it cleanly.
+    // Known-value accept/clear collisions are forbidden; ignore cold-reset Xs.
     inuse_id_no_same_cycle_collide:
         assert property (@(posedge clk) disable iff (rst)
             (finish_valid && finish_clear && tb_advance

@@ -41,7 +41,7 @@ cocotb modules.
 | `test_matrix` (pytest) | 47 | policy x ways x supported DB-latency x victim x CBOM smoke/random + eviction/flush/range sweeps + DB_LATENCY=3 rejection |
 | `test_shim_wrap_matrix` (pytest) | 11 | legal `LINE_W`/bus-ratio/TDP-SDP matrix, exact mutation negative control, and invalid-line-width rejection |
 | `test_id_depth_matrix` (pytest) | 18 | ID widths 1–4, reorder depths through 15, write FIFO edges, l2_top ID mapping, and invalid guard cells |
-| `test_geometry_matrix` (pytest) | 41 | exact/odd-way policies, line counts 2–1024, victim 3/5/8, SDP banks through 8/cascade, invalid geometry, and long stress |
+| `test_geometry_matrix` (pytest) | 42 | exact/odd-way policies, line counts 2–1024, victim 3/5/8, SDP banks through 8/cascade, invalid geometry, and long/reset stress |
 
 Each test file's module docstring explains what bug class it catches.
 Read the file directly; the source is the spec.
@@ -112,7 +112,7 @@ Pass criteria:
 3. `pytest test_matrix.py` reports `47 passed`
 4. `pytest test_shim_wrap_matrix.py` reports `11 passed`
 5. `pytest test_id_depth_matrix.py` reports `18 passed`
-6. `pytest test_geometry_matrix.py` reports `41 passed`
+6. `pytest test_geometry_matrix.py` reports `42 passed`
 
 ## 3.1 Coverage
 

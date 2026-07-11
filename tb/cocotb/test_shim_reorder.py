@@ -1,19 +1,7 @@
-"""Reorder-buffer coverage for tc_narrow_shim (READ_REORDER_DEPTH > 1).
+"""Read reorder-buffer coverage (`READ_REORDER_DEPTH > 1`).
 
-GraphBlox request: a single-id, in-order engine must be able to keep >1 read
-outstanding. The shim wrapper inserts tc_read_reorder, which spreads reads on a
-single engine id across distinct core ids (so the 1-outstanding-per-id cache
-serves them concurrently) and restores strict issue order on the response
-channel.
-
-This test drives N back-to-back reads ALL on engine id 0 to distinct lines, with
-a warm/cold (hit/miss) mix so the cache returns them OUT of order, and checks:
-  * every read is accepted while a prior one is still in flight (peak > 1) --
-    proves the 1-per-id serialization is lifted;
-  * the engine responses arrive in strict ISSUE ORDER (data[k] == golden(addr[k]))
-    even though the cache completed them out of order -- proves the reorder.
-
-Build:  make MODULE=test_shim_reorder READ_REORDER_DEPTH=8
+One engine ID is mapped onto distinct cache IDs and responses must return in
+issue order despite concurrent and out-of-order completion.
 """
 from __future__ import annotations
 import os
@@ -197,14 +185,7 @@ async def test_reorder_in_order_concurrency(dut):
 
 @cocotb.test()
 async def test_reorder_out_of_order_completion(dut):
-    """Prove the ROB actually REORDERS: issue a cold MISS at the head (slow) with
-    warm HITS behind it (fast). The cache completes the later hits before the head
-    miss, so the ROB must hold the ready hits behind the not-yet-ready head and
-    still deliver strictly in issue order.
-
-    Signature that the reorder path (not passthrough) is exercised: no engine
-    response appears until the head miss's memory read completes, even though the
-    trailing hits were serviceable much earlier."""
+    """A cold head miss must hold faster trailing hits until it completes."""
     from cocotb.utils import get_sim_time
 
     N = DEPTH

@@ -190,6 +190,14 @@ if command -v vivado >/dev/null 2>&1; then
         timeout 1800 "$HERE/../vip/run_vip.sh" > "$OUT/phase6_vip_sdp_banked.log" 2>&1 || rc=$?
     log "PHASE 6 SDP/banked/DB2: rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_sdp_banked.log" | tail -1)"
     [[ $rc -eq 0 ]] || fail=$((fail+1))
+    rc=0
+    VIP_BUILD="$OUT/vip_build_combined" VIP_ADDR_L=0 VIP_ID_W=3 \
+        VIP_LINES=16 VIP_WAYS=3 VIP_LINE_W=8 VIP_POLICY=GRASP VIP_VICTIM=1 \
+        VIP_DB_LATENCY=2 VIP_DATABANK_SDP=1 VIP_SDP_WRITE_INPUT_REG=1 \
+        VIP_N_BANKS=2 VIP_CASCADE_DEPTH=1 \
+        timeout 1800 "$HERE/../vip/run_vip.sh" > "$OUT/phase6_vip_combined.log" 2>&1 || rc=$?
+    log "PHASE 6 base0+victim+SDP: rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_combined.log" | tail -1)"
+    [[ $rc -eq 0 ]] || fail=$((fail+1))
 else
     log "PHASE 6 SKIPPED: vivado not on PATH"
 fi

@@ -11,14 +11,10 @@ Run:
 """
 from __future__ import annotations
 
-import os
-import re
-import shutil
-import subprocess
-
 import pytest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+from matrix_utils import assert_clean_summary, run_make
+
 POSITIVE_TESTS = ",".join([
     "test_wrap_fill_allwords",
     "test_aux1_boundary_zero_one",
@@ -38,20 +34,6 @@ WRAP_MATRIX = [
     ("r8-l4",             256, 32,  4, 4, "GRASP", 1, 8, 0, 0),
     ("r16-l2-db2-sdp",    512, 32,  2, 8, "LRU",   2, 8, 1, 0),
 ]
-
-_SUMMARY_RE = re.compile(
-    r"TESTS=(\d+)\s+PASS=(\d+)\s+FAIL=(\d+)\s+SKIP=(\d+)")
-
-
-def _run_make(tag: str, args: list[str], timeout_s: int = 600):
-    build = os.path.join(HERE, f"sim_build_wrap_{tag}")
-    shutil.rmtree(build, ignore_errors=True)
-    cmd = ["make", f"SIM_BUILD={os.path.basename(build)}", *args]
-    result = subprocess.run(
-        cmd, cwd=HERE, env=os.environ.copy(), capture_output=True,
-        text=True, timeout=timeout_s)
-    return result, result.stdout + result.stderr
-
 
 @pytest.mark.parametrize(
     "tag,wide,narrow,line_w,ways,policy,db_latency,rob,sdp,sdp_reg",
@@ -73,12 +55,8 @@ def test_wrap_matrix(tag, wide, narrow, line_w, ways, policy, db_latency,
         "ASSERT=1",
         f"TESTCASE={POSITIVE_TESTS}",
     ]
-    result, output = _run_make(tag, args, timeout_s=900)
-    assert result.returncode == 0, (
-        f"{tag}: build/sim failed\n---output tail---\n{output[-5000:]}")
-    assert "AXI_PC_VIOLATION" not in output, (
-        f"{tag}: protocol checker reported a violation\n"
-        f"---output tail---\n{output[-4000:]}")
+    result, output = run_make("wrap", tag, args, timeout=900)
+    counts = assert_clean_summary(tag, result, output)
 
     # Guard against a false-green matrix where Makefile defaults silently win.
     for define in (
@@ -95,9 +73,7 @@ def test_wrap_matrix(tag, wide, narrow, line_w, ways, policy, db_latency,
             f"{tag}: intended geometry was not present in compile command: "
             f"missing {define}\n---output head---\n{output[:3000]}")
 
-    summaries = _SUMMARY_RE.findall(output)
-    assert summaries, f"{tag}: no cocotb summary\n---output tail---\n{output[-3000:]}"
-    tests, passed, failed, skipped = map(int, summaries[-1])
+    tests, passed, failed, skipped = counts
     assert failed == 0 and passed >= 5 and tests == passed + skipped, (
         f"{tag}: unexpected summary TESTS={tests} PASS={passed} "
         f"FAIL={failed} SKIP={skipped}\n---output tail---\n{output[-3000:]}")
@@ -111,13 +87,9 @@ def test_wrong_wrap_boundary_negative_control():
         "WAYS=1", "POLICY=LRU", "DB_LATENCY=1",
         "READ_REORDER_DEPTH=8", "ASSERT=1",
     ]
-    result, output = _run_make("negative", args, timeout_s=300)
-    assert result.returncode == 0, (
-        f"negative control failed\n---output tail---\n{output[-4000:]}")
-    assert "AXI_PC_VIOLATION" not in output
+    result, output = run_make("wrap", "negative", args, timeout=300)
+    assert_clean_summary("negative control", result, output)
     assert "global words 13,14 read 0" in output
-    summaries = _SUMMARY_RE.findall(output)
-    assert summaries and int(summaries[-1][2]) == 0
 
 
 @pytest.mark.parametrize("line_w", [1, 3, 32])
@@ -129,7 +101,8 @@ def test_invalid_line_width_rejected(line_w):
         "WAYS=1", "POLICY=LRU", "DB_LATENCY=1",
         "READ_REORDER_DEPTH=1", "TESTCASE=test_smoke",
     ]
-    result, output = _run_make(f"invalid_l{line_w}", args, timeout_s=300)
+    result, output = run_make(
+        "wrap", f"invalid_l{line_w}", args, timeout=300)
     assert result.returncode != 0, (
         f"LINE_W={line_w} unexpectedly built/ran successfully")
     assert f"LINE_W={line_w} unsupported; must be one of" in output, (

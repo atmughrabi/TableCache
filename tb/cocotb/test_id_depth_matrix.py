@@ -1,15 +1,9 @@
 """ID-width, reorder-depth, and l2_top ID-namespace matrix."""
 from __future__ import annotations
 
-import os
-import re
-import shutil
-import subprocess
-
 import pytest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SUMMARY_RE = re.compile(r"TESTS=(\d+)\s+PASS=(\d+)\s+FAIL=(\d+)\s+SKIP=(\d+)")
+from matrix_utils import assert_clean_summary, run_make
 
 # tag, ID_W, READ_REORDER_DEPTH, MAX_OUTSTANDING_W, DB_LATENCY
 SHIM_CELLS = [
@@ -49,31 +43,6 @@ INVALID_CELLS = [
 ]
 
 
-def run_make(tag, args, timeout=600, clean=True):
-    build_name = f"sim_build_ids_{tag}"
-    if clean:
-        shutil.rmtree(os.path.join(HERE, build_name), ignore_errors=True)
-    try:
-        os.remove(os.path.join(HERE, "results.xml"))
-    except FileNotFoundError:
-        pass
-    cmd = ["make", f"SIM_BUILD={build_name}", *args]
-    result = subprocess.run(
-        cmd, cwd=HERE, env=os.environ.copy(), capture_output=True,
-        text=True, timeout=timeout)
-    return result, result.stdout + result.stderr
-
-
-def assert_clean_summary(tag, result, output):
-    assert result.returncode == 0, (
-        f"{tag}: build/sim failed\n---output tail---\n{output[-5000:]}")
-    assert "AXI_PC_VIOLATION" not in output, (
-        f"{tag}: protocol violation\n---output tail---\n{output[-4000:]}")
-    summaries = SUMMARY_RE.findall(output)
-    assert summaries and int(summaries[-1][2]) == 0, (
-        f"{tag}: bad/missing cocotb summary\n---output tail---\n{output[-3000:]}")
-
-
 @pytest.mark.parametrize(
     "tag,id_w,depth,max_w,db_latency",
     SHIM_CELLS, ids=[cell[0] for cell in SHIM_CELLS])
@@ -85,7 +54,7 @@ def test_shim_id_depth(tag, id_w, depth, max_w, db_latency):
         f"MAX_OUTSTANDING_W={max_w}", "ASSERT=1",
     ]
     result, output = run_make(
-        tag, ["MODULE=test_shim_id_depth", *common], timeout=700)
+        "ids", tag, ["MODULE=test_shim_id_depth", *common], timeout=700)
     assert_clean_summary(tag, result, output)
     for define in (
         f"+define+TC_ID_W={id_w}",
@@ -96,7 +65,7 @@ def test_shim_id_depth(tag, id_w, depth, max_w, db_latency):
 
     if depth > 1:
         result, output = run_make(
-            tag, ["MODULE=test_shim_reorder", *common],
+            "ids", tag, ["MODULE=test_shim_reorder", *common],
             timeout=700, clean=False)
         assert_clean_summary(f"{tag}/reorder", result, output)
 
@@ -109,7 +78,7 @@ def test_l2top_id_namespace(id_w):
         "LINES=64", "LINE_W=8", "WAYS=2", "POLICY=LRU",
         "DB_LATENCY=1",
     ]
-    result, output = run_make(f"l2top_id{id_w}", args, timeout=600)
+    result, output = run_make("ids", f"l2top_id{id_w}", args, timeout=600)
     assert_clean_summary(f"l2top-id{id_w}", result, output)
     assert f"+define+TC_ID_W={id_w}" in output
     assert f"+define+TC_M_ID_W={m_id_w}" in output
@@ -123,7 +92,7 @@ def test_invalid_id_depth_rejected(tag, args, diagnostic):
         "WIDE_W=32", "NARROW_W=32", "LINE_W=8", "LINES=64",
         "WAYS=2", "POLICY=LRU", "DB_LATENCY=1",
     ]
-    result, output = run_make(tag, [*args, *common], timeout=300)
+    result, output = run_make("ids", tag, [*args, *common], timeout=300)
     assert result.returncode != 0, f"{tag}: invalid configuration unexpectedly passed"
     assert diagnostic in output, (
         f"{tag}: expected diagnostic {diagnostic!r}\n"

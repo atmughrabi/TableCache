@@ -1,25 +1,7 @@
-"""Pipelined multi-outstanding read coverage for tc_narrow_shim + l2_cache.
+"""Multi-outstanding read coverage for tc_narrow_shim + l2_cache.
 
-Reproduces the "issue a burst of reads without waiting per response" scenario
-on TableCache's own bench and pins down the read-outstanding CONTRACT.
-
-l2_cache is a 1-outstanding-per-ID design: a second read that shares an
-already-in-flight arid is STALLED at chosen_arready by inuse_stall
-(src/l2_cache.sv:670-679), and the shim mirrors this with rid_outstanding_q
-(routing every response by id via rid_offset_q[m_rid]). So:
-
-  * DISTINCT-id pipelining (the supported multi-outstanding path): N concurrent
-    reads to N distinct lines, each with its own arid -> genuinely overlapped
-    (>1 AR accepted before the first R) AND every word correct.
-  * SAME-id pipelining: N concurrent reads all sharing arid=0 -> serialized by
-    the cache to <=1 in flight; data must still be correct and the stack must
-    NOT deadlock or drop/duplicate responses. A master wanting M-deep pipelining
-    must therefore spread the reads across M distinct ids, not reuse one id.
-
-This is the fast-flow guard for that contract (the prior shim+cache suite only
-issued strictly serial `await master.read()` one-at-a-time).
-
-Run:  make MODULE=test_shim_multiread
+Distinct IDs may overlap; same-ID reads serialize unless the optional reorder
+buffer remaps them. Tests cover data, ordering, backpressure, and liveness.
 """
 import logging
 import os
@@ -264,11 +246,7 @@ async def _run_same_id(dut, N, bp_seed=None):
 
 @cocotb.test()
 async def test_same_id_burst_then_idle_liveness(dut):
-    """Reproduces the residual reported after the same-id serialization fix: a
-    back-to-back same-id (arid=0) read burst, drain, an IDLE window, then one
-    more read. The cache must stay LIVE -- the post-idle read must be serviced.
-    GraphBlox saw l2_cache accept the post-idle AR at S00 but never respond
-    (deferred per-id inuse/finish bookkeeping mis-clearing during idle)."""
+    """A same-ID burst followed by idle must not wedge the next read."""
     import logging as _l
     _l.getLogger("cocotb.dut_shim_cache").setLevel(_l.WARNING)
     await reset_dut(dut)
@@ -366,14 +344,7 @@ async def test_same_id_backpressure(dut):
 
 
 
-# --- Regression: plain multi-id master, concurrent HITS to consecutive cache
-#     lines. Guards the "extra sibling-block beat" databank behavior: when two
-#     reads to consecutive lines are paired in the 2-port databank pipeline, a
-#     hit can emit an EXTRA beat (rlast=0) carrying the line's other block after
-#     the requested block (rlast=1). The shim must drop that trailing beat; if it
-#     forwards it, the master gets the wrong block ("unexpected burst ID" in a
-#     protocol-checking master, or silently wrong data). This is the read-side
-#     complement of the same-id bug #26 and the case the reorder buffer exposes.
+# Concurrent hits to consecutive lines stress the two-port databank response path.
 @cocotb.test()
 async def test_distinct_id_hit_concurrency(dut):
     from cocotb.triggers import Event

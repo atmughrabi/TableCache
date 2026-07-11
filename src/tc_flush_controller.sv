@@ -1,25 +1,9 @@
 // Copyright 2026 Abdullah Mughrabi
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 //
-// tc_flush_controller: whole-cache flush sequencer for l2_cache.sv.
-//
-// Acts as an AXI master at the cache's slave port. On `flush_req`, walks
-// every physical line (set x way) of the configured cache and issues a
-// single-beat CBOM AR. The default snoop is CleanInvalidByIndex (4'b1011):
-// the cache cleans+invalidates the addressed WAY of the addressed SET
-// regardless of the resident tag, so dirty lines with ANY tag are written
-// back and dropped. line_idx encodes {way, set}: set (line_idx mod LINES) in
-// the address set bits, way (line_idx / LINES) in the tag position. A plain
-// CleanInvalid (4'b1001) can still be selected via flush_mode, but by-address
-// CBOM only matches tag==addr and cannot flush a set-associative cache.
-//
-// Strictly sequential: one AR in flight at a time. Waits for the R last
-// handshake before issuing the next AR. This is the simplest possible
-// FSM and avoids any subtle race on multi-cycle rvalid behaviour the
-// cache might exhibit.
-//
-// Reserved id: FLUSH_ID = (1<<ID_W)-1. The accelerator must not issue
-// this id while flush_active=1 (gated externally by the arbiter mux).
+// Whole-cache CBOM sequencer. Walks every {way,set} using
+// CleanInvalidByIndex by default, with one AR outstanding at a time.
+// FLUSH_ID is all-ones and must be reserved while flush_active.
 
 module tc_flush_controller
 

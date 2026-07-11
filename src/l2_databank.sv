@@ -116,13 +116,7 @@ module l2_databank
     end
     typedef logic[ID_W-1:0] cache_id_t;
 
-    //Generation tag: distinguishes back-to-back reads that REUSE the same id
-    //(e.g. a whole-cache flush issues every CBOM with one FLUSH_ID). Without it
-    //the premature-exit below matches a discarded beat to the current read by id
-    //alone, so at LATENCY>=2 a stale discarded beat from the PRIOR same-id read
-    //(still in the deeper pipeline) falsely aborts the current read. GEN_W spans
-    //the pipeline window (LATENCY+1 in-flight beats) so no two reads whose beats
-    //can coexist share a gen.
+    // Distinguishes same-ID reads whose beats coexist in the latency pipeline.
     localparam int unsigned GEN_W = $clog2(LATENCY + 2);
     typedef logic[GEN_W-1:0] gen_t;
 
@@ -194,26 +188,8 @@ module l2_databank
     //Accepting requests
     //Two state machines manage requests to the databank ports
     //Handles reads, line writes, evicts (line read followed by line write), and misses (line write)
-    // SDP-mode operation: in DATABANK_SDP=1 mode we expose port 0 only
-    // to the outside world; port 1's contributions to the output ready
-    // signals are masked out at parameter-elaboration time (no runtime
-    // gating, no combinational loop). With upstream never seeing port-1
-    // readiness, port 1 stays in READY forever and never fires -- so a
-    // single SDP storage suffices to serve all traffic via port 0.
-    //
-    // Throughput cost vs the TDP storage:
-    //   * loses R+W concurrency (fills and reads cannot overlap)
-    //   * loses port-1 backup acceptance when port 0 is mid-burst
-    //   * measured ~5-10% on graph workloads (vs 1.3% for the earlier
-    //     "stall on RR/WW conflict" approach which had to be abandoned
-    //     because the necessary handshake gating closed a combinational
-    //     loop through the upstream fill_request / req_fifo bypass).
-    // Resource win: data array becomes 1R+1W SDP -> UltraRAM-eligible
-    // (132 BRAM -> 16 URAM @ 512 KB / 8-way on U250).
-    //
-    // en_gated[1] is forced low in SDP mode so the FSM treats every
-    // would-be port-1 op as not-yet-issued; saved_block/valid_pipeline
-    // never advance for port 1, so no stale rdata routing is possible.
+    // SDP mode exposes only port 0; elaboration-time gating keeps port 1
+    // inactive and avoids a ready-path combinational loop.
     logic en_gated[2];
     assign en_gated[0] = en[0];
     assign en_gated[1] = en[1] & ~DATABANK_SDP;

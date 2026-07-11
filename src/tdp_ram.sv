@@ -83,28 +83,12 @@ module tdp_ram
 
     //RAM itself
     generate if (FPGA_VENDOR == AMD) begin : gen_amd_tdp
-        // ram_style = "block" rather than "ultra": this memory uses true
-        // dual-port + per-byte write enables, which is supported by BRAM
-        // (RAMB36/18) but NOT by UltraRAM (UltraRAM is SDP/word-only).
-        // Vivado 2025.x errors out with "Unsupported RAM template" when
-        // it tries to map this pattern to UltraRAM. cascade_height stays
-        // for BRAM block cascading. Bug found via syn/vivado/run_synth.sh
-        // on U250 -- see syn/vivado/README.md.
+        // True dual-port byte writes require BRAM; UltraRAM is SDP-only.
         (* cascade_height = CASCADE_DEPTH, ram_style = "block" *)
         logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0] = '{default: '0};
 
-        // Expand per-byte write enables (a_wbe, b_wbe) to per-bit masks so the
-        // memory update can be expressed as a single full-width non-blocking
-        // assignment:  mem <= (mem & ~mask) | (data & mask).
-        //
-        // The original Eric Matthews implementation used a for-loop of partial
-        // NBAs (`mem[addr][j*8 +: 8] <= data[...]`). That synthesises fine on
-        // AMD/Intel but in Verilator the partial-NBA pattern silently fails
-        // for wide column counts: when WAYS*WBE_W approaches the hundreds
-        // (e.g. BLOCK_W=512 × WAYS=8 ⇒ NUM_COL=512), only the highest-indexed
-        // active byte commits and the rest of the masked bytes are dropped.
-        // This single-NBA form is functionally identical (and the synthesis
-        // tools still infer per-byte write enables from it).
+        // Cocotb simulation uses an equivalent full-width masked write because
+        // wide partial-NBA loops lose bytes. Synthesis keeps the BRAM template.
         logic[DATA_WIDTH-1:0] a_wmask;
         logic[DATA_WIDTH-1:0] b_wmask;
         always_comb begin
@@ -116,14 +100,6 @@ module tdp_ram
             end
         end
 
-        //A read/write
-        // Bug #7 history: the original per-byte NBA loop is the canonical
-        // Vivado TDP-with-byte-enable template and synthesises to BRAM
-        // cleanly. Verilator silently DROPS bytes from that pattern when
-        // NUM_COL grows past ~100 (BLOCK_W=512 * WAYS=8 = 512 cols), so
-        // simulation needs the equivalent masked single-NBA form below.
-        // Vivado rejects the masked form as "Unsupported RAM template",
-        // so we ifdef on COCOTB_SIM (set by Verilator/cocotb) to pick.
 `ifdef COCOTB_SIM
         always_ff @(posedge clk) begin
             if (a_en) begin
@@ -145,9 +121,7 @@ module tdp_ram
             end
         end
 `else
-        // Synthesis path: per-byte NBA loop. Vivado infers BRAM with
-        // per-byte write enables. DO NOT collapse into a single masked
-        // NBA -- Vivado does not recognise that template.
+        // Keep this per-byte template: Vivado rejects the masked simulation form.
         always_ff @(posedge clk) begin
             if (a_en) begin
                 for (int j = 0; j < NUM_COL; j++) begin

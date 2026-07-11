@@ -1,15 +1,4 @@
-"""
-End-to-end shim + l2_cache integration test.
-
-Topology:  AxiMaster(NARROW_W) -> tc_narrow_shim -> l2_cache -> AxiRam(BLOCK_W)
-
-Goals:
-1. Smoke: narrow R/W round-trips with golden checking.
-2. Heavy random: 5000+ ops with byte-level golden tracking; ensure data
-   correctness through the full stack.
-3. Locality replay: hot/cold workload that exercises cache eviction +
-   shim line buffer interaction.
-"""
+"""End-to-end narrow shim -> l2_cache -> AXI RAM regression."""
 import logging
 import os
 import random
@@ -207,16 +196,7 @@ async def test_partial_write_preserves_other_lanes(dut):
 
 @cocotb.test()
 async def test_read_then_other_line_read_then_read(dut):
-    """Regression for the tdp_ram for-loop NBA Verilator quirk.
-
-    Read line A → read line B (cold miss-fill) → re-read line A. Before the
-    `tdp_ram.sv` mask-based rewrite, the second cold fill (any further
-    fill, actually) silently dropped 63 of the 64 bytes written to its
-    target way, but the bug only became visible on a subsequent hit because
-    the all-zeros byte slot happened to be untouched until the next read.
-    This minimal three-op sequence flushes that artefact into a single
-    deterministic mismatch.
-    """
+    """A cold fill of line B must not corrupt resident line A."""
     await reset_dut(dut)
     master, _ram = attach(dut)
     addr_a = BASE | 0x70
@@ -235,10 +215,7 @@ async def test_read_then_other_line_read_then_read(dut):
 
 @cocotb.test()
 async def test_read_then_other_line_write_then_read(dut):
-    """Same as the RRR variant but with a cold-write-miss on line B in
-    between. Was the original symptom of the tdp_ram for-loop NBA bug —
-    Option B's prefill_AR made it visible at the integration level.
-    """
+    """A cold write miss to line B must not corrupt resident line A."""
     await reset_dut(dut)
     master, _ram = attach(dut)
     addr_a = BASE | 0x70

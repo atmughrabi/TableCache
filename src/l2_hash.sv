@@ -45,7 +45,7 @@ module l2_hash
         assign hash = sum[OUT_WIDTH-1:0];
     end
     else begin : gen_full_hash
-        //TODO: find a better hash function
+        // XOR-fold all address bits into the fixed-width occupancy index.
         always_comb begin
             hash = '0;
             for (int i = 0; i < IN_WIDTH; i++)

@@ -71,17 +71,8 @@ module toggle_memory_set
         _toggle[0:NUM_WRITE_PORTS-1] = toggle;
         _read_addr[0:NUM_READ_PORTS-1] = read_addr;
 
-        // Reset (init_clear) 4-state robustness: gate the EXTERNAL toggle
-        // ports' WRITE ENABLE off during the clear walk. Their toggle_id is a
-        // cache-supplied address (e.g. finish_id / set_addr) that can be X
-        // during reset; because toggle_memory writes every cycle, an X address
-        // otherwise corrupts the lutram -- defeating its power-on 0 init in
-        // 4-state sim -- and that X feeds back into the clear-walk's in_use.
-        // With the external writes gated, the external banks keep their 0 init,
-        // in_use stays defined, and the clear-walk (below) still clears any
-        // genuinely-set entries (warm reset) since it now reads a defined
-        // in_use. (Masking the toggle value alone -- the prior approach -- was
-        // insufficient: the write to the X address still happened.)
+        // External addresses may be X during reset; gate their writes while
+        // the defined clear-walk address resets the table.
         for (int unsigned k = 0; k < NUM_WRITE_PORTS; k++)
             _wen[k] = ~init_clear;
 
