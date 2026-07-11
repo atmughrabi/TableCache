@@ -17,26 +17,25 @@ import os
 import random
 import cocotb
 from cocotb.triggers import RisingEdge, Timer, with_timeout
-from tb_common import reset_dut, attach_master, attach_mem, golden
+from tb_common import BASE, reset_dut, attach_master, attach_mem, golden
 from tb_coverage import sample_read, sample_write, dump_coverage
 
-BASE         = 0x80000000
 BLOCK_BYTES  = 4
 LINE_W       = int(os.environ.get("TC_LINE_W", "8"))
 LINE_BYTES   = LINE_W * BLOCK_BYTES
+LINES        = int(os.environ.get("TC_LINES", "64"))
 
 NTXN         = int(os.environ.get("TC_NTXN", "100"))
 SEED         = int(os.environ.get("TC_SEED", "1"))
 RATIO_RD_PCT = int(os.environ.get("TC_RATIO_RD", "60"))
 RATIO_FULL_PCT = int(os.environ.get("TC_RATIO_FULL", "70"))
 
-NUM_SETS = 8
+NUM_SETS = min(8, LINES)
 NUM_TAGS = 16
 
 
 def line_addr(set_i: int, tag_i: int) -> int:
-    # bits[10:5] = set (6-bit), bits[30:11] = tag (20-bit), bits[4:0] = block+offset
-    return BASE | ((tag_i & 0xFFFFF) << 11) | ((set_i & 0x3F) << 5)
+    return BASE + ((tag_i * LINES + set_i) * LINE_BYTES)
 
 
 @cocotb.test()
@@ -70,10 +69,11 @@ async def test_random_scoreboard(dut):
             else:
                 # Choose nbeat from {1, 2, 4} to fill beat_x_snoop cross cells.
                 # Each beat is one BLOCK_BYTES; addr must stay within the line.
-                nbeat = rng.choice([1, 2, 4])
+                nbeat = rng.choice([beats for beats in (1, 2, 4)
+                                    if beats <= LINE_W])
                 max_blk = LINE_W - nbeat
                 blk   = rng.randrange(max_blk + 1)
-                addr  = la | (blk * BLOCK_BYTES)
+                addr  = la + blk * BLOCK_BYTES
             try:
                 op = await with_timeout(master.read(addr, nbeat * BLOCK_BYTES), 10_000, "ns")
             except Exception as e:
@@ -104,10 +104,11 @@ async def test_random_scoreboard(dut):
                 # Choose nbeat from {1, 2, 4, 8} for plain writes; partial=False
                 # because we drive full strobes here. partial=True cells are
                 # filled by test_strobe.
-                nbeat = rng.choice([1, 2, 4, LINE_W])
+                nbeat = rng.choice([beats for beats in (1, 2, 4, LINE_W)
+                                    if beats <= LINE_W])
                 max_blk = LINE_W - nbeat
                 blk   = rng.randrange(max_blk + 1)
-                addr  = la | (blk * BLOCK_BYTES)
+                addr  = la + blk * BLOCK_BYTES
                 snoop = 0b000  # plain write
                 n_single += 1
             data_words = [rng.randrange(1 << 32) for _ in range(nbeat)]

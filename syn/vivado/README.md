@@ -36,6 +36,10 @@ TOP=tc_flush_controller ./run_synth.sh
 # Sweep all three user-facing tops
 ALL=1 ./run_synth.sh
 
+# Generic deployment corners: 3-way/ID2 cache, one-line-per-bank SDP,
+# and ID3/depth7 reorder shim
+./generic_config_matrix.sh
+
 # Override RTL parameters (l2_cache / l2_top only)
 WAYS=8 LINES=1024 LINE_W=16 POLICY=4 \
     INCLUDE_VICTIM=1 VICTIM_LINES=16 ./run_synth.sh
@@ -56,8 +60,13 @@ Supported env-var parameter overrides:
   integer wrapper parameter cast to `POLICY` internally). **Setting
   `REPLACEMENT_POLICY` on `TOP=l2_cache` is a no-op** and silently
   defaults to LRU. Use `POLICY` for `l2_cache`.
-- `WAYS`, `LINES`, `LINE_W`, `INCLUDE_VICTIM`, `VICTIM_LINES`,
-  `DATABANK_SDP`, `DB_LATENCY`, `SDP_WRITE_INPUT_REG`.
+- Cache: `WAYS`, `LINES`, `LINE_W`, `BLOCK_W`, `READ_ID_WIDTH`,
+  `WRITE_ID_WIDTH`, `INCLUDE_VICTIM`, `VICTIM_LINES`, `DATABANK_SDP`,
+  `DB_LATENCY`, `SDP_WRITE_INPUT_REG`, `CASCADE_DEPTH`, `N_BANKS`.
+- `l2_top`: `C_S00_AXI_ID_WIDTH`, `C_M00_AXI_ID_WIDTH`,
+  `C_S00_AXI_DATA_WIDTH`, `C_M00_AXI_DATA_WIDTH`.
+- Shim: `NARROW_W`, `BLOCK_W`, `ID_W`, `MAX_OUTSTANDING_W`,
+  `READ_REORDER_DEPTH`, `ENABLE_LINE_BUFFER`, `PROMOTE_WMISS_TO_RW`.
 - `DIRECTIVE` (default `default`; alternatives `AreaOptimized_high`,
   `PerformanceOptimized`).
 - `PERIOD_NS` (default `4.0` ns for 250 MHz; `3.333` for 300 MHz).

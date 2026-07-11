@@ -111,17 +111,19 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 | `POLICY` | `LRU` | Replacement policy. Also: FRQ, SECOND_CHANCE, RANDOM, SRRIP, **GRASP** (address-region-aware; see below). |
 | `GRASP_HIGH_REGIONS` | 1 | GRASP only: number of independent "hot" address windows (each pins a buffer at RRPV=0). |
 | `GRASP_MODERATE_REGIONS` | 1 | GRASP only: number of independent "moderate" address windows (insert at RRPV=1). |
-| `LINES` | 512 | Lines per way. |
-| `WAYS` | 4 | Set-associativity. |
+| `LINES` | 512 | Lines per way; must be a power of two and at least 2. |
+| `WAYS` | 4 | Set-associativity; any value >=1 is supported (including 3/5-way). |
 | `LINE_W` | 8 | Blocks per line; supported values are `{2,4,8,16}` (AXI WRAP beat-count requirement). Line size = `LINE_W * BLOCK_W/8` bytes. |
-| `BLOCK_W` | 32 | Data bus width (bits). |
-| `DB_LATENCY` | 1 | Pipeline depth of the data-bank RAMs. Each +1 adds 1 cycle to a hit. |
+| `BLOCK_W` | 32 | Data bus width; 8–1024 bits with a power-of-two byte count. |
+| `DB_LATENCY` | 1 | Pipeline depth of the data-bank RAMs; supported values are 1–2. |
 | `INCLUDE_VICTIM` | 1 | Adds a small fully-associative victim cache between L2 and mem. |
-| `VICTIM_LINES` | 8 | Size of the victim cache. |
+| `VICTIM_LINES` | 8 | Size of the victim cache; any value >=2 is supported. |
 | `INCLUDE_CBOM` | 1 | Enables the ACE snoop opcodes above. |
-| `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | 4 | Max in-flight unique IDs per direction. |
+| `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | 4 | Must be equal and >=1. The memory-side ID adds one read/write namespace bit. |
 | `ADDR_RANGE_L/H` | 0x80000000 / 0xFFFFFFFF | Bounding address range; must be NAPOT. A base-0 full range `[0, 0xFFFFFFFF]` is supported (the whole 32-bit space is cached; `OMITTED_ADDR_W=0`). |
 | `DATABANK_SDP` | 0 | **0** = TDP databank (`tdp_ram`, BRAM only). **1** = SDP+URAM databank (`sdp_ram_uram`, AMD UltraRAM mapping). See §5.1. |
+| `N_BANKS` | 1 | SDP bank count; must be a power of two that divides `LINES` (including one line per bank). |
+| `CASCADE_DEPTH` | 8 | URAM/BRAM cascade depth, 1–8. |
 
 ### 5.1 `DATABANK_SDP` — UltraRAM packing mode
 

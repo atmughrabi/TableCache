@@ -19,9 +19,17 @@ module dut_shim_only
 `else
         parameter int BLOCK_W            = 512,
 `endif
+`ifdef TC_ID_W
+        parameter int ID_W               = `TC_ID_W,
+`else
         parameter int ID_W               = 4,
+`endif
         parameter int ADDR_W             = 32,
+`ifdef TC_MAX_OUTSTANDING_W
+        parameter int MAX_OUTSTANDING_W  = `TC_MAX_OUTSTANDING_W,
+`else
         parameter int MAX_OUTSTANDING_W  = 16,
+`endif
 `ifdef TC_DISABLE_LINE_BUFFER
         parameter bit ENABLE_LINE_BUFFER = 1'b0,
 `else

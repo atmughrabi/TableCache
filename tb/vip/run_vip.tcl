@@ -28,16 +28,19 @@ add_files -norecurse [glob $REPO/src/*.sv]
 add_files -fileset sim_1 -norecurse $REPO/tb/vip/tb_l2top_vip.sv
 
 # --- AXI VIP master (drives l2_top.s00) ---
+set vip_id_w 4
+if {[info exists ::env(VIP_ID_W)]} { set vip_id_w $::env(VIP_ID_W) }
+set vip_mid_w [expr {$vip_id_w + 1}]
 create_ip -name axi_vip -vendor xilinx.com -library ip -module_name axi_vip_mst
 set_property -dict [list CONFIG.PROTOCOL {AXI4} CONFIG.INTERFACE_MODE {MASTER} \
-  CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {32} CONFIG.ID_WIDTH {4} CONFIG.SUPPORTS_NARROW {1} \
+  CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {32} CONFIG.ID_WIDTH $vip_id_w CONFIG.SUPPORTS_NARROW {1} \
   CONFIG.AWUSER_WIDTH {0} CONFIG.ARUSER_WIDTH {0} CONFIG.RUSER_WIDTH {0} \
   CONFIG.WUSER_WIDTH {0} CONFIG.BUSER_WIDTH {0}] [get_ips axi_vip_mst]
 
 # --- AXI VIP slave memory (backs l2_top.m00; m00 ID width = s00 + 1) ---
 create_ip -name axi_vip -vendor xilinx.com -library ip -module_name axi_vip_slv
 set_property -dict [list CONFIG.PROTOCOL {AXI4} CONFIG.INTERFACE_MODE {SLAVE} \
-  CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {32} CONFIG.ID_WIDTH {5} CONFIG.SUPPORTS_NARROW {1} \
+  CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {32} CONFIG.ID_WIDTH $vip_mid_w CONFIG.SUPPORTS_NARROW {1} \
   CONFIG.AWUSER_WIDTH {0} CONFIG.ARUSER_WIDTH {0} CONFIG.RUSER_WIDTH {0} \
   CONFIG.WUSER_WIDTH {0} CONFIG.BUSER_WIDTH {0}] [get_ips axi_vip_slv]
 
@@ -56,6 +59,12 @@ if {[info exists ::env(VIP_WAYS)]}   { lappend defs "TC_WAYS=$::env(VIP_WAYS)" }
 if {[info exists ::env(VIP_LINE_W)]} { lappend defs "TC_LINE_W=$::env(VIP_LINE_W)" }
 if {[info exists ::env(VIP_VICTIM)]} { lappend defs "TC_VICTIM=$::env(VIP_VICTIM)" }
 if {[info exists ::env(VIP_ADDR_L)]} { lappend defs "TC_ADDR_L=$::env(VIP_ADDR_L)" }
+if {[info exists ::env(VIP_ID_W)]} { lappend defs "TC_ID_W=$::env(VIP_ID_W)" }
+if {[info exists ::env(VIP_DB_LATENCY)]} { lappend defs "TC_DB_LATENCY=$::env(VIP_DB_LATENCY)" }
+if {[info exists ::env(VIP_DATABANK_SDP)]} { lappend defs "TC_DATABANK_SDP=$::env(VIP_DATABANK_SDP)" }
+if {[info exists ::env(VIP_SDP_WRITE_INPUT_REG)]} { lappend defs "TC_SDP_WRITE_INPUT_REG=$::env(VIP_SDP_WRITE_INPUT_REG)" }
+if {[info exists ::env(VIP_N_BANKS)]} { lappend defs "TC_N_BANKS=$::env(VIP_N_BANKS)" }
+if {[info exists ::env(VIP_CASCADE_DEPTH)]} { lappend defs "TC_CASCADE_DEPTH=$::env(VIP_CASCADE_DEPTH)" }
 if {[info exists ::env(VIP_POLICY)]} {
     array set pmap {LRU 0 FRQ 1 SECOND_CHANCE 2 RANDOM 3 SRRIP 4 GRASP 5}
     if {[info exists pmap($::env(VIP_POLICY))]} {

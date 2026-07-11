@@ -31,7 +31,6 @@ MATRIX = [
     ("LRU",           8, 1, 0, 1),
     # DB latency sweep
     ("LRU",           4, 2, 0, 1),
-    ("LRU",           4, 3, 0, 1),
     # policy sweep
     ("FRQ",           4, 1, 0, 1),
     ("SECOND_CHANCE", 4, 1, 0, 1),
@@ -122,6 +121,21 @@ def test_random_small(policy, ways, db_lat, victim, cbom):
         f"random cocotb FAIL count = {nfail} ({policy} W={ways} DB={db_lat} V={victim} C={cbom})\n"
         f"---stdout tail---\n{r.stdout[-3000:]}"
     )
+
+
+def test_db_latency_three_rejected():
+    """DB_LATENCY>2 is intentionally unsupported until the tagbank lookup
+    carries read generations deeply enough for whole-cache flush."""
+    env = {
+        "POLICY": "LRU",
+        "WAYS": "4",
+        "DB_LATENCY": "3",
+        "VICTIM": "0",
+        "CBOM": "1",
+    }
+    r = _make(env, "test_smoke", timeout_s=180)
+    assert r.returncode != 0, "DB_LATENCY=3 unexpectedly built"
+    assert "DB_LATENCY=3 unsupported; must be 1..2" in (r.stdout + r.stderr)
 
 
 # Focused subset for the heavier enrichment tests (writeback monitor + flush

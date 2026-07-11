@@ -25,7 +25,11 @@ import cache_config::*;   // ar_t / r_t for tc_flush_controller
 
 module tb_l2top_vip;
 
-    localparam int ID_W  = 4;          // s00 AXI ID width
+`ifdef TC_ID_W
+    localparam int ID_W  = `TC_ID_W;
+`else
+    localparam int ID_W  = 4;
+`endif
     localparam int MID_W = ID_W + 1;   // m00 ID width = s00 + 1 (l2_top)
     localparam int BW    = 32;
     localparam int AW    = 32;
@@ -65,6 +69,31 @@ module tb_l2top_vip;
     localparam int VVICTIM = `TC_VICTIM;
 `else
     localparam int VVICTIM = 0;
+`endif
+`ifdef TC_DB_LATENCY
+    localparam int VDB_LATENCY = `TC_DB_LATENCY;
+`else
+    localparam int VDB_LATENCY = 1;
+`endif
+`ifdef TC_DATABANK_SDP
+    localparam int VSDP = `TC_DATABANK_SDP;
+`else
+    localparam int VSDP = 0;
+`endif
+`ifdef TC_SDP_WRITE_INPUT_REG
+    localparam int VSDP_REG = `TC_SDP_WRITE_INPUT_REG;
+`else
+    localparam int VSDP_REG = 0;
+`endif
+`ifdef TC_N_BANKS
+    localparam int VN_BANKS = `TC_N_BANKS;
+`else
+    localparam int VN_BANKS = 1;
+`endif
+`ifdef TC_CASCADE_DEPTH
+    localparam int VCASCADE = `TC_CASCADE_DEPTH;
+`else
+    localparam int VCASCADE = 8;
 `endif
     // The tag/valid array is cleared by an LFSR walk that needs >= LINES cycles;
     // the inuse toggle-memories need <= 256. Hold reset generously from geometry
@@ -182,8 +211,10 @@ module tb_l2top_vip;
 
     l2_top #(
         .ADDR_L(CACHE_ADDR_L), .ADDR_H(32'hFFFF_FFFF),
-        .WAYS(VWAYS), .LINES(VLINES), .LINE_W(VLINE_W), .DB_LATENCY(1),
+        .WAYS(VWAYS), .LINES(VLINES), .LINE_W(VLINE_W), .DB_LATENCY(VDB_LATENCY),
         .REPLACEMENT_POLICY(VPOLICY), .INCLUDE_VICTIM(VVICTIM), .INCLUDE_CBOM(1),
+        .DATABANK_SDP(VSDP), .SDP_WRITE_INPUT_REG(VSDP_REG),
+        .N_BANKS(VN_BANKS), .CASCADE_DEPTH(VCASCADE),
         .C_S00_AXI_ID_WIDTH(ID_W), .C_S00_AXI_DATA_WIDTH(BW), .C_S00_AXI_ADDR_WIDTH(AW)
     ) dut (
         .s00_axi_aclk(aclk), .s00_axi_aresetn(aresetn),

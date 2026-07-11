@@ -98,9 +98,22 @@ module l2_databank
     // parameter value below where the depth is needed by sdp_ram instances.
     
     localparam int unsigned WBE_W = DATA_W/8;
+    localparam int unsigned NUM_LINES = 1 << LINE_ADDR_W;
     typedef logic[LINE_ADDR_W-1:0] line_t;
     typedef logic[BLOCK_ADDR_W-1:0] block_t;
     typedef logic[DATA_W-1:0] block_data_t;
+
+    if (CASCADE_DEPTH < 1 || CASCADE_DEPTH > 8) begin : gen_cascade_depth_guard
+        $fatal(1, "l2_databank: CASCADE_DEPTH=%0d unsupported; must be 1..8.", CASCADE_DEPTH);
+    end
+    if (N_BANKS < 1) begin : gen_bank_count_guard
+        $fatal(1, "l2_databank: N_BANKS=%0d unsupported; must be >= 1.", N_BANKS);
+    end
+    if (DATABANK_SDP && N_BANKS > 1
+        && ((N_BANKS & (N_BANKS-1)) != 0
+            || N_BANKS > NUM_LINES || (NUM_LINES % N_BANKS) != 0)) begin : gen_banked_geometry_guard
+        $fatal(1, "l2_databank: SDP N_BANKS=%0d must be a power of two that divides NUM_LINES=%0d.", N_BANKS, NUM_LINES);
+    end
     typedef logic[ID_W-1:0] cache_id_t;
 
     //Generation tag: distinguishes back-to-back reads that REUSE the same id
@@ -422,6 +435,13 @@ module l2_databank
         wire p0_wr = en_gated[0] & |unpacked_wbe[0];
         wire p0_rd = en_gated[0] & ~|unpacked_wbe[0];
         wire [BANK_BITS-1:0] p0_bank = line[0][BANK_BITS-1:0];
+        logic [PER_BANK_ADDR-1:0] p0_bank_addr;
+        if (PER_BANK_LINE > 0) begin : gen_bank_line_addr
+            assign p0_bank_addr = {
+                line[0][$bits(line_t)-1:BANK_BITS], block[0]};
+        end else begin : gen_bank_block_only_addr
+            assign p0_bank_addr = block[0];
+        end
 
         // Per-bank packed read data (so dynamic select is synthesizable)
         logic [N_BANKS-1:0][WAYS*DATA_W-1:0] bank_rdata_arr;
@@ -440,9 +460,9 @@ module l2_databank
                 .a_en(p0_wr & bank_sel),
                 .a_wbe(unpacked_wbe[0]),
                 .a_wdata({WAYS{wdata[0]}}),
-                .a_addr({line[0][$bits(line_t)-1:BANK_BITS], block[0]}),
+                .a_addr(p0_bank_addr),
                 .b_en(p0_rd & bank_sel),
-                .b_addr({line[0][$bits(line_t)-1:BANK_BITS], block[0]}),
+                .b_addr(p0_bank_addr),
                 .b_rdata(bank_rdata_arr[b])
             );
         end

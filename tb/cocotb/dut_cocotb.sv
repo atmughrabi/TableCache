@@ -29,8 +29,20 @@ module dut_cocotb
         parameter int WAYS      = 4,
 `endif
         parameter int BLOCK_W   = 32,
+`ifdef TC_READ_ID_W
+        parameter int READ_ID_WIDTH  = `TC_READ_ID_W,
+`elsif TC_ID_W
+        parameter int READ_ID_WIDTH  = `TC_ID_W,
+`else
         parameter int READ_ID_WIDTH  = 4,
+`endif
+`ifdef TC_WRITE_ID_W
+        parameter int WRITE_ID_WIDTH = `TC_WRITE_ID_W,
+`elsif TC_ID_W
+        parameter int WRITE_ID_WIDTH = `TC_ID_W,
+`else
         parameter int WRITE_ID_WIDTH = 4,
+`endif
 `ifdef TC_ADDR_L
         parameter logic [31:0] ADDR_RANGE_L = `TC_ADDR_L,
 `else
@@ -56,7 +68,11 @@ module dut_cocotb
 `else
         parameter logic INCLUDE_VICTIM = 0,
 `endif
+`ifdef TC_VICTIM_LINES
+        parameter int VICTIM_LINES = `TC_VICTIM_LINES,
+`else
         parameter int VICTIM_LINES = 8,
+`endif
 `ifdef TC_DATABANK_SDP
         parameter logic DATABANK_SDP = `TC_DATABANK_SDP,
 `else
@@ -71,6 +87,11 @@ module dut_cocotb
         parameter int unsigned N_BANKS = `TC_N_BANKS,
 `else
         parameter int unsigned N_BANKS = 1,
+`endif
+`ifdef TC_CASCADE_DEPTH
+        parameter int unsigned CASCADE_DEPTH = `TC_CASCADE_DEPTH,
+`else
+        parameter int unsigned CASCADE_DEPTH = 8,
 `endif
 `ifdef TC_GRASP_HIGH_REGIONS
         parameter int unsigned GRASP_HIGH_REGIONS = `TC_GRASP_HIGH_REGIONS,
@@ -272,6 +293,7 @@ module dut_cocotb
         .VICTIM_LINES   (VICTIM_LINES),
         .DATABANK_SDP   (DATABANK_SDP),
         .SDP_WRITE_INPUT_REG (SDP_WRITE_INPUT_REG),
+        .CASCADE_DEPTH  (CASCADE_DEPTH),
         .N_BANKS        (N_BANKS),
         .GRASP_HIGH_REGIONS     (GRASP_HIGH_REGIONS),
         .GRASP_MODERATE_REGIONS (GRASP_MODERATE_REGIONS)

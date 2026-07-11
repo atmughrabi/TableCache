@@ -132,12 +132,12 @@ jobs:
             timeout 400 make MODULE=$mod ADDR_L=0 ADDR_H=0xFFFFFFFF
           done
 
-      - name: Shim regression (4 modules)
+      - name: Shim regression (5 modules)
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
           set -e
-          for mod in test_narrow_shim test_shim_cache test_shim_throughput test_shim_multiread; do
+          for mod in test_narrow_shim test_shim_cache test_shim_throughput test_shim_multiread test_shim_buffer_snapshot; do
             rm -rf sim_build sim_build_shim
             timeout 300 make MODULE=$mod
           done
@@ -160,6 +160,33 @@ jobs:
           timeout 300 make MODULE=test_shim_wrap_negative \
            WIDE_W=32 NARROW_W=32 LINE_W=8 LINES=128 WAYS=1 \
            POLICY=LRU DB_LATENCY=1 READ_REORDER_DEPTH=8 ASSERT=1
+
+      - name: Generic IDs, reorder depth, and exact LRU
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # Smallest ID space / write FIFO edge.
+          rm -rf sim_build
+          timeout 300 make MODULE=test_shim_id_depth \
+           WIDE_W=32 NARROW_W=32 ID_W=1 READ_REORDER_DEPTH=1 \
+           MAX_OUTSTANDING_W=1 LINE_W=8 LINES=64 WAYS=2
+          # Non-power-of-two maximum legal ROB depth; this caught the buffered
+          # line-word snapshot race.
+          rm -rf sim_build
+          timeout 300 make MODULE=test_shim_reorder \
+           WIDE_W=32 NARROW_W=32 ID_W=3 READ_REORDER_DEPTH=7 \
+           MAX_OUTSTANDING_W=8 LINE_W=8 LINES=64 WAYS=2 DB_LATENCY=2
+          # Wrapper memory-ID namespace at a non-default width.
+          rm -rf sim_build
+          timeout 300 make MODULE=test_l2top_ids ID_W=2 M_ID_W=3 \
+           LINE_W=8 LINES=64 WAYS=2
+          # Compressed LRU tables (3/4-way) must match strict software LRU.
+          for ways in 3 4; do
+           rm -rf sim_build
+           timeout 300 make MODULE=test_lru_exact POLICY=LRU \
+             WAYS=$ways LINES=32 LINE_W=8
+          done
 
       - name: Read reorder buffer + concurrent-hit extra-beat drop (bug #31 guard)
         working-directory: tb/cocotb

@@ -90,6 +90,26 @@ rc=$?
 log "PHASE 3b done: rc=$rc | $(grep -E 'passed|failed' "$OUT/phase3b_wrap.log" | tail -1)"
 [[ $rc -eq 0 ]] || fail=$((fail+1))
 
+log "PHASE 3c: ID width / reorder depth matrix"
+rm -rf sim_build_ids_* .pytest_cache
+timeout 2400 pytest -q test_id_depth_matrix.py > "$OUT/phase3c_ids.log" 2>&1
+rc=$?
+log "PHASE 3c done: rc=$rc | $(grep -E 'passed|failed' "$OUT/phase3c_ids.log" | tail -1)"
+[[ $rc -eq 0 ]] || fail=$((fail+1))
+
+log "PHASE 3d: generic geometry + long stress matrix"
+rm -rf sim_build_geometry_* .pytest_cache
+timeout 5400 pytest -q test_geometry_matrix.py > "$OUT/phase3d_geometry.log" 2>&1
+rc=$?
+log "PHASE 3d done: rc=$rc | $(grep -E 'passed|failed' "$OUT/phase3d_geometry.log" | tail -1)"
+[[ $rc -eq 0 ]] || fail=$((fail+1))
+
+log "PHASE 3e: l2_top policy/associativity wrapper matrix"
+timeout 2400 ./l2top_matrix.sh > "$OUT/phase3e_l2top.log" 2>&1
+rc=$?
+log "PHASE 3e done: rc=$rc | $(tail -1 "$OUT/phase3e_l2top.log")"
+[[ $rc -eq 0 ]] || fail=$((fail+1))
+
 # ----------------------------------------------------------------------
 # Phase 4 -- mutation re-baselines (sanity check that scores haven't drifted)
 # ----------------------------------------------------------------------
@@ -158,10 +178,36 @@ if command -v vivado >/dev/null 2>&1; then
         timeout 1200 "$HERE/../vip/run_vip.sh" > "$OUT/phase6_vip_fullrange.log" 2>&1 || rc=$?
     log "PHASE 6 full-4GB range (base-0): rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_fullrange.log" | tail -1)"
     [[ $rc -eq 0 ]] || fail=$((fail+1))
+    rc=0
+    VIP_BUILD="$OUT/vip_build_id2_w3" VIP_ID_W=2 VIP_LINES=16 VIP_WAYS=3 VIP_LINE_W=8 VIP_POLICY=LRU \
+        timeout 1500 "$HERE/../vip/run_vip.sh" > "$OUT/phase6_vip_id2_w3.log" 2>&1 || rc=$?
+    log "PHASE 6 ID_W=2/WAYS=3: rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_id2_w3.log" | tail -1)"
+    [[ $rc -eq 0 ]] || fail=$((fail+1))
+    rc=0
+    VIP_BUILD="$OUT/vip_build_sdp_banked" VIP_ID_W=3 VIP_LINES=64 VIP_WAYS=3 VIP_LINE_W=8 \
+        VIP_POLICY=GRASP VIP_DB_LATENCY=2 VIP_DATABANK_SDP=1 \
+        VIP_SDP_WRITE_INPUT_REG=1 VIP_N_BANKS=2 VIP_CASCADE_DEPTH=1 \
+        timeout 1800 "$HERE/../vip/run_vip.sh" > "$OUT/phase6_vip_sdp_banked.log" 2>&1 || rc=$?
+    log "PHASE 6 SDP/banked/DB2: rc=$rc | $(grep -E 'VIP_RESULT' "$OUT/phase6_vip_sdp_banked.log" | tail -1)"
+    [[ $rc -eq 0 ]] || fail=$((fail+1))
 else
     log "PHASE 6 SKIPPED: vivado not on PATH"
 fi
 log "PHASE 6 done"
+
+# ----------------------------------------------------------------------
+# Phase 7 -- Vivado OOC generic-configuration synthesis corners
+# ----------------------------------------------------------------------
+if command -v vivado >/dev/null 2>&1; then
+    log "PHASE 7: Vivado generic configuration synthesis matrix"
+    timeout 3600 "$HERE/../../syn/vivado/generic_config_matrix.sh" \
+        > "$OUT/phase7_synth_generic.log" 2>&1
+    rc=$?
+    log "PHASE 7 done: rc=$rc | $(tail -1 "$OUT/phase7_synth_generic.log")"
+    [[ $rc -eq 0 ]] || fail=$((fail+1))
+else
+    log "PHASE 7 SKIPPED: vivado not on PATH"
+fi
 
 # ----------------------------------------------------------------------
 # Final summary

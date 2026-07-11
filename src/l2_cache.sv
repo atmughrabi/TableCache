@@ -129,17 +129,20 @@ module l2_cache
     localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
     localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
     localparam int unsigned LINE_ADDR_W = $clog2(LINES);
-    localparam int unsigned TAG_W = RANGE_SPAN_LOG2 - $clog2(LINES) - $clog2(LINE_W) - $clog2(BLOCK_W/8);
+    localparam int signed TAG_W_CALC = int'(RANGE_SPAN_LOG2)
+        - int'($clog2(LINES)) - int'($clog2(LINE_W))
+        - int'($clog2(BLOCK_W/8));
+    localparam int unsigned TAG_W = TAG_W_CALC > 0 ? TAG_W_CALC : 1;
 
     //ADDR_RANGE must be NAPOT (naturally aligned power of two): the decode assumes
     //the span is 2^RANGE_SPAN_LOG2 and ADDR_RANGE_L is aligned to it. A non-NAPOT
     //range would silently mis-decode (RANGE_SPAN_LOG2 rounds a non-power-of-two
     //span up), so fail loudly instead. Base-0 full range [0,0xFFFFFFFF] is valid.
-    initial begin
-        assert ((RANGE_SPAN & (RANGE_SPAN - 33'd1)) == 33'd0)
-        else $fatal(1, "l2_cache: cacheable range [0x%08h,0x%08h] span 0x%09h is not a power of two; ADDR_RANGE must be NAPOT.", ADDR_RANGE_L, ADDR_RANGE_H, RANGE_SPAN);
-        assert ((33'(ADDR_RANGE_L) & (RANGE_SPAN - 33'd1)) == 33'd0)
-        else $fatal(1, "l2_cache: ADDR_RANGE_L=0x%08h not aligned to span 0x%09h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L, RANGE_SPAN);
+    if ((RANGE_SPAN & (RANGE_SPAN - 33'd1)) != 33'd0) begin : gen_range_size_guard
+        $fatal(1, "l2_cache: cacheable range [0x%08h,0x%08h] span 0x%09h is not a power of two; ADDR_RANGE must be NAPOT.", ADDR_RANGE_L, ADDR_RANGE_H, RANGE_SPAN);
+    end
+    if ((33'(ADDR_RANGE_L) & (RANGE_SPAN - 33'd1)) != 33'd0) begin : gen_range_alignment_guard
+        $fatal(1, "l2_cache: ADDR_RANGE_L=0x%08h not aligned to span 0x%09h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L, RANGE_SPAN);
     end
 
     // A mid-line fill is emitted as an AXI WRAP burst with LINE_W beats.
@@ -149,6 +152,28 @@ module l2_cache
     // active in Verilator builds that do not pass --assert.
     if (!(LINE_W == 2 || LINE_W == 4 || LINE_W == 8 || LINE_W == 16)) begin : gen_line_width_guard
         $fatal(1, "l2_cache: LINE_W=%0d unsupported; must be one of {2,4,8,16} (AXI WRAP length and databank modulo counter requirement).", LINE_W);
+    end
+    if (LINES < 2 || (LINES & (LINES-1)) != 0) begin : gen_lines_guard
+        $fatal(1, "l2_cache: LINES=%0d unsupported; must be a power of two >= 2.", LINES);
+    end
+    if (WAYS < 1) begin : gen_ways_guard
+        $fatal(1, "l2_cache: WAYS=%0d unsupported; must be >= 1.", WAYS);
+    end
+    if (BLOCK_W < 8 || BLOCK_W > 1024 || (BLOCK_W % 8) != 0
+        || (((BLOCK_W/8) & ((BLOCK_W/8)-1)) != 0)) begin : gen_block_width_guard
+        $fatal(1, "l2_cache: BLOCK_W=%0d unsupported; must be 8..1024 bits with power-of-two bytes/block.", BLOCK_W);
+    end
+    if (READ_ID_WIDTH < 1 || WRITE_ID_WIDTH < 1) begin : gen_id_width_guard
+        $fatal(1, "l2_cache: READ_ID_WIDTH=%0d WRITE_ID_WIDTH=%0d unsupported; both must be >= 1.", READ_ID_WIDTH, WRITE_ID_WIDTH);
+    end
+    if (READ_ID_WIDTH != WRITE_ID_WIDTH) begin : gen_id_width_match_guard
+        $fatal(1, "l2_cache: READ_ID_WIDTH=%0d must equal WRITE_ID_WIDTH=%0d; merged memory IDs use one shared width.", READ_ID_WIDTH, WRITE_ID_WIDTH);
+    end
+    if (ADDR_W != 32) begin : gen_addr_width_guard
+        $fatal(1, "l2_cache: ADDR_W=%0d unsupported; request/address structs are 32-bit.", ADDR_W);
+    end
+    if (TAG_W_CALC < 1) begin : gen_tag_width_guard
+        $fatal(1, "l2_cache: cache geometry consumes the entire address range (TAG_W=%0d); reduce LINES/LINE_W/BLOCK_W or enlarge ADDR_RANGE.", TAG_W_CALC);
     end
 
     // DB_LATENCY supported range (ELABORATION-time check so it fails the BUILD,
@@ -1046,14 +1071,12 @@ module l2_cache
         assign db_lookup_saved[i] = lookup_out[i].saved;
     end endgenerate
 
-    // Phase 2a guard: only N_BANKS values that are powers of two and
-    // for which LINES is divisible by N_BANKS are supported (each bank
-    // gets LINES/N_BANKS depth). N_BANKS=1 is always supported.
-    initial begin
-        assert (N_BANKS == 1 || N_BANKS == 2 || N_BANKS == 4)
-        else $fatal(1, "l2_cache: N_BANKS=%0d unsupported (only 1, 2, 4 allowed in Phase 2a). See experiment/DESIGN_BANKED_MEMORY.md.", N_BANKS);
-        assert ((LINES % N_BANKS) == 0)
-        else $fatal(1, "l2_cache: LINES=%0d not divisible by N_BANKS=%0d.", LINES, N_BANKS);
+    if (N_BANKS < 1) begin : gen_bank_count_guard
+        $fatal(1, "l2_cache: N_BANKS=%0d unsupported; must be >= 1.", N_BANKS);
+    end
+    else if ((N_BANKS & (N_BANKS-1)) != 0
+             || N_BANKS > LINES || (LINES % N_BANKS) != 0) begin : gen_bank_geometry_guard
+        $fatal(1, "l2_cache: N_BANKS=%0d must be a power of two that divides LINES=%0d.", N_BANKS, LINES);
     end
 
     l2_databank #(
@@ -1582,16 +1605,16 @@ module l2_cache
     // over/underflow SVAs, bug #24): X -> vacuous pass; a genuine known-value collision
     // (e.g. accept_conflict removed) still fires. tb_advance depends on all four
     // operands via accept_conflict, so all four must be known to evaluate it cleanly.
-    wire inuse_operands_known = ~$isunknown(in_id)   & ~$isunknown(finish_id)
-                              & ~$isunknown(in_hash) & ~$isunknown(finish_hash);
     inuse_id_no_same_cycle_collide:
         assert property (@(posedge clk) disable iff (rst)
-            (finish_valid && finish_clear && tb_advance && inuse_operands_known)
+            (finish_valid && finish_clear && tb_advance
+             && !$isunknown({in_id, finish_id, in_hash, finish_hash}))
             |-> (in_id != finish_id)
         ) else $error("tb_advance + finish_clear same cycle on same id (bug #3 class)");
     inuse_line_no_same_cycle_collide:
         assert property (@(posedge clk) disable iff (rst)
-            (finish_valid && finish_clear && tb_advance && inuse_operands_known)
+            (finish_valid && finish_clear && tb_advance
+             && !$isunknown({in_id, finish_id, in_hash, finish_hash}))
             |-> (in_hash != finish_hash)
         ) else $error("tb_advance + finish_clear same cycle on same hash (bug #6 class)");
     finish_clear_implies_valid:

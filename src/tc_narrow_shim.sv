@@ -185,14 +185,26 @@ module tc_narrow_shim_core
     localparam int unsigned NUM_IDS   = 1 << ID_W;
     localparam int unsigned FIFO_AW   = $clog2(MAX_OUTSTANDING_W);
 
-    initial begin
-        assert (BLOCK_W % NARROW_W == 0)
-            else $error("tc_narrow_shim: BLOCK_W (%0d) must be a multiple of NARROW_W (%0d)",
-                        BLOCK_W, NARROW_W);
-        assert ((1 << $clog2(RATIO)) == RATIO)
-            else $error("tc_narrow_shim: RATIO (%0d) must be a power of two", RATIO);
-        assert ((1 << FIFO_AW) == MAX_OUTSTANDING_W)
-            else $error("tc_narrow_shim: MAX_OUTSTANDING_W must be a power of two");
+    if (ID_W < 1) begin : gen_id_width_guard
+        $fatal(1, "tc_narrow_shim: ID_W=%0d unsupported; must be >= 1.", ID_W);
+    end
+    if (NARROW_W < 8 || NARROW_W > 1024 || (NARROW_W % 8) != 0
+        || (((NARROW_W/8) & ((NARROW_W/8)-1)) != 0)) begin : gen_narrow_width_guard
+        $fatal(1, "tc_narrow_shim: NARROW_W=%0d unsupported; must be 8..1024 bits with power-of-two bytes/beat.", NARROW_W);
+    end
+    if (BLOCK_W < NARROW_W || BLOCK_W > 1024
+        || (BLOCK_W % NARROW_W) != 0) begin : gen_block_width_guard
+        $fatal(1, "tc_narrow_shim: BLOCK_W=%0d must be an integer multiple of NARROW_W=%0d and <=1024 bits.", BLOCK_W, NARROW_W);
+    end
+    if (RATIO < 1 || (RATIO & (RATIO-1)) != 0) begin : gen_ratio_guard
+        $fatal(1, "tc_narrow_shim: RATIO=%0d unsupported; must be a power of two.", RATIO);
+    end
+    if (MAX_OUTSTANDING_W < 1
+        || (MAX_OUTSTANDING_W & (MAX_OUTSTANDING_W-1)) != 0) begin : gen_write_depth_guard
+        $fatal(1, "tc_narrow_shim: MAX_OUTSTANDING_W=%0d unsupported; must be a power of two >= 1.", MAX_OUTSTANDING_W);
+    end
+    if (ADDR_W <= ALIGN_LSB) begin : gen_addr_width_guard
+        $fatal(1, "tc_narrow_shim: ADDR_W=%0d must exceed wide-block offset bits ALIGN_LSB=%0d.", ADDR_W, ALIGN_LSB);
     end
 
     // ==================================================================
@@ -216,7 +228,14 @@ module tc_narrow_shim_core
     // ---- 1-deep pending buffer-served read slot ----
     logic               buf_pend_valid_q;
     logic [ID_W-1:0]    buf_pend_id_q;
-    logic [OFF_W-1:0]   buf_pend_off_q;
+    logic [NARROW_W-1:0] buf_pend_data_q;
+    logic [NARROW_W-1:0] lb_selected_word;
+    generate if (RATIO == 1) begin : gen_lb_word_ratio1
+        assign lb_selected_word = lb_data[NARROW_W-1:0];
+    end else begin : gen_lb_word_ratio_n
+        assign lb_selected_word = lb_data[
+            s_araddr[OFF_LSB +: OFF_W]*NARROW_W +: NARROW_W];
+    end endgenerate
 
     // Does the incoming AR hit the buffer?
     logic ar_hits_buffer;
@@ -377,8 +396,11 @@ module tc_narrow_shim_core
             if (s_arvalid & ar_buf_accept) begin
                 buf_pend_valid_q <= 1'b1;
                 buf_pend_id_q    <= s_arid;
-                // RATIO==1: no sub-block offset — force 0 (buf_r_word slice in range).
-                buf_pend_off_q   <= (RATIO == 1) ? '0 : s_araddr[OFF_LSB +: OFF_W];
+                // Snapshot the selected word NOW. Holding only the offset and
+                // slicing live lb_data later is unsafe: cache responses can
+                // delay this buffered response while a different miss refills
+                // the line buffer, changing lb_data underneath it.
+                buf_pend_data_q <= lb_selected_word;
             end
         end
     end
@@ -395,7 +417,7 @@ module tc_narrow_shim_core
 
     assign cache_r_sel  = rid_offset_q[m_rid];
     assign cache_r_word = m_rdata[cache_r_sel*NARROW_W +: NARROW_W];
-    assign buf_r_word   = lb_data  [buf_pend_off_q*NARROW_W +: NARROW_W];
+    assign buf_r_word   = buf_pend_data_q;
 
     // The shim issues arlen=0, so exactly ONE data beat completes a read: the
     // requested block, which the cache marks with rlast=1. Older cache revisions
@@ -686,6 +708,13 @@ module tc_read_reorder
 
     localparam int unsigned PW = (DEPTH <= 1) ? 1 : $clog2(DEPTH);
 
+    if (ID_W < 1) begin : gen_id_width_guard
+        $fatal(1, "tc_read_reorder: ID_W=%0d unsupported; must be >= 1.", ID_W);
+    end
+    if (DEPTH < 1 || DEPTH > (1 << ID_W)-1) begin : gen_depth_guard
+        $fatal(1, "tc_read_reorder: DEPTH=%0d unsupported for ID_W=%0d; must be 1..%0d.", DEPTH, ID_W, (1 << ID_W)-1);
+    end
+
     logic [DEPTH-1:0]    slot_valid;   // allocated, not yet retired
     logic [DEPTH-1:0]    slot_ready;   // response captured
     logic [NARROW_W-1:0] slot_data [DEPTH];
@@ -711,7 +740,7 @@ module tc_read_reorder
     // Always accept the core response (its slot is guaranteed allocated).
     assign c_rready  = 1'b1;
     wire   cap       = c_rvalid & c_rready;
-    wire [PW-1:0] cap_slot = c_rid[PW-1:0];
+    wire [PW-1:0] cap_slot = PW'(c_rid);
 
     // Present the engine response from the head slot, strictly in issue order.
     assign e_rvalid  = slot_valid[head] & slot_ready[head];
@@ -858,16 +887,14 @@ module tc_narrow_shim
 
     localparam int unsigned NUM_IDS_W = 1 << ID_W;
 
-`ifndef ASSERT_OFF
-    initial begin
-        assert (READ_REORDER_DEPTH >= 1)
-            else $error("tc_narrow_shim: READ_REORDER_DEPTH must be >= 1");
-        // Slots use core ids 0..DEPTH-1; the top id (all-ones) is the prefill id.
-        assert (READ_REORDER_DEPTH <= NUM_IDS_W - 1)
-            else $error("tc_narrow_shim: READ_REORDER_DEPTH (%0d) must be <= 2**ID_W-1 (%0d); widen ID_W",
-                        READ_REORDER_DEPTH, NUM_IDS_W - 1);
+    if (ID_W < 1) begin : gen_id_width_guard
+        $fatal(1, "tc_narrow_shim: ID_W=%0d unsupported; must be >= 1.", ID_W);
     end
-`endif
+    // Slots use core ids 0..DEPTH-1; the all-ones id remains reserved for
+    // the optional write-miss prefill path.
+    if (READ_REORDER_DEPTH < 1 || READ_REORDER_DEPTH > NUM_IDS_W - 1) begin : gen_reorder_depth_guard
+        $fatal(1, "tc_narrow_shim: READ_REORDER_DEPTH=%0d unsupported for ID_W=%0d; must be 1..%0d.", READ_REORDER_DEPTH, ID_W, NUM_IDS_W - 1);
+    end
 
     generate
     if (READ_REORDER_DEPTH <= 1) begin : gen_passthrough

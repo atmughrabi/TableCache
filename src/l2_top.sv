@@ -172,6 +172,28 @@ module l2_top
     );
 
     //Input packing
+    // The internal cache adds one discriminator bit to every memory-side ID
+    // (read/write namespace), and its AXI/address structs are 32-bit. These
+    // wrapper parameters are exposed by generated AXI templates, so reject
+    // incompatible overrides instead of silently truncating/extending ports.
+    if (C_S00_AXI_ID_WIDTH < 1) begin : gen_s_id_width_guard
+        $fatal(1, "l2_top: C_S00_AXI_ID_WIDTH=%0d unsupported; must be >= 1.", C_S00_AXI_ID_WIDTH);
+    end
+    if (C_M00_AXI_ID_WIDTH != C_S00_AXI_ID_WIDTH + 1) begin : gen_m_id_width_guard
+        $fatal(1, "l2_top: C_M00_AXI_ID_WIDTH=%0d must equal C_S00_AXI_ID_WIDTH+1 (%0d).", C_M00_AXI_ID_WIDTH, C_S00_AXI_ID_WIDTH + 1);
+    end
+    if (C_S00_AXI_ADDR_WIDTH != 32 || C_M00_AXI_ADDR_WIDTH != 32) begin : gen_addr_width_guard
+        $fatal(1, "l2_top: only 32-bit AXI addresses are supported (S=%0d M=%0d).", C_S00_AXI_ADDR_WIDTH, C_M00_AXI_ADDR_WIDTH);
+    end
+    if (C_M00_AXI_DATA_WIDTH != C_S00_AXI_DATA_WIDTH) begin : gen_data_width_match_guard
+        $fatal(1, "l2_top: C_M00_AXI_DATA_WIDTH=%0d must equal C_S00_AXI_DATA_WIDTH=%0d.", C_M00_AXI_DATA_WIDTH, C_S00_AXI_DATA_WIDTH);
+    end
+    if (C_S00_AXI_DATA_WIDTH < 8 || C_S00_AXI_DATA_WIDTH > 1024
+        || (C_S00_AXI_DATA_WIDTH % 8) != 0
+        || ((C_S00_AXI_DATA_WIDTH/8) & ((C_S00_AXI_DATA_WIDTH/8)-1)) != 0) begin : gen_data_width_guard
+        $fatal(1, "l2_top: C_S00_AXI_DATA_WIDTH=%0d unsupported; must be 8..1024 bits with power-of-two bytes/beat.", C_S00_AXI_DATA_WIDTH);
+    end
+
     ar_t req_ar;
     logic[C_S00_AXI_ID_WIDTH-1:0] req_arid;
     logic req_arready;

@@ -226,6 +226,7 @@ async def test_reorder_out_of_order_completion(dut):
 
     # ---- timing taps: head miss memory completion vs first engine response ----
     taps = {"miss_rlast_t": None, "first_s_r_t": None, "miss_rid": None}
+    core_done = []
 
     async def _mem_watch():
         while True:
@@ -247,8 +248,17 @@ async def test_reorder_out_of_order_completion(dut):
                             int(dut.s_rdata) & ((1 << (NARROW_B*8)) - 1),
                             int(dut.s_rlast)))
 
+    async def _core_watch():
+        while True:
+            await RisingEdge(dut.clk); await ReadOnly()
+            if int(dut.c_rvalid) and int(dut.c_rready) and int(dut.c_rlast):
+                core_done.append((
+                    int(dut.c_rid),
+                    int(dut.c_rdata) & ((1 << (NARROW_B*8)) - 1)))
+
     cocotb.start_soon(_mem_watch())
     cocotb.start_soon(_eng_watch())
+    cocotb.start_soon(_core_watch())
 
     def setup_ar(a):
         dut.s_araddr.value = a; dut.s_arid.value = 0; dut.s_arlen.value = 0
@@ -292,7 +302,8 @@ async def test_reorder_out_of_order_completion(dut):
         exp = golden(addrs[k])
         assert data == exp, (
             f"OUT-OF-ORDER/wrong data at response {k}: got 0x{data:08x} exp "
-            f"0x{exp:08x} for addr 0x{addrs[k]:08x} -- reorder failed")
+            f"0x{exp:08x} for addr 0x{addrs[k]:08x} -- reorder failed; "
+            f"core completions={core_done}")
     # 2) the reorder path was genuinely exercised: the head miss issued a memory
     #    read and NO engine response was produced until that read completed, i.e.
     #    the trailing hits (serviceable earlier) were held behind the pending head.

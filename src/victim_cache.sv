@@ -128,11 +128,15 @@ module victim_cache
     //Replacement
     //Uses a FIFO scheme to decide which way should be overwritten on an eviction
     line_t replacement_index;
+    if (LINES < 2) begin : gen_lines_guard
+        $fatal(1, "victim_cache: LINES=%0d unsupported; must be >= 2.", LINES);
+    end
     always_ff @(posedge clk) begin
         if (rst)
             replacement_index <= '0;
         else if (cache_aw.awvalid & cache_awready) //Regardless of whether we are storing the request, increment the replacement index
-            replacement_index <= replacement_index+1;
+            replacement_index <= replacement_index == line_t'(LINES-1)
+                               ? '0 : replacement_index+1'b1;
     end
 
     ////////////////////////////////////////////////////

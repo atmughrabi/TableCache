@@ -31,11 +31,17 @@ cocotb modules.
 | `test_shim_throughput` | 1 | sustained 1 beat/cycle hit rate |
 | `test_shim_multiread` | 6 | distinct-ID overlap/backpressure, same-ID serialization/liveness, and repeated concurrent hits with zero cache-side AXI violations |
 | `test_shim_reorder` | 2 | `READ_REORDER_DEPTH>1`: same engine ID overlaps cache reads; exactly N single-beat responses return in issue order |
+| `test_shim_id_depth` | 1 | every usable ID, reserved-ID exclusion, write-ID recycle, backpressure, and ROB allocation |
+| `test_shim_buffer_snapshot` | 1 | delayed buffer-hit response remains stable across an unrelated refill |
+| `test_l2top_ids` | 1 | l2_top read/write namespace bit and S/M ID-width mapping |
+| `test_lru_exact` | 1 | every observed hit/miss matches a strict software LRU queue |
 | `test_shim_wrap_negative` | 1 | isolated wrong-WRAP-boundary mutation reproduces only `aux1[13],[14]=0` |
 | `test_eviction` | 2 | heavy aligned + non-aligned eviction round-trip; `WritebackMonitor` (each writeback burst covers one line) + `MemRangeMonitor` (mem AR/AW in cacheable range) |
 | `test_flush` | 7 | whole-cache by-index flush incl. multi-tag/all-ways + scattered high-tag (FIX-B tag coverage); writeback + range monitors |
-| `test_matrix` (pytest) | 48 | policy x ways x DB-latency x victim x CBOM smoke/random + eviction/flush enrichment + cacheable-range sweep (`ADDR_L`/`ADDR_H`, OMITTED_ADDR_W 0-3) |
+| `test_matrix` (pytest) | 47 | policy x ways x supported DB-latency x victim x CBOM smoke/random + eviction/flush/range sweeps + DB_LATENCY=3 rejection |
 | `test_shim_wrap_matrix` (pytest) | 11 | legal `LINE_W`/bus-ratio/TDP-SDP matrix, exact mutation negative control, and invalid-line-width rejection |
+| `test_id_depth_matrix` (pytest) | 18 | ID widths 1–4, reorder depths through 15, write FIFO edges, l2_top ID mapping, and invalid guard cells |
+| `test_geometry_matrix` (pytest) | 41 | exact/odd-way policies, line counts 2–1024, victim 3/5/8, SDP banks through 8/cascade, invalid geometry, and long stress |
 
 Each test file's module docstring explains what bug class it catches.
 Read the file directly; the source is the spec.
@@ -96,13 +102,17 @@ done
 rm -rf sim_build && timeout 600 make MODULE=test_shim_reorder READ_REORDER_DEPTH=8
 rm -rf sim_build .pytest_cache && pytest -q test_matrix.py
 rm -rf sim_build_wrap_* .pytest_cache && pytest -q test_shim_wrap_matrix.py
+rm -rf sim_build_ids_* .pytest_cache && pytest -q test_id_depth_matrix.py
+rm -rf sim_build_geometry_* .pytest_cache && pytest -q test_geometry_matrix.py
 ```
 
 Pass criteria:
 1. every module reports `FAIL=0`
 2. every module reports `PC=0`
-3. `pytest test_matrix.py` reports `48 passed`
+3. `pytest test_matrix.py` reports `47 passed`
 4. `pytest test_shim_wrap_matrix.py` reports `11 passed`
+5. `pytest test_id_depth_matrix.py` reports `18 passed`
+6. `pytest test_geometry_matrix.py` reports `41 passed`
 
 ## 3.1 Coverage
 

@@ -9,7 +9,9 @@
 #   ./tb/vip/run_vip.sh
 #
 # Env: VIP_BUILD (build dir), VIP_PART (FPGA part), plus cache-config knobs
-# VIP_WAYS / VIP_LINES / VIP_LINE_W / VIP_POLICY / VIP_VICTIM (see run_vip.tcl).
+# VIP_WAYS / VIP_LINES / VIP_LINE_W / VIP_POLICY / VIP_VICTIM / VIP_ID_W /
+# VIP_DB_LATENCY / VIP_DATABANK_SDP / VIP_SDP_WRITE_INPUT_REG / VIP_N_BANKS /
+# VIP_CASCADE_DEPTH (see run_vip.tcl).
 # To exercise the GraphBlox direct-mapped deployment (cold flush + victim), run:
 #   VIP_VICTIM=1 VIP_WAYS=1 VIP_LINE_W=8 VIP_LINES=16 ./tb/vip/run_vip.sh
 # T0 (cold whole-cache flush before any warming) + the X-monitor cover the

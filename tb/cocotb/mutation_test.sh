@@ -50,15 +50,16 @@ case "$FILE" in
         )
         ;;
     src/tc_narrow_shim.sv)
-        DEFAULT_TESTS="test_narrow_shim test_shim_cache test_shim_throughput test_shim_prefill_race"
+        DEFAULT_TESTS="test_narrow_shim test_shim_cache test_shim_throughput test_shim_prefill_race test_shim_buffer_snapshot"
         MUTATIONS=(
             "negate_ar_hits_buffer|0,/ar_hits_buffer = lb_valid/{s/ar_hits_buffer = lb_valid/ar_hits_buffer = ~lb_valid/}"
             "drop_buf_drain_term|0,/ar_buf_drain_this_cycle = /{s/ar_buf_drain_this_cycle = .*;/ar_buf_drain_this_cycle = 1'b0;/}"
-            "swap_arvalid_or|0,/m_arvalid = prefill_ar_fire | /{s/m_arvalid = prefill_ar_fire | /m_arvalid = prefill_ar_fire \\& /}"
+            "swap_arvalid_or|0,/s_arvalid & ~ar_hits_buffer/{s/[|] (/\\& (/}"
             "negate_s_arready|0,/s_arready = ar_buf_accept/{s/s_arready = ar_buf_accept/s_arready = ~ar_buf_accept/}"
             "drop_prefill_check|/m_arvalid = prefill_ar_fire/,/;/{s/& ~prefill_active//}"
             "swap_miss_to_hit_path|0,/ar_miss_accept = ~ar_hits_buffer/{s/~ar_hits_buffer/ar_hits_buffer/}"
             "drop_m_arready_dep|0,/ar_miss_accept = ~ar_hits_buffer  & m_arready/{s/& m_arready//}"
+            "break_buf_word_snapshot|s/buf_pend_data_q <= lb_selected_word;/buf_pend_data_q <= '0;/"
         )
         ;;
     src/l2_databank.sv)
@@ -246,16 +247,14 @@ case "$FILE" in
         ;;
     src/LRU.sv)
         # LRU has per-WAYS generate branches. Default config is WAYS=4
-        # which uses gen_4's case table. test_lru_sanity stress-tests
-        # eviction patterns specifically against the LRU policy.
-        DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
+        # which uses gen_4's compressed case table. test_lru_exact compares
+        # every observed hit/miss against a software strict-LRU queue.
+        DEFAULT_TESTS="test_lru_exact test_lru_sanity"
         MUTATIONS=(
-            # Flip case 0's evict (was: evict=3 miss=9). Self-evict
-            # corrupts the WAYS=4 LRU state and the thrash sequence
-            # in test_lru_sanity catches the divergence.
-            "gen4_flip_case0_evict|s/0: begin evict = 3; miss = 9; end/0: begin evict = 0; miss = 9; end/"
+            # Flip case 0's strict-LRU victim from way 0 to way 3.
+            "gen4_flip_case0_evict|s/0: begin evict = 0; miss = 9; end/0: begin evict = 3; miss = 9; end/"
             # Flip case 0's miss-state to an unrelated value.
-            "gen4_flip_case0_miss|s/0: begin evict = 3; miss = 9; end/0: begin evict = 3; miss = 0; end/"
+            "gen4_flip_case0_miss|s/0: begin evict = 0; miss = 9; end/0: begin evict = 0; miss = 0; end/"
         )
         ;;
     src/l2_hash.sv)

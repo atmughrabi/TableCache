@@ -21,7 +21,11 @@ WAYS       ?= 4
 BLOCK_W    ?= 32
 DB_LATENCY ?= 1
 VICTIM     ?= 0
+VICTIM_LINES ?= 8
 CBOM       ?= 1
+ID_W       ?= 4
+MAX_OUTSTANDING_W ?= 16
+CASCADE_DEPTH ?= 8
 NTXN       ?= 100
 SEED       ?= 1
 RATIO_RD   ?= 60
@@ -32,7 +36,7 @@ RATIO_FULL ?= 70
 # override silently does nothing for the RTL while the Python harness still
 # expects 4-byte beats. Force-error instead of letting the test fail with a
 # confusing data-mismatch message.
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_buffer_snapshot test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative test_shim_id_depth),)
 ifneq ($(BLOCK_W),32)
 $(error BLOCK_W=$(BLOCK_W) is not supported on the bare-cocotb path (MODULE=$(MODULE)); only BLOCK_W=32 is wired end-to-end. Use MODULE=test_shim_cache to exercise wider buses (BLOCK_W=512).)
 endif
@@ -43,7 +47,7 @@ SRC_DIR    := $(REPO_ROOT)/src
 TB_DIR     := $(REPO_ROOT)/tb/cocotb
 
 # Shim-only target uses a different top + a single RTL source.
-ifneq (,$(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race))
+ifneq (,$(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_buffer_snapshot))
 NARROW_W   ?= 32
 WIDE_W     ?= 512
 export TC_NARROW_W := $(NARROW_W)
@@ -54,7 +58,7 @@ EXTRA_ARGS += +define+TC_NARROW_W=$(NARROW_W) +define+TC_BLOCK_W=$(WIDE_W)
 ifeq ($(TC_PROMOTE_WMISS),1)
 EXTRA_ARGS += +define+TC_PROMOTE_WMISS=1
 endif
-else ifneq (,$(filter $(MODULE),test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative))
+else ifneq (,$(filter $(MODULE),test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative test_shim_id_depth))
 NARROW_W   ?= 32
 WIDE_W     ?= 512
 # Force LINES/LINE_W/WAYS overrides for the shim+cache integration target.
@@ -91,7 +95,7 @@ VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
     $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
     $(TB_DIR)/axi_protocol_checker.sv \
     $(TB_DIR)/dut_flush.sv
-else ifeq ($(MODULE),test_l2top)
+else ifneq (,$(filter $(MODULE),test_l2top test_l2top_ids))
 # Direct integration test of l2_top (the AXI4 wrapper). Differs from
 # dut_cocotb.sv in that the DUT chain is l2_top -> l2_cache (vs
 # l2_cache directly). Validates l2_top's parameter casting + port
@@ -182,7 +186,18 @@ EXTRA_ARGS += -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINCONNE
               -Wno-SYMRSVDWORD
 EXTRA_ARGS += +define+TC_POLICY=$(POLICY) +define+TC_LINES=$(LINES) +define+TC_LINE_W=$(LINE_W) \
               +define+TC_WAYS=$(WAYS) \
-              +define+TC_DB_LATENCY=$(DB_LATENCY) +define+TC_VICTIM=$(VICTIM) +define+TC_CBOM=$(CBOM)
+              +define+TC_DB_LATENCY=$(DB_LATENCY) +define+TC_VICTIM=$(VICTIM) +define+TC_CBOM=$(CBOM) \
+              +define+TC_ID_W=$(ID_W) +define+TC_MAX_OUTSTANDING_W=$(MAX_OUTSTANDING_W) \
+              +define+TC_VICTIM_LINES=$(VICTIM_LINES) +define+TC_CASCADE_DEPTH=$(CASCADE_DEPTH)
+ifneq ($(M_ID_W),)
+EXTRA_ARGS += +define+TC_M_ID_W=$(M_ID_W)
+endif
+ifneq ($(READ_ID_W),)
+EXTRA_ARGS += +define+TC_READ_ID_W=$(READ_ID_W)
+endif
+ifneq ($(WRITE_ID_W),)
+EXTRA_ARGS += +define+TC_WRITE_ID_W=$(WRITE_ID_W)
+endif
 # Optional RTL diagnostic $display blocks (e.g. DIAG=DIAG_FINISH DIAG_STALL).
 # Harmless when unset; forwards each token as a +define+.
 ifdef DIAG
@@ -229,7 +244,7 @@ ifneq ($(ADDR_H),)
 ADDR_H_DEC := $(shell printf '%u' $(ADDR_H))
 EXTRA_ARGS += +define+TC_ADDR_H=$(ADDR_H_DEC)
 endif
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_buffer_snapshot test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative test_shim_id_depth),)
 EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
 endif
 # DIAG knobs: pass DIAG=1 (DB-level) or DIAG=2 (DB + stall) to enable per-cycle dumps.
@@ -248,11 +263,15 @@ export TC_RATIO_FULL := $(RATIO_FULL)
 export TC_LINES    := $(LINES)
 export TC_LINE_W   := $(LINE_W)
 export TC_WAYS     := $(WAYS)
+export TC_ID_W     := $(ID_W)
+export TC_MAX_OUTSTANDING_W := $(MAX_OUTSTANDING_W)
+export TC_VICTIM_LINES := $(VICTIM_LINES)
+export TC_CASCADE_DEPTH := $(CASCADE_DEPTH)
 # Cacheable base: exported so tests build addresses at the configured range.
 # Empty unless ADDR_L is set; tb_common falls back to 0x80000000.
 export TC_ADDR_L   := $(ADDR_L)
 export TC_ADDR_H   := $(ADDR_H)
-ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative),)
+ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_buffer_snapshot test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative test_shim_id_depth),)
 export TC_BLOCK_W  := $(BLOCK_W)
 endif
 # workload knobs (test_workload.py); leave default if unset

@@ -45,8 +45,13 @@ module dut_shim_cache
 `else
         parameter int WAYS     = 8,
 `endif
+`ifdef TC_ID_W
+        parameter int READ_ID_WIDTH  = `TC_ID_W,
+        parameter int WRITE_ID_WIDTH = `TC_ID_W,
+`else
         parameter int READ_ID_WIDTH  = 4,
         parameter int WRITE_ID_WIDTH = 4,
+`endif
 `ifdef TC_DB_LATENCY
         parameter int DB_LATENCY     = `TC_DB_LATENCY,
 `else
@@ -77,7 +82,26 @@ module dut_shim_cache
 `else
         parameter logic SDP_WRITE_INPUT_REG = 0,
 `endif
-        parameter int VICTIM_LINES = 8
+`ifdef TC_MAX_OUTSTANDING_W
+        parameter int MAX_OUTSTANDING_W = `TC_MAX_OUTSTANDING_W,
+`else
+        parameter int MAX_OUTSTANDING_W = 16,
+`endif
+`ifdef TC_VICTIM_LINES
+        parameter int VICTIM_LINES = `TC_VICTIM_LINES,
+`else
+        parameter int VICTIM_LINES = 8,
+`endif
+`ifdef TC_CASCADE_DEPTH
+        parameter int CASCADE_DEPTH = `TC_CASCADE_DEPTH,
+`else
+        parameter int CASCADE_DEPTH = 8,
+`endif
+`ifdef TC_N_BANKS
+        parameter int N_BANKS = `TC_N_BANKS
+`else
+        parameter int N_BANKS = 1
+`endif
     ) (
         input  logic clk,
         input  logic rst,
@@ -210,7 +234,7 @@ module dut_shim_cache
         .BLOCK_W  (BLOCK_W),
         .ID_W     (READ_ID_WIDTH),
         .ADDR_W   (32),
-        .MAX_OUTSTANDING_W (16),
+        .MAX_OUTSTANDING_W (MAX_OUTSTANDING_W),
         .ENABLE_LINE_BUFFER(1'b1),
         .READ_REORDER_DEPTH(READ_REORDER_DEPTH)
     ) u_shim (
@@ -311,6 +335,8 @@ module dut_shim_cache
         .DB_LATENCY    (DB_LATENCY),
         .DATABANK_SDP  (DATABANK_SDP),
         .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG),
+        .CASCADE_DEPTH  (CASCADE_DEPTH),
+        .N_BANKS        (N_BANKS),
         .INCLUDE_CBOM  (INCLUDE_CBOM),
         .INCLUDE_VICTIM(INCLUDE_VICTIM),
         .VICTIM_LINES  (VICTIM_LINES)

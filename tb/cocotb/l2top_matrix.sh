@@ -9,7 +9,7 @@ set -eu
 cd "$(dirname "$0")"
 
 POLICIES=(LRU SRRIP GRASP)
-WAYS_LIST=(2 4 8)
+WAYS_LIST=(1 2 3 4 5 8)
 
 pass=0
 fail=0

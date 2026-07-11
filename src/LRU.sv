@@ -37,9 +37,9 @@ module LRU
     /*
     arr = list(range(n))
     permutations =[list(i) for i in itertools.permutations(arr)]
-    out_length = n.bit_length()-1
+    out_length = (n-1).bit_length()
     for (i, entry) in enumerate(itertools.permutations(arr)):
-        print(i, ": begin evict = ", entry[n-1], sep="", end="")
+        print(i, ": begin evict = ", entry[0], sep="", end="")
         entry = list(entry)
         entry.append(entry.pop(0))
         print("; miss = ", permutations.index(entry), "; end", sep="")
@@ -72,33 +72,33 @@ module LRU
         logic[2:0] hit; //New state on hit
         always_comb begin
             unique case (cache_original_status)
-                0: begin evict = 2; miss = 3; end
-                1: begin evict = 1; miss = 5; end
-                2: begin evict = 2; miss = 1; end
-                3: begin evict = 0; miss = 4; end
-                4: begin evict = 1; miss = 0; end
-                5: begin evict = 0; miss = 2; end
+                0: begin evict = 0; miss = 3; end
+                1: begin evict = 0; miss = 5; end
+                2: begin evict = 1; miss = 1; end
+                3: begin evict = 1; miss = 4; end
+                4: begin evict = 2; miss = 0; end
+                5: begin evict = 2; miss = 2; end
                 default: begin evict = 'x; miss = 'x; end
             endcase
             unique case ({cache_original_status, cache_way_used_int})
                 0: hit = 3;
                 1: hit = 1;
                 2: hit = 0;
-                2: hit = 5;
-                3: hit = 1;
-                2: hit = 0;
-                4: hit = 3;
+                4: hit = 5;
                 5: hit = 1;
-                6: hit = 2;
-                6: hit = 3;
-                7: hit = 4;
-                6: hit = 2;
-                8: hit = 5;
-                9: hit = 4;
-                10: hit = 0;
-                10: hit = 5;
-                11: hit = 4;
+                6: hit = 0;
+                8: hit = 3;
+                9: hit = 1;
                 10: hit = 2;
+                12: hit = 3;
+                13: hit = 4;
+                14: hit = 2;
+                16: hit = 5;
+                17: hit = 4;
+                18: hit = 0;
+                20: hit = 5;
+                21: hit = 4;
+                22: hit = 2;
                 default: hit = 'x;
             endcase
         end
@@ -113,30 +113,30 @@ module LRU
         logic[4:0] hit; //New state on hit
         always_comb begin
             case (cache_original_status)
-                0: begin evict = 3; miss = 9; end
-                1: begin evict = 2; miss = 11; end
-                2: begin evict = 3; miss = 15; end
-                3: begin evict = 1; miss = 17; end
-                4: begin evict = 2; miss = 21; end
-                5: begin evict = 1; miss = 23; end
-                6: begin evict = 3; miss = 3; end
-                7: begin evict = 2; miss = 5; end
-                8: begin evict = 3; miss = 13; end
-                9: begin evict = 0; miss = 16; end
-                10: begin evict = 2; miss = 19; end
-                11: begin evict = 0; miss = 22; end
-                12: begin evict = 3; miss = 1; end
-                13: begin evict = 1; miss = 4; end
-                14: begin evict = 3; miss = 7; end
-                15: begin evict = 0; miss = 10; end
-                16: begin evict = 1; miss = 18; end
-                17: begin evict = 0; miss = 20; end
-                18: begin evict = 2; miss = 0; end
-                19: begin evict = 1; miss = 2; end
-                20: begin evict = 2; miss = 6; end
-                21: begin evict = 0; miss = 8; end
-                22: begin evict = 1; miss = 12; end
-                23: begin evict = 0; miss = 14; end
+                0: begin evict = 0; miss = 9; end
+                1: begin evict = 0; miss = 11; end
+                2: begin evict = 0; miss = 15; end
+                3: begin evict = 0; miss = 17; end
+                4: begin evict = 0; miss = 21; end
+                5: begin evict = 0; miss = 23; end
+                6: begin evict = 1; miss = 3; end
+                7: begin evict = 1; miss = 5; end
+                8: begin evict = 1; miss = 13; end
+                9: begin evict = 1; miss = 16; end
+                10: begin evict = 1; miss = 19; end
+                11: begin evict = 1; miss = 22; end
+                12: begin evict = 2; miss = 1; end
+                13: begin evict = 2; miss = 4; end
+                14: begin evict = 2; miss = 7; end
+                15: begin evict = 2; miss = 10; end
+                16: begin evict = 2; miss = 18; end
+                17: begin evict = 2; miss = 20; end
+                18: begin evict = 3; miss = 0; end
+                19: begin evict = 3; miss = 2; end
+                20: begin evict = 3; miss = 6; end
+                21: begin evict = 3; miss = 8; end
+                22: begin evict = 3; miss = 12; end
+                23: begin evict = 3; miss = 14; end
                 default: begin evict = 'x; miss = 'x; end
             endcase
             case ({cache_original_status, cache_way_used_int})

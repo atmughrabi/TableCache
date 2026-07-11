@@ -33,15 +33,49 @@ module dut_l2top
 `else
         parameter int BLOCK_W = 32,
 `endif
+`ifdef TC_ID_W
+        parameter int READ_ID_WIDTH  = `TC_ID_W,
+        parameter int WRITE_ID_WIDTH = `TC_ID_W,
+`else
         parameter int READ_ID_WIDTH  = 4,
         parameter int WRITE_ID_WIDTH = 4,
+`endif
+`ifdef TC_M_ID_W
+        parameter int M_ID_WIDTH = `TC_M_ID_W,
+`else
+        parameter int M_ID_WIDTH = READ_ID_WIDTH + 1,
+`endif
 `ifdef TC_POLICY_INT
         parameter int REPLACEMENT_POLICY = `TC_POLICY_INT,
 `else
         parameter int REPLACEMENT_POLICY = 0,
 `endif
         parameter logic INCLUDE_VICTIM = 0,
+`ifdef TC_VICTIM_LINES
+        parameter int VICTIM_LINES = `TC_VICTIM_LINES,
+`else
         parameter int VICTIM_LINES = 8,
+`endif
+`ifdef TC_CASCADE_DEPTH
+        parameter int CASCADE_DEPTH = `TC_CASCADE_DEPTH,
+`else
+        parameter int CASCADE_DEPTH = 8,
+`endif
+`ifdef TC_DATABANK_SDP
+        parameter logic DATABANK_SDP = `TC_DATABANK_SDP,
+`else
+        parameter logic DATABANK_SDP = 0,
+`endif
+`ifdef TC_SDP_WRITE_INPUT_REG
+        parameter logic SDP_WRITE_INPUT_REG = `TC_SDP_WRITE_INPUT_REG,
+`else
+        parameter logic SDP_WRITE_INPUT_REG = 0,
+`endif
+`ifdef TC_N_BANKS
+        parameter int N_BANKS = `TC_N_BANKS,
+`else
+        parameter int N_BANKS = 1,
+`endif
 `ifdef TC_DB_LATENCY
         parameter int DB_LATENCY = `TC_DB_LATENCY
 `else
@@ -61,6 +95,7 @@ module dut_l2top
         input  logic [2:0]                   s_arprot,
         input  logic [3:0]                   s_arqos,
         input  logic [3:0]                   s_arregion,
+        input  logic [3:0]                   s_arsnoop,
         input  logic                         s_arvalid,
         output logic                         s_arready,
         input  logic [READ_ID_WIDTH-1:0]     s_arid,
@@ -79,6 +114,7 @@ module dut_l2top
         input  logic [2:0]                   s_awprot,
         input  logic [3:0]                   s_awqos,
         input  logic [3:0]                   s_awregion,
+        input  logic [2:0]                   s_awsnoop,
         input  logic                         s_awvalid,
         output logic                         s_awready,
         input  logic [WRITE_ID_WIDTH-1:0]    s_awid,
@@ -103,12 +139,12 @@ module dut_l2top
         output logic [3:0]                   m_arqos,
         output logic                         m_arvalid,
         input  logic                         m_arready,
-        output logic [READ_ID_WIDTH:0]       m_arid,
+        output logic [M_ID_WIDTH-1:0]        m_arid,
         input  logic                         m_rvalid,
         input  logic                         m_rlast,
         input  logic [1:0]                   m_rresp,
         input  logic [BLOCK_W-1:0]           m_rdata,
-        input  logic [READ_ID_WIDTH:0]       m_rid,
+        input  logic [M_ID_WIDTH-1:0]        m_rid,
         output logic                         m_rready,
         output logic [31:0]                  m_awaddr,
         output logic [7:0]                   m_awlen,
@@ -120,7 +156,7 @@ module dut_l2top
         output logic [3:0]                   m_awqos,
         output logic                         m_awvalid,
         input  logic                         m_awready,
-        output logic [WRITE_ID_WIDTH:0]      m_awid,
+        output logic [M_ID_WIDTH-1:0]        m_awid,
         output logic                         m_wlast,
         output logic [BLOCK_W-1:0]           m_wdata,
         output logic [BLOCK_W/8-1:0]         m_wstrb,
@@ -128,7 +164,7 @@ module dut_l2top
         input  logic                         m_wready,
         input  logic                         m_bvalid,
         input  logic [1:0]                   m_bresp,
-        input  logic [WRITE_ID_WIDTH:0]      m_bid,
+        input  logic [M_ID_WIDTH-1:0]        m_bid,
         output logic                         m_bready
     );
 
@@ -148,7 +184,12 @@ module dut_l2top
         .REPLACEMENT_POLICY  (REPLACEMENT_POLICY),
         .INCLUDE_VICTIM      (INCLUDE_VICTIM),
         .VICTIM_LINES        (VICTIM_LINES),
+        .CASCADE_DEPTH       (CASCADE_DEPTH),
+        .DATABANK_SDP        (DATABANK_SDP),
+        .SDP_WRITE_INPUT_REG (SDP_WRITE_INPUT_REG),
+        .N_BANKS             (N_BANKS),
         .C_S00_AXI_ID_WIDTH  (READ_ID_WIDTH),
+        .C_M00_AXI_ID_WIDTH  (M_ID_WIDTH),
         .C_S00_AXI_DATA_WIDTH(BLOCK_W),
         .C_S00_AXI_ADDR_WIDTH(32)
     ) inst (
@@ -163,11 +204,10 @@ module dut_l2top
         .grasp_moderate_addr_l(grasp_moderate_addr_l),
         .grasp_moderate_addr_h(grasp_moderate_addr_h),
 
-        // Slave AXI. l2_top now exposes ACE snoop sidebands (s00_axi_arsnoop/
-        // awsnoop); this accelerator-style harness is plain AXI4 so they are
-        // tied to 0 (CBOM disabled). See dut_l2top_flush.sv for the CBOM path.
-        .s00_axi_arsnoop  (4'b0000),
-        .s00_axi_awsnoop  (3'b000),
+        // ACE snoop sidebands are top-level signals so directed tests can
+        // exercise CBOM and WriteEvict; reset_dut ties them to zero by default.
+        .s00_axi_arsnoop  (s_arsnoop),
+        .s00_axi_awsnoop  (s_awsnoop),
         .s00_axi_araddr   (s_araddr),
         .s00_axi_arlen    (s_arlen),
         .s00_axi_arsize   (s_arsize),
