@@ -1,13 +1,4 @@
-"""Set-aliased hot/cold stress for GRASP. Runs in its own simulation
-to avoid cross-test cache contamination from the broader test_grasp
-suite.
-
-Mutation gap coverage: kills the GRASP-policy mutations that
-test_grasp_hot_retained's single-read pattern cannot catch
-(swap_hit_decrement, swap_hot_insert_to_max, swap_hot_hit_to_max).
-
-POLICY=GRASP required.
-"""
+"""Set-aliased hot/cold stress for GRASP."""
 from __future__ import annotations
 import os
 import cocotb

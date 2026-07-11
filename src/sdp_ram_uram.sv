@@ -1,24 +1,9 @@
 // Copyright 2024 Chris Keilbart
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 //
-// sdp_ram_uram: identical to sdp_ram but with `(* ram_style = "ultra" *)`
-// pinned on the storage array. Used by l2_databank.sv when DATABANK_SDP=1
-// to force the data-bank storage into UltraRAM on AMD UltraScale+ parts.
-//
-// Why a separate module: Vivado synth rejects parameter-expression
-// attributes (`ram_style = RAM_STYLE` triggers Synth 8-281). A dedicated
-// wrapper keeps the attribute literal while leaving the general-purpose
-// sdp_ram untouched (the tagbank still wants BRAM auto-inference).
-//
-// URAM caveats:
-//   * Underutilises capacity when ADDR_WIDTH < 12 (< 4096 entries). At
-//     1024 entries × 512 bits Vivado will cascade 8 URAMs in parallel
-//     for width and waste 75% of each URAM's depth -- you trade BRAM
-//     pressure for URAM headroom, which is exactly the point for the
-//     16-CU build.
-//   * Initialises to zero only (no arbitrary init), matches sdp_ram.
-//   * Per-byte writes valid only on the write port (this module is SDP),
-//     same restriction as BRAM SDP.
+// SDP storage with a literal UltraRAM attribute. A separate module is required
+// because Vivado rejects parameterized ram_style attributes. Byte enables are
+// supported on the write port only.
 
 module sdp_ram_uram
 

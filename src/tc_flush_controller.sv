@@ -65,9 +65,6 @@ module tc_flush_controller
     logic _unused;
     assign _unused = ^m_rdata;
 
-    // --------------------------------------------------------------
-    // FSM
-    // --------------------------------------------------------------
     always_comb begin
         state_n = state;
         case (state)
@@ -91,15 +88,11 @@ module tc_flush_controller
                 mode_q   <= (|flush_mode) ? flush_mode : DEFAULT_MODE;
                 line_idx <= '0;
             end else if (state == WAIT_R && state_n == ISSUE) begin
-                // Advance to next line on R last handshake
                 line_idx <= line_idx + 1'b1;
             end
         end
     end
 
-    // --------------------------------------------------------------
-    // AR drive (only in ISSUE state, only when more lines to flush)
-    // --------------------------------------------------------------
     always_comb begin
         m_ar          = '0;
         m_ar.arvalid  = (state == ISSUE) && (line_idx != TOTAL_LINES[LOG2_TOTAL:0]);
@@ -116,9 +109,6 @@ module tc_flush_controller
     end
     assign m_arid = FLUSH_ID;
 
-    // --------------------------------------------------------------
-    // R drain: only ready in WAIT_R, only for our id
-    // --------------------------------------------------------------
     assign m_rready = (state == WAIT_R) && (m_rid == FLUSH_ID);
 
     assign flush_active = (state != IDLE);

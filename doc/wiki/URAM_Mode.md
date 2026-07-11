@@ -1,143 +1,113 @@
-# UltraRAM Mode (`DATABANK_SDP=1`)
+# UltraRAM Databank
 
-> Copy-pasteable single page for GitHub Wiki. Source of truth for the
-> in-tree integration guide is `doc/FPGA_INTEGRATION.md` §10.1. This
-> page is a self-contained summary aimed at users coming from the wiki
-> sidebar.
+`DATABANK_SDP=1` selects a simple-dual-port data array implemented by
+[`sdp_ram_uram.sv`](../../src/sdp_ram_uram.sv). It trades databank concurrency
+for UltraRAM inference on AMD UltraScale+ devices.
 
-TableCache's data array defaults to a true-dual-port (TDP) topology
-that maps cleanly to BRAM but cannot be inferred as UltraRAM on AMD
-UltraScale+ parts. Setting `DATABANK_SDP=1` swaps the storage to a
-simple-dual-port (SDP) topology backed by `sdp_ram_uram` with
-`(* ram_style = "ultra" *)` pinned, freeing BRAM for the rest of your
-design.
+Integration details: [`doc/FPGA_INTEGRATION.md`](../FPGA_INTEGRATION.md)
 
-## TL;DR
+Synthesis flow: [`syn/vivado/README.md`](../../syn/vivado/README.md)
+
+## Configuration
 
 ```sv
 l2_cache #(
-    .LINES       (1024),
-    .LINE_W      (16),       // 64-byte line
-    .WAYS        (8),
-    .BLOCK_W     (32),
-    .DB_LATENCY  (2),        // recommended for URAM cascade depth ≥ 8
-    .DATABANK_SDP(1)         // ← enable UltraRAM packing
-) cache ( /* ports unchanged */ );
+    .DATABANK_SDP          (1),
+    .DB_LATENCY            (2),
+    .SDP_WRITE_INPUT_REG   (1),
+    .N_BANKS               (2),
+    .CASCADE_DEPTH         (4)
+) cache ( /* ports */ );
 ```
 
-## What it costs you
+| Parameter | Meaning |
+|---|---|
+| `DATABANK_SDP` | `0`: TDP/BRAM, `1`: SDP/UltraRAM |
+| `DB_LATENCY` | Databank read pipeline; supported values are 1–2 |
+| `SDP_WRITE_INPUT_REG` | Optional write-input register |
+| `N_BANKS` | Power-of-two bank count dividing `LINES` |
+| `CASCADE_DEPTH` | Primitive cascade depth, 1–8 |
 
-- **~6.3 % throughput** on graph-style workloads (`test_workload` 5000
-  transactions). The cost comes from disabling databank port 1 so the
-  storage stays single-port: fills and reads can no longer overlap.
-- A bit more **timing pressure** at large sizes (512 KB+): UltraRAM
-  has a fixed primitive access time. Long cascade chains accumulate.
-  Bump `DB_LATENCY` to 2 (or 3 at 1 MB) — Vivado will tell you when
-  this is needed.
+## Architectural effect
 
-## What it buys you
+| Property | TDP mode | SDP mode |
+|---|---|---|
+| Storage primitive | BRAM | UltraRAM |
+| Databank ports | two read/write ports | one read + one write port |
+| Port-1 request acceptance | enabled | disabled |
+| Read/write overlap | supported | constrained by the single SDP datapath |
+| External AXI contract | unchanged | unchanged |
+| Tagbank | BRAM | BRAM |
 
-| 16 caches on U250 | TDP (default) | SDP+URAM |
-|---|---:|---:|
-| 256 KB each | 568 BRAM (21 %) | 64 URAM (5 %) |
-| 512 KB each | **2112 BRAM (79 %)** | 256 URAM (20 %), 80 BRAM (3 %) |
-| 1 MB each   | **4128 BRAM (won't fit)** | 544 URAM (43 %), 32 BRAM |
+SDP mode changes storage topology only. Replacement policy, CBOM, victim cache,
+flush control, and external interfaces are unchanged.
 
-Without SDP mode, **1 MB/CU at 16 CUs is impossible** on U250
-(exceeds 2688 BRAM). With SDP mode, it fits comfortably.
+## Banking
 
-## What it does NOT change
+`N_BANKS>1` partitions the data array by line-index low bits. Banking reduces
+per-bank depth and URAM cascade length. Supported bank counts:
 
-- AXI4 / AXI4-ACE-lite contract on the slave port — unchanged.
-- AXI4 master-side contract — unchanged.
-- CBOM, victim cache, flush controller, narrow-port shim — all
-  unaffected (`DATABANK_SDP` only touches the data array).
-- Functional behaviour — verified bit-for-bit against the TDP path
-  by the full 29-test cocotb regression at every PR.
-
-## Decision tree
-
-```
-Are you deploying multiple caches on one die?
-├─ No → leave DATABANK_SDP=0 (default). TDP is faster and uses BRAM well.
-└─ Yes
-   └─ Does your part have UltraRAM (Alveo U250/U280, Versal V80, etc.)?
-      ├─ No  → DATABANK_SDP=0. The SDP path requires UltraRAM.
-      └─ Yes
-         └─ Is BRAM tight at your per-CU size × CU count?
-            ├─ No  → DATABANK_SDP=0. Save the 6.3 % throughput.
-            └─ Yes → DATABANK_SDP=1. Trade throughput for fitting on-die.
+```text
+N_BANKS >= 1
+N_BANKS is a power of two
+N_BANKS divides LINES
 ```
 
-## Verifying it worked
+One line per bank is supported.
 
-After Vivado synth, check `report_utilization` for a non-zero **URAM**
-row in section "2. BLOCKRAM". At `WAYS=8 LINES=1024 LINE_W=16` you
-should see:
+## Selection guidance
 
-```
-| URAM           |   16 |     0 |          0 |      1280 |  1.25 |
-```
+Use TDP mode when:
 
-Vivado also prints per-RAM "automatically implemented using URAM" INFO
-lines during synth.
+- BRAM capacity is sufficient.
+- Databank concurrency is performance-critical.
+- The target device has no UltraRAM.
 
-For a worked sweep across four sizes and both modes, see
-`syn/vivado/sweep_results.md` in the repo (8 configs, full LUT/FF/
-BRAM/URAM/WNS table).
+Use SDP mode when:
 
-## Performance bench commands
+- Multiple cache instances create BRAM pressure.
+- The target provides UltraRAM.
+- The measured throughput cost is acceptable.
+
+Measure both modes with the target geometry and workload. Do not extrapolate
+throughput or timing from a different cache size.
+
+## Synthesis checks
 
 ```bash
-# Compare TDP vs SDP cycle count on the same workload
-cd tb/cocotb && source .venv/bin/activate
-
-# TDP baseline
-rm -rf sim_build
-EXTRA_ARGS="+define+DATABANK_PERF=1" \
-    NTXN=5000 LINES=1024 WAYS=8 LINE_W=16 POLICY=SRRIP \
-    make MODULE=test_workload
-
-# SDP+URAM
-rm -rf sim_build
-EXTRA_ARGS="+define+TC_DATABANK_SDP=1 +define+DATABANK_PERF=1" \
-    NTXN=5000 LINES=1024 WAYS=8 LINE_W=16 POLICY=SRRIP \
-    make MODULE=test_workload
+cd syn/vivado
+DATABANK_SDP=1 DB_LATENCY=2 SDP_WRITE_INPUT_REG=1 \
+N_BANKS=2 CASCADE_DEPTH=4 \
+WAYS=8 LINES=1024 LINE_W=16 POLICY=4 \
+./run_synth.sh
 ```
 
-Both runs print `[DATABANK_PERF] cycles_total = ...` at simulation
-end. Divide to get the throughput ratio.
+Confirm:
 
-## CI coverage
+1. `report_utilization` contains UltraRAM instances.
+2. No RAM-template synthesis error is reported.
+3. Timing closes at the target clock.
+4. The inferred bank and cascade counts match the selected parameters.
 
-Every PR runs the SDP path on five representative test modules
-(`test_smoke`, `test_cbom`, `test_strobe`, `test_backpressure`,
-`test_flush`) — see `.github/workflows/regression.yml`.
+Representative sweeps are recorded in
+[`syn/vivado/sweep_results.md`](../../syn/vivado/sweep_results.md).
 
-Mutation score on the SDP gating logic: **100 %** (4/4 effective
-mutations killed, 2 documented as equivalent).
+## Verification
 
-100-seed `test_random` stress sweep: **100/100 PASS**.
+| Layer | Entry point |
+|---|---|
+| Functional SDP tests | `test_matrix.py`, `test_geometry_matrix.py` |
+| Width and WRAP tests | `test_shim_wrap_matrix.py` |
+| Reset and 4-state tests | `tb/vip/run_vip.sh` |
+| Banking/cascade stress | `test_geometry_matrix.py` |
+| OOC synthesis corners | `syn/vivado/generic_config_matrix.sh` |
 
-## Known limitations
+Current results and exact commands are maintained in
+[`doc/VERIFICATION.md`](../VERIFICATION.md).
 
-- **Throughput ceiling** at -6.3 % vs TDP for graph-style workloads.
-  Recoverable with a 2-bank line-LSB split — design proposal in
-  `doc/DESIGN_BANKED_SDP_DATABANK.md` (~2 weeks engineering effort,
-  defer until measured as binding).
-- **Tagbank is still BRAM** under SDP mode. The tagbank is small
-  enough that URAM would waste capacity; Vivado picks BRAM via auto-
-  inference.
-- **Vivado-only**. The SDP path uses Xilinx `ram_style="ultra"`.
-  Other vendors / tools may need a different storage wrapper.
+## Constraints
 
-## See also
-
-- `doc/INTERFACING.md` §5 / §5.1 — full parameter reference + the
-  SDP table
-- `doc/FPGA_INTEGRATION.md` §10.1 — integration-side how-to
-- `doc/ARCHITECTURE.md` §7.5 — bug history (bugs #13/#14 are the
-  UltraRAM ones)
-- `doc/DESIGN_BANKED_SDP_DATABANK.md` — proposed bank-2 successor
-- `syn/vivado/sweep_results.md` — full per-config synth table
-- `syn/vivado/README.md` — synth flow + per-top headline numbers
+- The UltraRAM template targets AMD Vivado.
+- `DB_LATENCY>2` is unsupported.
+- `N_BANKS` and `CASCADE_DEPTH` are elaboration-time parameters.
+- The tagbank remains separate from the SDP data array.

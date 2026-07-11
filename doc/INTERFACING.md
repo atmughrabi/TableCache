@@ -376,16 +376,8 @@ config (LINES=64, DB_LATENCY=1) flushes a fully-dirty cache in ~5000-
 
 ## 12. What is verified / not verified
 
-See [README.md](README.md) → "Verified configurations" and
-"Known unverified". Short summary:
-
-* **Verified**: data correctness + traffic invariants across POLICY ∈
-  {LRU, FRQ, SECOND_CHANCE, RANDOM, SRRIP}, WAYS ∈ {2,4,8},
-  DB_LATENCY ∈ {1,2,3}, INCLUDE_VICTIM ∈ {0,1}, INCLUDE_CBOM ∈ {0,1}.
-* **Not verified**: BLOCK_W ≠ 32 inside `l2_cache`; ID widths ≠ 4;
-  LINE_W ≠ 8; mid-burst reset; long-idle resume; AXI4 protocol-checker
-  compliance; the shim end-to-end through `l2_cache` (shim is verified
-  standalone against `AxiRam`).
+See [VERIFICATION.md](VERIFICATION.md) for supported matrices, stress tests,
+formal proofs, strict xsim coverage, synthesis checks, and residual gaps.
 
 ---
 

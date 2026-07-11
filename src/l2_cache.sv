@@ -425,21 +425,8 @@ module l2_cache
         .in_use(wdata_table_rdata),
     .*);
 
-    //Deferred in-use clear (RTL bug #2 fix)
-    //When a read-with-eviction produces split finish-FIFO entries (rvalid
-    //alone, then bvalid alone for the writeback), the rvalid head pops
-    //with finish_clear blocked by evict_rdata=1 (eviction still pending),
-    //and the bvalid head pops with finish_clear blocked by rdata_rdata=1.
-    //Result: neither entry clears inuse_id[id] / inuse_line[hash(id)], and
-    //the line stays stuck in-use forever.
-    //
-    //Fix: latch a per-id "deferred clear pending" bit when the rvalid head
-    //pops without clearing due to evict_rdata. At the matching bvalid head
-    //cycle, this bit forces finish_clear regardless of rdata_rdata, then
-    //the bit self-clears. Implemented as a flat register (NOT a toggle
-    //memory) to keep the read path purely combinational from a flop, which
-    //avoids the aggregate-XOR/comb propagation timing that motivated the
-    //bug in the first place.
+    // Split read/eviction finishes may defer the occupancy clear from R to B.
+    // Store that pending clear in flops; this path must not use toggle memory.
     logic[(2**ID_W)-1:0] deferred_inuse_clear;
     logic                deferred_inuse_set_pulse;
     logic                deferred_inuse_rdata;
@@ -461,19 +448,7 @@ module l2_cache
         end
     end
 
-    //Request is done
-    //finish_clear must fire AT MOST ONCE per finish_fifo head entry, because
-    //it toggles bits in toggle_memory_set-backed inuse_id_table and
-    //inuse_line_table. Firing twice on the same entry (e.g. a combined
-    //bvalid+rvalid entry where bid==rid because a read miss evicted a line
-    //that had been stamped with the same read's id) would toggle the same
-    //bit twice and leave it stuck SET, deadlocking any future request that
-    //hashes to that set or recycles that id.
-    //
-    //The combinational `finish_clear_raw` is the OR of all four clear
-    //conditions exactly as before. `clear_done_for_head` latches that the
-    //current head entry has already had its clear, and gates subsequent
-    //cycles until a pop advances to the next entry.
+    // Each finish-FIFO head may toggle occupancy at most once.
     logic finish_clear;
     logic finish_clear_raw;
     logic clear_done_for_head;

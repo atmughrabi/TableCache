@@ -281,10 +281,7 @@ async def test_same_id_burst_then_idle_liveness(dut):
 
     N = 4
     addrs = _line_addrs(N)
-    # TRUE back-to-back burst: hold s_arvalid high across the whole burst,
-    # advancing the address the cycle after each accepted handshake (the shim
-    # serializes via s_arready). Like the accelerator FIFO feeding queued same-id
-    # reads with no arvalid gap.
+    # Hold s_arvalid high; advance the address after each handshake.
     dut.s_arid.value = 0; dut.s_arlen.value = 0; dut.s_arsize.value = ARSIZE
     dut.s_arburst.value = 1
     dut.s_araddr.value = addrs[0]; dut.s_arvalid.value = 1
@@ -329,22 +326,17 @@ async def test_same_id_burst_then_idle_liveness(dut):
 
 @cocotb.test()
 async def test_same_id_pipelined_serializes(dut):
-    """The contract path, driven at the wire level: N back-to-back same-id (0)
-    reads must serialize (peak<=1) and return correct data in issue order."""
+    """Back-to-back same-ID reads serialize and remain ordered."""
     await _run_same_id(dut, 8)
 
 
 @cocotb.test()
 async def test_same_id_backpressure(dut):
-    """Same-id serialization under random s_rready backpressure: the
-    rid_outstanding clear only fires on the R handshake, so backpressure must
-    only DELAY completion -- never let a 2nd same-id AR through or corrupt data.
-    This is the latency/backpressure hardening guard for the bug #26 fix."""
+    """Same-ID serialization remains correct under response backpressure."""
     await _run_same_id(dut, 8, bp_seed=0x5EED)
 
 
 
-# Concurrent hits to consecutive lines stress the two-port databank response path.
 @cocotb.test()
 async def test_distinct_id_hit_concurrency(dut):
     from cocotb.triggers import Event
@@ -359,7 +351,7 @@ async def test_distinct_id_hit_concurrency(dut):
     lanes = max(1, BLK // NARROW_B)
     block_off = int(os.environ.get("BLOCK_OFF", "0"))   # 0=lower block, BLK=upper
     addrs = [(BASE | (i * line_b)) | block_off | ((i % lanes) * NARROW_B) for i in range(N)]
-    # 1) warm every line with a blocking read (distinct ids round-robin)
+    # Warm all lines, then issue concurrent hits on the same addresses.
     for i, a in enumerate(addrs):
         op = await master.read(a, NARROW_B, arid=(i % 8))
         g = int.from_bytes(op.data, "little")
@@ -367,9 +359,6 @@ async def test_distinct_id_hit_concurrency(dut):
     miss = 0
     rounds = int(os.environ.get("HIT_ROUNDS", "8"))
     for round_idx in range(rounds):
-        # Issue all N CONCURRENTLY on distinct ids -> all HITS, pipelined to
-        # consecutive lines (pairs them in the databank's 2-port read pipeline).
-        # Multiple rounds intentionally wrap the small per-port generation tag.
         evs = []
         for i, a in enumerate(addrs):
             ev = Event()

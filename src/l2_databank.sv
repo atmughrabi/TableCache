@@ -392,18 +392,7 @@ module l2_databank
         assign unpacked_rdata[0] = read_was_p1_pipe[LATENCY] ? '0       : sdp_rdata;
         assign unpacked_rdata[1] = read_was_p1_pipe[LATENCY] ? sdp_rdata : '0;
       end else begin : gen_banked_sdp
-        // Phase 2a (experiment/banked-memory): N_BANKS-way banked SDP
-        // storage. The cache controller still drives only port 0 in SDP
-        // mode (port 1 masked); banking here doesn't recover the lost
-        // R+W concurrency yet (that is Phase 2b). What it DOES do is
-        // split the URAM array into N parallel sub-arrays of depth
-        // LINES/N_BANKS, halving the URAM cascade depth per bank and
-        // shortening the CAS_OUT propagation chain that was the binding
-        // path on 1 MB / 2 MB caches.
-        //
-        // Banking key: line address LSBs select bank, so neighbouring
-        // line addresses (common in graph traversal) land in different
-        // banks -- maximises future parallelism when port 1 re-enables.
+        // Bank by line-address low bits to reduce per-bank depth and cascade.
         localparam int BANK_BITS     = $clog2(N_BANKS);
         localparam int PER_BANK_LINE = $bits(line_t) - BANK_BITS;
         localparam int PER_BANK_ADDR = PER_BANK_LINE + $bits(block_t);
@@ -483,21 +472,7 @@ module l2_databank
     end endgenerate
 
 `ifdef DATABANK_PERF
-    // Path-C SDP-feasibility instrumentation. Counts cycles where both
-    // databank ports are simultaneously active, broken down by access
-    // class. Determines whether a single SDP RAM (1R+1W) would be a
-    // viable replacement for the current TDP storage:
-    //   * RR conflict = both ports reading same cycle -> would stall in SDP
-    //   * WW conflict = both ports writing same cycle -> would stall in SDP
-    //   * RW overlap  = one read + one write same cycle -> SDP-friendly
-    // Printed in $final.
-    //
-    // Uses en_gated (not en) so the counters reflect ACTUAL RAM activity:
-    // in DATABANK_SDP=1 mode this means port 1 contributes zero -- which
-    // is what we want, since en[1] (the FSM-internal intent signal) still
-    // pulses high when the upstream attempts a port-1 path that's been
-    // disabled at the boundary. Use the legacy `en[i]` view for "demand
-    // as if TDP" if needed.
+    // Databank activity counters. en_gated reflects actual RAM operations.
     longint perf_cycles_total;
     longint perf_cycles_p0_active;
     longint perf_cycles_p1_active;
