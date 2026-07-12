@@ -22,6 +22,9 @@ ports, and what latency to budget for in your system.
 * **Back end (`mem_*`)**: standard AXI4 (no snoop). Connects to main
   memory, an interconnect, or another cache level.
 * Same `clk` for both, single sync reset (`rst`).
+* The memory backend must return `OKAY` for R and B responses. TableCache has
+  no architectural recovery path for fill or writeback errors; simulation
+  assertions reject non-OKAY responses.
 
 ---
 

@@ -188,6 +188,12 @@ jobs:
              WAYS=$ways LINES=32 LINE_W=8
           done
 
+      - name: Memory response error contract
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          pytest -q test_mem_error_matrix.py
+
       - name: Read reorder buffer + concurrent-hit extra-beat drop (bug #31 guard)
         working-directory: tb/cocotb
         run: |

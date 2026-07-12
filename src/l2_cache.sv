@@ -1538,6 +1538,14 @@ module l2_cache
         assert property (@(posedge clk) disable iff (rst)
             finish_clear |-> finish_valid
         ) else $error("finish_clear without finish_valid");
+    memory_read_response_ok:
+        assert property (@(posedge clk) disable iff (rst)
+            victim_r.rvalid |-> (victim_r.rresp[1:0] == 2'b00)
+        ) else $error("l2_cache: non-OKAY memory RRESP is unsupported");
+    memory_write_response_ok:
+        assert property (@(posedge clk) disable iff (rst)
+            victim_b.bvalid |-> (victim_b.bresp == 2'b00)
+        ) else $error("l2_cache: non-OKAY memory BRESP is unsupported");
 
     // ---- Cover properties (prove the suite exercises interesting cases) ----
     // cp_finish_fifo_full and cp_same_target_suppression hit 0 in regression;

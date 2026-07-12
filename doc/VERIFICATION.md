@@ -42,6 +42,7 @@ cocotb modules.
 | `test_shim_wrap_matrix` (pytest) | 11 | legal `LINE_W`/bus-ratio/TDP-SDP matrix, exact mutation negative control, and invalid-line-width rejection |
 | `test_id_depth_matrix` (pytest) | 18 | ID widths 1–4, reorder depths through 15, write FIFO edges, l2_top ID mapping, and invalid guard cells |
 | `test_geometry_matrix` (pytest) | 42 | exact/odd-way policies, line counts 2–1024, victim 3/5/8, SDP banks through 8/cascade, invalid geometry, and long/reset stress |
+| `test_mem_error_matrix` (pytest) | 4 | non-OKAY R/B responses are rejected with victim disabled and enabled |
 
 Each test file's module docstring explains what bug class it catches.
 Read the file directly; the source is the spec.
@@ -104,6 +105,7 @@ rm -rf sim_build .pytest_cache && pytest -q test_matrix.py
 rm -rf sim_build_wrap_* .pytest_cache && pytest -q test_shim_wrap_matrix.py
 rm -rf sim_build_ids_* .pytest_cache && pytest -q test_id_depth_matrix.py
 rm -rf sim_build_geometry_* .pytest_cache && pytest -q test_geometry_matrix.py
+rm -rf sim_build_memerr_* .pytest_cache && pytest -q test_mem_error_matrix.py
 ```
 
 Pass criteria:
@@ -113,6 +115,7 @@ Pass criteria:
 4. `pytest test_shim_wrap_matrix.py` reports `11 passed`
 5. `pytest test_id_depth_matrix.py` reports `18 passed`
 6. `pytest test_geometry_matrix.py` reports `42 passed`
+7. `pytest test_mem_error_matrix.py` reports `4 passed`
 
 ## 3.1 Coverage
 

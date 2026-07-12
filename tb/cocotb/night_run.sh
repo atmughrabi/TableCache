@@ -110,6 +110,13 @@ rc=$?
 log "PHASE 3e done: rc=$rc | $(tail -1 "$OUT/phase3e_l2top.log")"
 [[ $rc -eq 0 ]] || fail=$((fail+1))
 
+log "PHASE 3f: memory response error contract"
+rm -rf sim_build_memerr_* .pytest_cache
+timeout 1200 pytest -q test_mem_error_matrix.py > "$OUT/phase3f_mem_errors.log" 2>&1
+rc=$?
+log "PHASE 3f done: rc=$rc | $(grep -E 'passed|failed' "$OUT/phase3f_mem_errors.log" | tail -1)"
+[[ $rc -eq 0 ]] || fail=$((fail+1))
+
 # ----------------------------------------------------------------------
 # Phase 4 -- mutation re-baselines (sanity check that scores haven't drifted)
 # ----------------------------------------------------------------------

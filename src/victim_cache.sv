@@ -369,7 +369,9 @@ module victim_cache
     assign mem_ar.arprot = cache_ar.arprot;
     assign cache_arready = mem_arready & ~pending_reads_full;
 
-    assign cache_r.rresp = '0; //OK
+    // Victim hits are local and return OKAY; memory misses preserve RRESP.
+    assign cache_r.rresp = current_state != RETURNING && mem_r.rvalid
+                         ? mem_r.rresp : '0;
 
     assign mem_aw.awvalid = cache_aw.awvalid & ~pending_writes_full;
     assign mem_aw.awaddr = cache_aw.awaddr;
@@ -393,7 +395,7 @@ module victim_cache
 
     assign cache_b.bvalid = mem_b.bvalid;
     assign cache_bid = mem_bid;
-    assign cache_b.bresp = '0; //OK
+    assign cache_b.bresp = mem_b.bresp;
     assign mem_bready = cache_bready;
 
 endmodule

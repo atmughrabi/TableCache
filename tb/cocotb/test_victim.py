@@ -33,6 +33,7 @@ VICTIM_ON   = os.environ.get("TC_VICTIM", "0") == "1" or \
               os.environ.get("VICTIM", "0") == "1"
 
 ARSNOOP_MAKE_INVALID  = 0b1101
+WB_ALLOC = 0xF
 
 
 def line_addr(s: int, t: int) -> int:
@@ -40,13 +41,15 @@ def line_addr(s: int, t: int) -> int:
 
 
 async def _read_block(master, addr):
-    op = await with_timeout(master.read(addr, BLOCK_BYTES), 5_000, "ns")
+    op = await with_timeout(
+        master.read(addr, BLOCK_BYTES, cache=WB_ALLOC), 5_000, "ns")
     return int.from_bytes(op.data, "little")
 
 
 async def _write_block(master, addr, val):
     await with_timeout(
-        master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
+        master.write(
+            addr, val.to_bytes(BLOCK_BYTES, "little"), cache=WB_ALLOC),
         5_000, "ns"
     )
 
@@ -54,7 +57,8 @@ async def _write_block(master, addr, val):
 async def _cbom(dut, master, addr, snoop):
     await RisingEdge(dut.clk)
     dut.s_arsnoop.value = snoop
-    await with_timeout(master.read(addr, BLOCK_BYTES), 5_000, "ns")
+    await with_timeout(
+        master.read(addr, BLOCK_BYTES, cache=WB_ALLOC), 5_000, "ns")
     await RisingEdge(dut.clk)
     dut.s_arsnoop.value = 0
 
