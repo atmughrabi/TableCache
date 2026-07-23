@@ -465,7 +465,7 @@ Useful fixtures and patterns:
 | replacement policy sweep | matrix |
 | victim cache on/off, CBOM on/off | matrix |
 | DB latency 1/2/3 | matrix |
-| cacheable-range sweep (`ADDR_L`/`ADDR_H`, OMITTED_ADDR_W 0-3 incl. base-0 full 4 GiB) | eviction, flush, matrix (range sweep); VIP (`VIP_ADDR_L=0`) |
+| cacheable-range sweep (`ADDR_W`, `ADDR_L`/`ADDR_H`; 32-bit and 64-bit high/full ranges) | eviction, flush, matrix (range sweep); VIP (`VIP_ADDR_L=0`) |
 
 ## 6. What is not covered
 

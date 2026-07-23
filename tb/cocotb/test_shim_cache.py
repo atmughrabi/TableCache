@@ -16,7 +16,8 @@ for _n in ("cocotb.dut_shim_cache.s", "cocotb.dut_shim_cache.m"):
     logging.getLogger(_n).setLevel(_AXI_LOG_LVL)
 
 CLK_NS    = 10
-BASE      = 0x8000_0000
+ADDR_W    = int(os.environ.get("TC_ADDR_W", "32"))
+BASE      = int(os.environ.get("TC_ADDR_L") or "0x80000000", 0)
 NARROW_W  = int(os.environ.get("TC_NARROW_W", "32"))
 BLOCK_W   = int(os.environ.get("TC_BLOCK_W",  "512"))
 NARROW_B  = NARROW_W // 8

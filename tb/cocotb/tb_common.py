@@ -17,8 +17,10 @@ CLK_PERIOD_NS = 10
 
 # Cacheable base address the tests build transactions at. Mirrors the RTL
 # ADDR_RANGE_L (Makefile ADDR_L -> TC_ADDR_L). Default matches the cache's own
-# default [0x80000000,0xFFFFFFFF]. Set ADDR_L=0 for a base-0 full range. The
+# default upper half of the configured address space. Set ADDR_L=0 for a
+# base-0 full range. The
 # golden() pattern below only depends on addr[15:0], so it is BASE-independent.
+ADDR_W = int(os.environ.get("TC_ADDR_W") or "32", 0)
 BASE = int(os.environ.get("TC_ADDR_L") or "0x80000000", 0)
 RANGE_H = int(os.environ.get("TC_ADDR_H") or "0xFFFFFFFF", 0)
 

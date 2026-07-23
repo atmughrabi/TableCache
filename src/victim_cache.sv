@@ -17,12 +17,13 @@ module victim_cache
         //For victim
         parameter int unsigned LINES = 8,
         //From primary cache
-        parameter logic[31:0] ADDR_RANGE_H = 32'hFFFFFFFF,
-        parameter logic[31:0] ADDR_RANGE_L = 32'h80000000,
+        parameter logic[CACHE_ADDR_MAX_W-1:0] ADDR_RANGE_H = 64'h0000_0000_FFFF_FFFF,
+        parameter logic[CACHE_ADDR_MAX_W-1:0] ADDR_RANGE_L = 64'h0000_0000_8000_0000,
         parameter int unsigned LINE_W = 8,
         parameter int unsigned BLOCK_W = 32,
         parameter int unsigned READ_ID_WIDTH = 5,
-        parameter int unsigned WRITE_ID_WIDTH = 5
+        parameter int unsigned WRITE_ID_WIDTH = 5,
+        parameter int unsigned ADDR_W = 32
     )
     (
         input logic clk,
@@ -81,13 +82,18 @@ module victim_cache
 
     //Constants
     localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
-    //33-bit span so a full 32-bit cached range (base-0 [0,0xFFFFFFFF]) does not
-    //overflow H-L+1 to 0. OMITTED_ADDR_W==0 for a full-range cache.
-    localparam int unsigned RANGE_SPAN_LOG2 = $clog2((33'(ADDR_RANGE_H) - 33'(ADDR_RANGE_L)) + 33'd1);
-    localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
+    localparam logic[ADDR_W-1:0] ADDR_RANGE_H_USED = ADDR_RANGE_H[ADDR_W-1:0];
+    localparam logic[ADDR_W-1:0] ADDR_RANGE_L_USED = ADDR_RANGE_L[ADDR_W-1:0];
+    localparam logic[ADDR_W:0] RANGE_ONE = {{ADDR_W{1'b0}}, 1'b1};
+    localparam logic[ADDR_W:0] RANGE_SPAN =
+        ({1'b0, ADDR_RANGE_H_USED} - {1'b0, ADDR_RANGE_L_USED}) + RANGE_ONE;
+    localparam int unsigned RANGE_SPAN_LOG2 = $clog2(RANGE_SPAN);
     localparam int unsigned CONSTANT_LOWER_W = $clog2(BLOCK_W/8);
-    localparam int unsigned TAG_W = RANGE_SPAN_LOG2 - BLOCK_ADDR_W - CONSTANT_LOWER_W;
-    //Bit offset of the tag within a 32-bit address: {tag, block, byte-offset}.
+    localparam int signed TAG_W_CALC = int'(RANGE_SPAN_LOG2)
+        - int'(BLOCK_ADDR_W) - int'(CONSTANT_LOWER_W);
+    localparam int unsigned TAG_W = TAG_W_CALC > 0 ? TAG_W_CALC : 1;
+    //Bit offset of the tag within an ADDR_W-bit address:
+    //{fixed range prefix, tag, block, byte-offset}.
     localparam int unsigned TAG_LSB = CONSTANT_LOWER_W + BLOCK_ADDR_W;
 
     typedef logic[TAG_W-1:0] tag_t;
@@ -113,12 +119,31 @@ module victim_cache
 
     ////////////////////////////////////////////////////
     //Implementation
-    logic[31:0] r_addr;
-    logic[31:0] w_addr;
-    assign r_addr = cache_ar.araddr;
-    assign w_addr = cache_aw.awaddr;
-    // Address fields by position (valid for OMITTED_ADDR_W==0, i.e. a full-range
-    // cache, where there are no fixed high bits): {tag, block, byte-offset}.
+    if (ADDR_W < 32 || ADDR_W > CACHE_ADDR_MAX_W) begin : gen_addr_width_guard
+        $fatal(1, "victim_cache: ADDR_W=%0d unsupported; must be 32..%0d.", ADDR_W, CACHE_ADDR_MAX_W);
+    end
+    if ((ADDR_RANGE_H >> ADDR_W) != '0 || (ADDR_RANGE_L >> ADDR_W) != '0) begin : gen_range_width_guard
+        $fatal(1, "victim_cache: ADDR_RANGE_L/H set bits above ADDR_W=%0d.", ADDR_W);
+    end
+    if (ADDR_RANGE_H_USED < ADDR_RANGE_L_USED) begin : gen_range_order_guard
+        $fatal(1, "victim_cache: ADDR_RANGE_H=0x%0h is below ADDR_RANGE_L=0x%0h.", ADDR_RANGE_H_USED, ADDR_RANGE_L_USED);
+    end
+    if ((RANGE_SPAN & (RANGE_SPAN - RANGE_ONE)) != '0) begin : gen_range_size_guard
+        $fatal(1, "victim_cache: cacheable range span 0x%0h is not a power of two.", RANGE_SPAN);
+    end
+    if (({1'b0, ADDR_RANGE_L_USED} & (RANGE_SPAN - RANGE_ONE)) != '0) begin : gen_range_alignment_guard
+        $fatal(1, "victim_cache: ADDR_RANGE_L=0x%0h is not aligned to span 0x%0h.", ADDR_RANGE_L_USED, RANGE_SPAN);
+    end
+    if (TAG_W_CALC < 1) begin : gen_tag_width_guard
+        $fatal(1, "victim_cache: address range is too small for LINE_W=%0d BLOCK_W=%0d.", LINE_W, BLOCK_W);
+    end
+
+    logic[ADDR_W-1:0] r_addr;
+    logic[ADDR_W-1:0] w_addr;
+    assign r_addr = cache_ar.araddr[ADDR_W-1:0];
+    assign w_addr = cache_aw.awaddr[ADDR_W-1:0];
+    // Address fields by position. Fixed high range bits are omitted from the
+    // CAM tag; variable bits are {tag, block, byte-offset}.
     wire tag_t   r_tag   = r_addr[TAG_LSB +: TAG_W];
     wire tag_t   w_tag   = w_addr[TAG_LSB +: TAG_W];
     wire block_t r_block = r_addr[CONSTANT_LOWER_W +: BLOCK_ADDR_W];

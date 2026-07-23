@@ -118,13 +118,26 @@ Vivado OOC synthesis:
 | `BLOCK_W` | 8–1024 bits; power-of-two bytes |
 | `DB_LATENCY` | 1 or 2 |
 | `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | equal, at least 1 |
+| `ADDR_W` | 32–64 bits (geometry must leave at least one tag bit) |
 | `ADDR_RANGE_L/H` | naturally aligned power-of-two range |
 | `VICTIM_LINES` | at least 2 |
 | `N_BANKS` | power of two that divides `LINES` |
 | `CASCADE_DEPTH` | 1–8 |
 
-The `l2_top` wrapper uses 32-bit addresses, matched slave/master data widths,
-and a memory-side ID width equal to the slave ID width plus one.
+The `l2_top` wrapper supports matched slave/master address widths from 32 to
+64 bits, matched slave/master data widths, and a memory-side ID width equal
+to the slave ID width plus one. The default remains 32-bit addresses.
+
+Example: cache a 4 GiB window immediately above the 32-bit address space:
+
+```systemverilog
+l2_top #(
+    .C_S00_AXI_ADDR_WIDTH (64),
+    .C_M00_AXI_ADDR_WIDTH (64),
+    .ADDR_L                (64'h0000_0001_0000_0000),
+    .ADDR_H                (64'h0000_0001_FFFF_FFFF)
+) cache (/* AXI ports */);
+```
 
 See [doc/INTERFACING.md](doc/INTERFACING.md) for ports, snoop encodings,
 reserved IDs, burst rules, and integration constraints.

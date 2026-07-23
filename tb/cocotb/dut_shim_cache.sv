@@ -97,6 +97,21 @@ module dut_shim_cache
 `else
         parameter int CASCADE_DEPTH = 8,
 `endif
+`ifdef TC_ADDR_W
+        parameter int ADDR_W = `TC_ADDR_W,
+`else
+        parameter int ADDR_W = 32,
+`endif
+`ifdef TC_ADDR_L
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = `TC_ADDR_L,
+`else
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = ADDR_W'(64'h8000_0000),
+`endif
+`ifdef TC_ADDR_H
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = `TC_ADDR_H,
+`else
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = ADDR_W'(64'hFFFF_FFFF),
+`endif
 `ifdef TC_N_BANKS
         parameter int N_BANKS = `TC_N_BANKS
 `else
@@ -107,7 +122,7 @@ module dut_shim_cache
         input  logic rst,
 
         // narrow slave (accelerator)
-        input  logic [31:0]                 s_araddr,
+        input  logic [ADDR_W-1:0]           s_araddr,
         input  logic [7:0]                  s_arlen,
         input  logic [2:0]                  s_arsize,
         input  logic [1:0]                  s_arburst,
@@ -127,7 +142,7 @@ module dut_shim_cache
         output logic                        s_rvalid,
         input  logic                        s_rready,
 
-        input  logic [31:0]                 s_awaddr,
+        input  logic [ADDR_W-1:0]           s_awaddr,
         input  logic [7:0]                  s_awlen,
         input  logic [2:0]                  s_awsize,
         input  logic [1:0]                  s_awburst,
@@ -152,7 +167,7 @@ module dut_shim_cache
         input  logic                        s_bready,
 
         // wide master (AxiRam / DDR)
-        output logic [31:0]                 m_araddr,
+        output logic [ADDR_W-1:0]           m_araddr,
         output logic [7:0]                  m_arlen,
         output logic [2:0]                  m_arsize,
         output logic [1:0]                  m_arburst,
@@ -172,7 +187,7 @@ module dut_shim_cache
         input  logic                        m_rvalid,
         output logic                        m_rready,
 
-        output logic [31:0]                 m_awaddr,
+        output logic [ADDR_W-1:0]           m_awaddr,
         output logic [7:0]                  m_awlen,
         output logic [2:0]                  m_awsize,
         output logic [1:0]                  m_awburst,
@@ -200,7 +215,7 @@ module dut_shim_cache
     // -------------------------------------------------------------
     // Wires between shim and cache (wide AXI)
     // -------------------------------------------------------------
-    logic [31:0]                  c_araddr;
+    logic [ADDR_W-1:0]            c_araddr;
     logic [7:0]                   c_arlen;
     logic [2:0]                   c_arsize;
     logic [1:0]                   c_arburst;
@@ -212,7 +227,7 @@ module dut_shim_cache
     logic                         c_rlast;
     logic [READ_ID_WIDTH-1:0]     c_rid;
     logic                         c_rvalid, c_rready;
-    logic [31:0]                  c_awaddr;
+    logic [ADDR_W-1:0]            c_awaddr;
     logic [7:0]                   c_awlen;
     logic [2:0]                   c_awsize;
     logic [1:0]                   c_awburst;
@@ -233,7 +248,7 @@ module dut_shim_cache
         .NARROW_W (NARROW_W),
         .BLOCK_W  (BLOCK_W),
         .ID_W     (READ_ID_WIDTH),
-        .ADDR_W   (32),
+        .ADDR_W   (ADDR_W),
         .MAX_OUTSTANDING_W (MAX_OUTSTANDING_W),
         .ENABLE_LINE_BUFFER(1'b1),
         .READ_REORDER_DEPTH(READ_REORDER_DEPTH)
@@ -293,13 +308,13 @@ module dut_shim_cache
     assign c_bresp  = c_b.bresp;
 
     // Mem-side (cache -> AxiRam)
-    localparam logic [31:0] MEM_MASK = 32'h07FF_FFFF;
+    localparam logic [ADDR_W-1:0] MEM_MASK = ADDR_W'(32'h07FF_FFFF);
     ar_t mem_ar_s;
     aw_t mem_aw_s;
     w_t  mem_w_s;
     r_t  mem_r_s;
     b_t  mem_b_s;
-    assign m_araddr   = mem_ar_s.araddr & MEM_MASK;
+    assign m_araddr   = mem_ar_s.araddr[ADDR_W-1:0] & MEM_MASK;
     assign m_arlen    = mem_ar_s.arlen;
     assign m_arsize   = mem_ar_s.arsize;
     assign m_arburst  = mem_ar_s.arburst;
@@ -309,7 +324,7 @@ module dut_shim_cache
     assign m_arqos    = mem_ar_s.arqos;
     assign m_arregion = mem_ar_s.arregion;
     assign m_arvalid  = mem_ar_s.arvalid;
-    assign m_awaddr   = mem_aw_s.awaddr & MEM_MASK;
+    assign m_awaddr   = mem_aw_s.awaddr[ADDR_W-1:0] & MEM_MASK;
     assign m_awlen    = mem_aw_s.awlen;
     assign m_awsize   = mem_aw_s.awsize;
     assign m_awburst  = mem_aw_s.awburst;
@@ -332,6 +347,9 @@ module dut_shim_cache
         .BLOCK_W       (BLOCK_W),
         .READ_ID_WIDTH (READ_ID_WIDTH),
         .WRITE_ID_WIDTH(WRITE_ID_WIDTH),
+        .ADDR_W        (ADDR_W),
+        .ADDR_RANGE_L  (ADDR_RANGE_L),
+        .ADDR_RANGE_H  (ADDR_RANGE_H),
         .DB_LATENCY    (DB_LATENCY),
         .DATABANK_SDP  (DATABANK_SDP),
         .SDP_WRITE_INPUT_REG(SDP_WRITE_INPUT_REG),
@@ -343,8 +361,8 @@ module dut_shim_cache
     ) u_cache (
         .clk(clk), .rst(rst),
         //GRASP region ports tied off (SRRIP-FP fallback; this TB doesn't exercise them).
-        .grasp_high_addr_l(32'h0), .grasp_high_addr_h(32'h0),
-        .grasp_moderate_addr_l(32'h0), .grasp_moderate_addr_h(32'h0),
+        .grasp_high_addr_l('0), .grasp_high_addr_h('0),
+        .grasp_moderate_addr_l('0), .grasp_moderate_addr_h('0),
         .req_ar(c_ar), .req_arid(c_arid), .req_arready(c_arready),
         .req_r (c_r ), .req_rdata(c_rdata), .req_rid(c_rid), .req_rready(c_rready),
         .req_aw(c_aw), .req_awid(c_awid), .req_awready(c_awready),
@@ -370,7 +388,7 @@ module dut_shim_cache
     // s_rvalid is a combinational reflection of m_rvalid → AxiRam reset
     // quirk propagates here).
     axi4_protocol_checker #(
-        .ADDR_W                  (32),
+        .ADDR_W                  (ADDR_W),
         .DATA_W                  (NARROW_W),
         .ID_W                    (READ_ID_WIDTH),
         .CHECK_C6                (1'b0),
@@ -394,7 +412,7 @@ module dut_shim_cache
     // are DUT, so all rules stay enabled — this is the highest-value
     // checker instance and any violation here is a real bug.
     axi4_protocol_checker #(
-        .ADDR_W (32),
+        .ADDR_W (ADDR_W),
         .DATA_W (BLOCK_W),
         .ID_W   (READ_ID_WIDTH)
     ) pc_cache (
@@ -414,7 +432,7 @@ module dut_shim_cache
     // pc_mem: cache's m_* output going to cocotbext-axi AxiRam. Disable
     // B1_RESPONSE_VALID (AxiRam reset quirk).
     axi4_protocol_checker #(
-        .ADDR_W                  (32),
+        .ADDR_W                  (ADDR_W),
         .DATA_W                  (BLOCK_W),
         .ID_W                    (READ_ID_WIDTH + 1),
         .CHECK_B1_RESPONSE_VALID (1'b0)

@@ -43,15 +43,20 @@ module dut_cocotb
 `else
         parameter int WRITE_ID_WIDTH = 4,
 `endif
-`ifdef TC_ADDR_L
-        parameter logic [31:0] ADDR_RANGE_L = `TC_ADDR_L,
+`ifdef TC_ADDR_W
+        parameter int ADDR_W = `TC_ADDR_W,
 `else
-        parameter logic [31:0] ADDR_RANGE_L = 32'h80000000,
+        parameter int ADDR_W = 32,
+`endif
+`ifdef TC_ADDR_L
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = `TC_ADDR_L,
+`else
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = ADDR_W'(64'h8000_0000),
 `endif
 `ifdef TC_ADDR_H
-        parameter logic [31:0] ADDR_RANGE_H = `TC_ADDR_H,
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = `TC_ADDR_H,
 `else
-        parameter logic [31:0] ADDR_RANGE_H = 32'hFFFFFFFF,
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = ADDR_W'(64'hFFFF_FFFF),
 `endif
 `ifdef TC_DB_LATENCY
         parameter int DB_LATENCY     = `TC_DB_LATENCY,
@@ -108,7 +113,7 @@ module dut_cocotb
         input  logic rst,
 
         // ===== Slave AXI/ACE port (cocotb master drives the cache) =====
-        input  logic [31:0]                 s_araddr,
+        input  logic [ADDR_W-1:0]           s_araddr,
         input  logic [7:0]                  s_arlen,
         input  logic [2:0]                  s_arsize,
         input  logic [1:0]                  s_arburst,
@@ -129,7 +134,7 @@ module dut_cocotb
         output logic [READ_ID_WIDTH-1:0]    s_rid,
         input  logic                        s_rready,
 
-        input  logic [31:0]                 s_awaddr,
+        input  logic [ADDR_W-1:0]           s_awaddr,
         input  logic [7:0]                  s_awlen,
         input  logic [2:0]                  s_awsize,
         input  logic [1:0]                  s_awburst,
@@ -155,7 +160,7 @@ module dut_cocotb
         input  logic                        s_bready,
 
         // ===== Master AXI port (cache talks to memory, cocotb AxiRam responds) =====
-        output logic [31:0]                 m_araddr,
+        output logic [ADDR_W-1:0]           m_araddr,
         output logic [7:0]                  m_arlen,
         output logic [2:0]                  m_arsize,
         output logic [1:0]                  m_arburst,
@@ -175,7 +180,7 @@ module dut_cocotb
         input  logic [READ_ID_WIDTH:0]      m_rid,
         output logic                        m_rready,
 
-        output logic [31:0]                 m_awaddr,
+        output logic [ADDR_W-1:0]           m_awaddr,
         output logic [7:0]                  m_awlen,
         output logic [2:0]                  m_awsize,
         output logic [1:0]                  m_awburst,
@@ -200,19 +205,18 @@ module dut_cocotb
         output logic                        m_bready,
 
         // Runtime-configurable GRASP address region bounds.
-        // Drive to 32'h0 when not in use (SRRIP-FP fallback).  Packed as
-        // GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS consecutive 32-bit
-        // windows; window i = bits [i*32 +: 32].
-        input  logic [GRASP_HIGH_REGIONS*32-1:0]      grasp_high_addr_l,
-        input  logic [GRASP_HIGH_REGIONS*32-1:0]      grasp_high_addr_h,
-        input  logic [GRASP_MODERATE_REGIONS*32-1:0]  grasp_moderate_addr_l,
-        input  logic [GRASP_MODERATE_REGIONS*32-1:0]  grasp_moderate_addr_h,
+        // Drive to zero when not in use (SRRIP-FP fallback). Window i
+        // occupies bits [i*ADDR_W +: ADDR_W].
+        input  logic [GRASP_HIGH_REGIONS*ADDR_W-1:0]      grasp_high_addr_l,
+        input  logic [GRASP_HIGH_REGIONS*ADDR_W-1:0]      grasp_high_addr_h,
+        input  logic [GRASP_MODERATE_REGIONS*ADDR_W-1:0]  grasp_moderate_addr_l,
+        input  logic [GRASP_MODERATE_REGIONS*ADDR_W-1:0]  grasp_moderate_addr_h,
 
         // Debug: the FULL reconstructed mem-side addresses BEFORE the MEM_MASK
         // fold below. Exposed so a testbench monitor can verify absolute address
         // reconstruction (OMITTED_CONSTANT high bits) that MEM_MASK would hide.
-        output logic [31:0]                           dbg_m_araddr_full,
-        output logic [31:0]                           dbg_m_awaddr_full
+        output logic [ADDR_W-1:0]                     dbg_m_araddr_full,
+        output logic [ADDR_W-1:0]                     dbg_m_awaddr_full
     );
 
     // -- Slave-side: pack flat signals into ar_t/aw_t/w_t structs --
@@ -244,15 +248,15 @@ module dut_cocotb
     // Mask mem addresses to a 128 MiB window so AxiRam can be small but big
     // enough for realistic graph-style workloads (50-100 MB hot/cold pool).
     // Cache's address space is [0x80000000, 0xFFFFFFFF]; we map low 27 bits to RAM.
-    localparam logic [31:0] MEM_MASK = 32'h07FF_FFFF;
+    localparam logic [ADDR_W-1:0] MEM_MASK = ADDR_W'(32'h07FF_FFFF);
     ar_t m_ar;
     aw_t m_aw;
     w_t  m_w;
     r_t  m_r;
     b_t  m_b;
-    assign m_araddr   = m_ar.araddr & MEM_MASK;
-    assign dbg_m_araddr_full = m_ar.araddr;   // pre-mask, for range monitor
-    assign dbg_m_awaddr_full = m_aw.awaddr;   // pre-mask, for range monitor
+    assign m_araddr   = m_ar.araddr[ADDR_W-1:0] & MEM_MASK;
+    assign dbg_m_araddr_full = m_ar.araddr[ADDR_W-1:0]; // pre-mask
+    assign dbg_m_awaddr_full = m_aw.awaddr[ADDR_W-1:0]; // pre-mask
     assign m_arlen    = m_ar.arlen;
     assign m_arsize   = m_ar.arsize;
     assign m_arburst  = m_ar.arburst;
@@ -262,7 +266,7 @@ module dut_cocotb
     assign m_arqos    = m_ar.arqos;
     assign m_arregion = m_ar.arregion;
     assign m_arvalid  = m_ar.arvalid;
-    assign m_awaddr   = m_aw.awaddr & MEM_MASK;
+    assign m_awaddr   = m_aw.awaddr[ADDR_W-1:0] & MEM_MASK;
     assign m_awlen    = m_aw.awlen;
     assign m_awsize   = m_aw.awsize;
     assign m_awburst  = m_aw.awburst;
@@ -285,6 +289,7 @@ module dut_cocotb
         .BLOCK_W        (BLOCK_W),
         .READ_ID_WIDTH  (READ_ID_WIDTH),
         .WRITE_ID_WIDTH (WRITE_ID_WIDTH),
+        .ADDR_W         (ADDR_W),
         .ADDR_RANGE_L   (ADDR_RANGE_L),
         .ADDR_RANGE_H   (ADDR_RANGE_H),
         .DB_LATENCY     (DB_LATENCY),
@@ -332,7 +337,7 @@ module dut_cocotb
     // Disable C6 here so the regression baseline is clean; C6 stays active on
     // pc_mem to catch any cache-driven WLAST regression.
     axi4_protocol_checker #(
-        .ADDR_W   (32),
+        .ADDR_W   (ADDR_W),
         .DATA_W   (BLOCK_W),
         .ID_W     (READ_ID_WIDTH),   // = WRITE_ID_WIDTH on this DUT
         .CHECK_C6 (1'b0)
@@ -359,7 +364,7 @@ module dut_cocotb
     // on the master-driven AR/AW/W channels (where it would catch a real
     // cache RTL regression) but suppress B1 on RVALID/BVALID.
     axi4_protocol_checker #(
-        .ADDR_W                  (32),
+        .ADDR_W                  (ADDR_W),
         .DATA_W                  (BLOCK_W),
         .ID_W                    (READ_ID_WIDTH + 1),
         .CHECK_B1_RESPONSE_VALID (1'b0)

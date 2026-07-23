@@ -24,7 +24,11 @@ module dut_shim_only
 `else
         parameter int ID_W               = 4,
 `endif
+`ifdef TC_ADDR_W
+        parameter int ADDR_W             = `TC_ADDR_W,
+`else
         parameter int ADDR_W             = 32,
+`endif
 `ifdef TC_MAX_OUTSTANDING_W
         parameter int MAX_OUTSTANDING_W  = `TC_MAX_OUTSTANDING_W,
 `else

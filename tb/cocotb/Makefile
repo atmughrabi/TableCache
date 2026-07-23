@@ -13,6 +13,7 @@ POLICY     ?= LRU
 LINES      ?= 64
 LINE_W     ?= 8
 WAYS       ?= 4
+ADDR_W     ?= 32
 # BLOCK_W is intentionally fixed at 32 on the bare-cocotb (l2_cache) path:
 # `dut_cocotb.sv` declares `parameter int BLOCK_W = 32` without a TC_BLOCK_W
 # guard, and every test_*.py file under tb/cocotb has BLOCK_BYTES hardcoded
@@ -185,7 +186,7 @@ EXTRA_ARGS += -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINCONNE
               -Wno-ALWCOMBORDER -Wno-UNOPTFLAT -Wno-BLKLOOPINIT \
               -Wno-SYMRSVDWORD
 EXTRA_ARGS += +define+TC_POLICY=$(POLICY) +define+TC_LINES=$(LINES) +define+TC_LINE_W=$(LINE_W) \
-              +define+TC_WAYS=$(WAYS) \
+              +define+TC_WAYS=$(WAYS) +define+TC_ADDR_W=$(ADDR_W) \
               +define+TC_DB_LATENCY=$(DB_LATENCY) +define+TC_VICTIM=$(VICTIM) +define+TC_CBOM=$(CBOM) \
               +define+TC_ID_W=$(ID_W) +define+TC_MAX_OUTSTANDING_W=$(MAX_OUTSTANDING_W) \
               +define+TC_VICTIM_LINES=$(VICTIM_LINES) +define+TC_CASCADE_DEPTH=$(CASCADE_DEPTH)
@@ -233,16 +234,18 @@ ifneq ($(GRASP_MODERATE_REGIONS),)
 EXTRA_ARGS += +define+TC_GRASP_MODERATE_REGIONS=$(GRASP_MODERATE_REGIONS)
 endif
 # ADDR_L / ADDR_H: cacheable address range (must be NAPOT). Only forwarded when
-# set so existing tests keep the default [0x80000000,0xFFFFFFFF] (OMITTED_ADDR_W=1).
-# Set ADDR_L=0 ADDR_H=0xFFFFFFFF for a base-0 full range (OMITTED_ADDR_W=0).
-# Values are normalized to a plain decimal literal so a 0x.. knob is legal Verilog.
+# set so existing tests keep the default upper half of the ADDR_W-bit space.
+# Set ADDR_L=0 and ADDR_H=(2^ADDR_W)-1 for a base-0 full range.
+# Values are normalized to an explicitly ADDR_W-sized hexadecimal literal.
+# Unsized decimal Verilog literals are limited to 32 bits and reject 64-bit
+# ranges such as 0x1_FFFF_FFFF.
 ifneq ($(ADDR_L),)
-ADDR_L_DEC := $(shell printf '%u' $(ADDR_L))
-EXTRA_ARGS += +define+TC_ADDR_L=$(ADDR_L_DEC)
+ADDR_L_HEX := $(shell printf '%x' $(ADDR_L))
+EXTRA_ARGS += +define+TC_ADDR_L=$(ADDR_W)\'h$(ADDR_L_HEX)
 endif
 ifneq ($(ADDR_H),)
-ADDR_H_DEC := $(shell printf '%u' $(ADDR_H))
-EXTRA_ARGS += +define+TC_ADDR_H=$(ADDR_H_DEC)
+ADDR_H_HEX := $(shell printf '%x' $(ADDR_H))
+EXTRA_ARGS += +define+TC_ADDR_H=$(ADDR_W)\'h$(ADDR_H_HEX)
 endif
 ifeq ($(filter $(MODULE),test_narrow_shim test_shim_latency test_shim_throughput test_shim_prefill_race test_shim_buffer_snapshot test_shim_cache test_shim_multiread test_shim_reorder test_shim_wrap_negative test_shim_id_depth),)
 EXTRA_ARGS += +define+TC_BLOCK_W=$(BLOCK_W)
@@ -263,6 +266,7 @@ export TC_RATIO_FULL := $(RATIO_FULL)
 export TC_LINES    := $(LINES)
 export TC_LINE_W   := $(LINE_W)
 export TC_WAYS     := $(WAYS)
+export TC_ADDR_W   := $(ADDR_W)
 export TC_ID_W     := $(ID_W)
 export TC_MAX_OUTSTANDING_W := $(MAX_OUTSTANDING_W)
 export TC_VICTIM_LINES := $(VICTIM_LINES)

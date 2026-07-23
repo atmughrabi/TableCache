@@ -43,6 +43,21 @@ module dut_l2top_flush
 `endif
         parameter int READ_ID_WIDTH  = 4,
         parameter int WRITE_ID_WIDTH = 4,
+`ifdef TC_ADDR_W
+        parameter int ADDR_W = `TC_ADDR_W,
+`else
+        parameter int ADDR_W = 32,
+`endif
+`ifdef TC_ADDR_L
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = `TC_ADDR_L,
+`else
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = ADDR_W'(64'h8000_0000),
+`endif
+`ifdef TC_ADDR_H
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = `TC_ADDR_H,
+`else
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = ADDR_W'(64'hFFFF_FFFF),
+`endif
 `ifdef TC_DB_LATENCY
         parameter int DB_LATENCY     = `TC_DB_LATENCY,
 `else
@@ -70,7 +85,7 @@ module dut_l2top_flush
         output logic       flush_done,
 
         // ---- accelerator-side AXI4/ACE slave (flat for cocotb) ----
-        input  logic [31:0]                 s_araddr,
+        input  logic [ADDR_W-1:0]           s_araddr,
         input  logic [7:0]                  s_arlen,
         input  logic [2:0]                  s_arsize,
         input  logic [1:0]                  s_arburst,
@@ -91,7 +106,7 @@ module dut_l2top_flush
         output logic [READ_ID_WIDTH-1:0]    s_rid,
         input  logic                        s_rready,
 
-        input  logic [31:0]                 s_awaddr,
+        input  logic [ADDR_W-1:0]           s_awaddr,
         input  logic [7:0]                  s_awlen,
         input  logic [2:0]                  s_awsize,
         input  logic [1:0]                  s_awburst,
@@ -117,7 +132,7 @@ module dut_l2top_flush
         input  logic                        s_bready,
 
         // ---- mem-side AXI4 to AxiRam (flat) ----
-        output logic [31:0]                 m_araddr,
+        output logic [ADDR_W-1:0]           m_araddr,
         output logic [7:0]                  m_arlen,
         output logic [2:0]                  m_arsize,
         output logic [1:0]                  m_arburst,
@@ -136,7 +151,7 @@ module dut_l2top_flush
         input  logic [READ_ID_WIDTH:0]      m_rid,
         output logic                        m_rready,
 
-        output logic [31:0]                 m_awaddr,
+        output logic [ADDR_W-1:0]           m_awaddr,
         output logic [7:0]                  m_awlen,
         output logic [2:0]                  m_awsize,
         output logic [1:0]                  m_awburst,
@@ -161,7 +176,7 @@ module dut_l2top_flush
     );
 
     localparam logic[READ_ID_WIDTH-1:0] FLUSH_ID = '1;
-    localparam logic [31:0] MEM_MASK = 32'h07FF_FFFF;
+    localparam logic [ADDR_W-1:0] MEM_MASK = ADDR_W'(32'h07FF_FFFF);
 
     // -- Flush controller AR output (struct) --
     ar_t                       flush_ar;
@@ -185,7 +200,9 @@ module dut_l2top_flush
         .LINE_W  (LINE_W),
         .BLOCK_W (BLOCK_W),
         .ID_W    (READ_ID_WIDTH),
-        .ADDR_BASE(32'h80000000)
+        .ADDR_W  (ADDR_W),
+        .ADDR_BASE(ADDR_RANGE_L),
+        .ADDR_RANGE_H(ADDR_RANGE_H)
     ) flush_ctrl (
         .clk(clk), .rst(rst),
         .flush_req(flush_req), .flush_mode(flush_mode),
@@ -197,7 +214,7 @@ module dut_l2top_flush
     // -- 2:1 priority AR mux (flat into l2_top S00). While flush_active the
     //    flush controller owns AR; the accelerator AR is gated. --
     logic [READ_ID_WIDTH-1:0] c_arid;
-    logic [31:0]              c_araddr;
+    logic [ADDR_W-1:0]        c_araddr;
     logic [7:0]               c_arlen;
     logic [2:0]               c_arsize;
     logic [1:0]               c_arburst;
@@ -271,13 +288,13 @@ module dut_l2top_flush
     assign s_bid     = c_bid;
 
     // mem-side address masking so the small AxiRam image is addressable.
-    logic [31:0] m_araddr_raw, m_awaddr_raw;
+    logic [ADDR_W-1:0] m_araddr_raw, m_awaddr_raw;
     assign m_araddr = m_araddr_raw & MEM_MASK;
     assign m_awaddr = m_awaddr_raw & MEM_MASK;
 
     l2_top #(
-        .ADDR_L              (32'h80000000),
-        .ADDR_H              (32'hFFFFFFFF),
+        .ADDR_L              (ADDR_RANGE_L),
+        .ADDR_H              (ADDR_RANGE_H),
         .WAYS                (WAYS),
         .LINES               (LINES),
         .LINE_W              (LINE_W),
@@ -288,17 +305,18 @@ module dut_l2top_flush
         .INCLUDE_CBOM        (INCLUDE_CBOM),
         .C_S00_AXI_ID_WIDTH  (READ_ID_WIDTH),
         .C_S00_AXI_DATA_WIDTH(BLOCK_W),
-        .C_S00_AXI_ADDR_WIDTH(32)
+        .C_S00_AXI_ADDR_WIDTH(ADDR_W),
+        .C_M00_AXI_ADDR_WIDTH(ADDR_W)
     ) inst (
         .s00_axi_aclk     (clk),
         .s00_axi_aresetn  (~rst),
         .m00_axi_aclk     (clk),
         .m00_axi_aresetn  (~rst),
 
-        .grasp_high_addr_l    (32'h0),
-        .grasp_high_addr_h    (32'h0),
-        .grasp_moderate_addr_l(32'h0),
-        .grasp_moderate_addr_h(32'h0),
+        .grasp_high_addr_l    ('0),
+        .grasp_high_addr_h    ('0),
+        .grasp_moderate_addr_l('0),
+        .grasp_moderate_addr_h('0),
 
         // AR (muxed flush/accelerator)
         .s00_axi_arid     (c_arid),

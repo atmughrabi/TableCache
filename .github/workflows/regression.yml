@@ -132,6 +132,22 @@ jobs:
             timeout 400 make MODULE=$mod ADDR_L=0 ADDR_H=0xFFFFFFFF
           done
 
+      - name: 64-bit address reconstruction and writeback
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          # Full 64-bit range: test_smoke sets bit 63 and checks the exact
+          # pre-mask memory AR, so truncating the upper address half fails.
+          rm -rf sim_build
+          timeout 300 make MODULE=test_smoke ADDR_W=64 \
+            ADDR_L=0 ADDR_H=0xFFFFFFFFFFFFFFFF
+          # High 4 GiB window: dirty evictions and victim writebacks must retain
+          # the fixed bit-32 prefix when reconstructing memory-side addresses.
+          rm -rf sim_build
+          timeout 400 make MODULE=test_eviction VICTIM=1 ADDR_W=64 \
+            ADDR_L=0x100000000 ADDR_H=0x1FFFFFFFF
+
       - name: Shim regression (5 modules)
         working-directory: tb/cocotb
         run: |

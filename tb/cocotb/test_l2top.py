@@ -12,10 +12,9 @@ from __future__ import annotations
 import cocotb
 from cocotb.triggers import RisingEdge, Timer
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
-from tb_common import CLK_PERIOD_NS
+from tb_common import CLK_PERIOD_NS, BASE
 from cocotb.clock import Clock
 
-BASE        = 0x80000000
 BLOCK_BYTES = 4
 LINE_W      = 8
 LINE_BYTES  = LINE_W * BLOCK_BYTES

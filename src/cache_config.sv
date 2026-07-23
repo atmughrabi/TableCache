@@ -17,6 +17,7 @@ package cache_config;
         INTEL = 1
     } vendor_config_t;
     localparam vendor_config_t FPGA_VENDOR = AMD;
+    localparam int unsigned CACHE_ADDR_MAX_W = 64;
 
     //Replacement Policies
     typedef enum {
@@ -30,8 +31,11 @@ package cache_config;
 
     //AXI typedefs
     //These would normally be in a separate file but Quartus can't handle that
+    //Address fields use the maximum supported carrier width. Modules expose an
+    //ADDR_W parameter that selects the meaningful low bits; unused upper bits
+    //are zero and synthesize away in the default 32-bit configuration.
     typedef struct packed {
-        logic[31:0] araddr;
+        logic[CACHE_ADDR_MAX_W-1:0] araddr;
         logic[7:0] arlen;
         logic[2:0] arsize;
         logic[1:0] arburst;
@@ -51,7 +55,7 @@ package cache_config;
     } r_t;
 
     typedef struct packed {
-        logic[31:0] awaddr;
+        logic[CACHE_ADDR_MAX_W-1:0] awaddr;
         logic[7:0] awlen;
         logic[2:0] awsize;
         logic[1:0] awburst;

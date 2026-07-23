@@ -17,8 +17,8 @@ module l2_cache
         parameter replacement_policy_t POLICY = LRU,
         parameter int unsigned LINES = 512, //Lines per way
         parameter int unsigned LINE_W = 8, //Number of blocks per line
-        parameter logic[31:0] ADDR_RANGE_H = 32'hFFFFFFFF, //Cache address space;
-        parameter logic[31:0] ADDR_RANGE_L = 32'h80000000, //Must be NAPOT
+        parameter logic[CACHE_ADDR_MAX_W-1:0] ADDR_RANGE_H = 64'h0000_0000_FFFF_FFFF, //Cache address space
+        parameter logic[CACHE_ADDR_MAX_W-1:0] ADDR_RANGE_L = 64'h0000_0000_8000_0000, //Must be NAPOT
         parameter int unsigned WAYS = 4, //Also known as sets
         parameter logic RANDOM_USE_EVICT = 1,
         parameter logic RRIP_HP = 1,
@@ -120,10 +120,14 @@ module l2_cache
     localparam int unsigned OUT_FIFO_DEPTH = 2; //Should be >1 for performance
     localparam int unsigned MAX_ADDR_HASH_WIDTH = 8; //Line addresses are hashed to at most this width
 
-    // 33-bit span keeps the base-0 full 32-bit range from overflowing.
-    localparam logic[32:0] RANGE_SPAN = (33'(ADDR_RANGE_H) - 33'(ADDR_RANGE_L)) + 33'd1;
+    // The extra span bit keeps a base-0 full-width range from overflowing:
+    // [0, 2^ADDR_W-1] has span 2^ADDR_W.
+    localparam logic[ADDR_W-1:0] ADDR_RANGE_H_USED = ADDR_RANGE_H[ADDR_W-1:0];
+    localparam logic[ADDR_W-1:0] ADDR_RANGE_L_USED = ADDR_RANGE_L[ADDR_W-1:0];
+    localparam logic[ADDR_W:0] RANGE_ONE = {{ADDR_W{1'b0}}, 1'b1};
+    localparam logic[ADDR_W:0] RANGE_SPAN =
+        ({1'b0, ADDR_RANGE_H_USED} - {1'b0, ADDR_RANGE_L_USED}) + RANGE_ONE;
     localparam int unsigned RANGE_SPAN_LOG2 = $clog2(RANGE_SPAN);
-    localparam int unsigned OMITTED_ADDR_W = 32 - RANGE_SPAN_LOG2;
     localparam int unsigned BLOCK_ADDR_W = $clog2(LINE_W);
     localparam int unsigned LINE_ADDR_W = $clog2(LINES);
     localparam int signed TAG_W_CALC = int'(RANGE_SPAN_LOG2)
@@ -132,11 +136,20 @@ module l2_cache
     localparam int unsigned TAG_W = TAG_W_CALC > 0 ? TAG_W_CALC : 1;
 
     // Address reconstruction requires a naturally aligned power-of-two range.
-    if ((RANGE_SPAN & (RANGE_SPAN - 33'd1)) != 33'd0) begin : gen_range_size_guard
-        $fatal(1, "l2_cache: cacheable range [0x%08h,0x%08h] span 0x%09h is not a power of two; ADDR_RANGE must be NAPOT.", ADDR_RANGE_L, ADDR_RANGE_H, RANGE_SPAN);
+    if (ADDR_W < 32 || ADDR_W > CACHE_ADDR_MAX_W) begin : gen_addr_width_guard
+        $fatal(1, "l2_cache: ADDR_W=%0d unsupported; must be 32..%0d.", ADDR_W, CACHE_ADDR_MAX_W);
     end
-    if ((33'(ADDR_RANGE_L) & (RANGE_SPAN - 33'd1)) != 33'd0) begin : gen_range_alignment_guard
-        $fatal(1, "l2_cache: ADDR_RANGE_L=0x%08h not aligned to span 0x%09h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L, RANGE_SPAN);
+    if ((ADDR_RANGE_H >> ADDR_W) != '0 || (ADDR_RANGE_L >> ADDR_W) != '0) begin : gen_range_width_guard
+        $fatal(1, "l2_cache: ADDR_RANGE_L/H set bits above ADDR_W=%0d.", ADDR_W);
+    end
+    if (ADDR_RANGE_H_USED < ADDR_RANGE_L_USED) begin : gen_range_order_guard
+        $fatal(1, "l2_cache: ADDR_RANGE_H=0x%0h is below ADDR_RANGE_L=0x%0h.", ADDR_RANGE_H_USED, ADDR_RANGE_L_USED);
+    end
+    if ((RANGE_SPAN & (RANGE_SPAN - RANGE_ONE)) != '0) begin : gen_range_size_guard
+        $fatal(1, "l2_cache: cacheable range [0x%0h,0x%0h] span 0x%0h is not a power of two; ADDR_RANGE must be NAPOT.", ADDR_RANGE_L_USED, ADDR_RANGE_H_USED, RANGE_SPAN);
+    end
+    if (({1'b0, ADDR_RANGE_L_USED} & (RANGE_SPAN - RANGE_ONE)) != '0) begin : gen_range_alignment_guard
+        $fatal(1, "l2_cache: ADDR_RANGE_L=0x%0h not aligned to span 0x%0h; ADDR_RANGE must be NAPOT (base aligned to size).", ADDR_RANGE_L_USED, RANGE_SPAN);
     end
 
     // AXI WRAP legality and the modulo block counter require these line lengths.
@@ -159,11 +172,11 @@ module l2_cache
     if (READ_ID_WIDTH != WRITE_ID_WIDTH) begin : gen_id_width_match_guard
         $fatal(1, "l2_cache: READ_ID_WIDTH=%0d must equal WRITE_ID_WIDTH=%0d; merged memory IDs use one shared width.", READ_ID_WIDTH, WRITE_ID_WIDTH);
     end
-    if (ADDR_W != 32) begin : gen_addr_width_guard
-        $fatal(1, "l2_cache: ADDR_W=%0d unsupported; request/address structs are 32-bit.", ADDR_W);
-    end
     if (TAG_W_CALC < 1) begin : gen_tag_width_guard
         $fatal(1, "l2_cache: cache geometry consumes the entire address range (TAG_W=%0d); reduce LINES/LINE_W/BLOCK_W or enlarge ADDR_RANGE.", TAG_W_CALC);
+    end
+    if (INCLUDE_CBOM && TAG_W_CALC < int'($clog2(WAYS))) begin : gen_cbom_way_width_guard
+        $fatal(1, "l2_cache: TAG_W=%0d cannot encode WAYS=%0d for CleanInvalidByIndex.", TAG_W_CALC, WAYS);
     end
 
     // Whole-cache flush is not correct beyond two databank stages.
@@ -171,8 +184,9 @@ module l2_cache
         $fatal(1, "l2_cache: DB_LATENCY=%0d unsupported; must be 1..2 (whole-cache flush is not correct for DB_LATENCY>2, bug #27).", DB_LATENCY);
     end
 
-    // Fixed high range bits; zero for the full 32-bit range.
-    localparam logic[31:0] OMITTED_CONSTANT = ADDR_RANGE_L & (32'hFFFFFFFF << RANGE_SPAN_LOG2);
+    // A valid NAPOT base already has every variable low bit cleared, so the
+    // base itself is the fixed address prefix. It is zero for a full range.
+    localparam logic[ADDR_W-1:0] OMITTED_CONSTANT = ADDR_RANGE_L_USED;
     localparam int unsigned LOG2_BLOCK_BYTES = $clog2(BLOCK_W/8);
     localparam int unsigned HASH_WIDTH = LINE_ADDR_W > MAX_ADDR_HASH_WIDTH ? MAX_ADDR_HASH_WIDTH : LINE_ADDR_W;
 
@@ -603,7 +617,9 @@ module l2_cache
 
     assign try_read = chosen_ar.arvalid & ~tb_pushing_write & ~cbom_fifo_full & (prefer_read | ~chosen_aw.awvalid);
     
-    assign {in_tag, in_line, in_block} = try_read ? chosen_ar.araddr[31-OMITTED_ADDR_W:LOG2_BLOCK_BYTES] : chosen_aw.awaddr[31-OMITTED_ADDR_W:LOG2_BLOCK_BYTES];
+    assign {in_tag, in_line, in_block} = try_read
+        ? chosen_ar.araddr[LOG2_BLOCK_BYTES +: TAG_W+LINE_ADDR_W+BLOCK_ADDR_W]
+        : chosen_aw.awaddr[LOG2_BLOCK_BYTES +: TAG_W+LINE_ADDR_W+BLOCK_ADDR_W];
     assign in_len = try_read ? chosen_ar.arlen[BLOCK_ADDR_W-1:0] : chosen_aw.awlen[BLOCK_ADDR_W-1:0];
 
     always_comb begin
@@ -722,7 +738,7 @@ module l2_cache
         .RRIP_HP(RRIP_HP),
         .RRIP_WIDTH(RRPV_WIDTH),
         .ADDR_W(ADDR_W),
-        .ADDR_BASE(ADDR_RANGE_L),
+        .ADDR_BASE(ADDR_RANGE_L_USED),
         .GRASP_HIGH_REGIONS(GRASP_HIGH_REGIONS),
         .GRASP_MODERATE_REGIONS(GRASP_MODERATE_REGIONS)
     ) tb_inst (
@@ -852,7 +868,10 @@ module l2_cache
     assign victim_invalidate = ar_fifo_valid & ar_fifo_data_out.cbom;
     assign victim_ar.arvalid = ar_fifo_valid & ~ar_fifo_data_out.cbom;
     assign victim_arid = ar_fifo_data_out.id;
-    assign victim_ar.araddr = OMITTED_CONSTANT | 32'({ar_fifo_data_out.tag, ar_fifo_data_out.line, ar_fifo_data_out.block, {LOG2_BLOCK_BYTES{1'b0}}});
+    assign victim_ar.araddr = OMITTED_CONSTANT | ADDR_W'({
+        ar_fifo_data_out.tag, ar_fifo_data_out.line, ar_fifo_data_out.block,
+        {LOG2_BLOCK_BYTES{1'b0}}
+    });
     assign victim_ar.arlen = 8'(LINE_W-1);
     assign victim_ar.arburst = |ar_fifo_data_out.block ? 2'b10 : 2'b01; //Incr when aligned
     assign victim_ar.arsize = 3'(LOG2_BLOCK_BYTES);
@@ -1288,7 +1307,7 @@ module l2_cache
     logic evict_port;
     logic evicting;
     logic victim_awvalid;
-    logic[31:0] victim_awaddr;
+    logic[ADDR_W-1:0] victim_awaddr;
 
     assign db_out_ready[0] = db_out_valid[0] & ((evicting & ~evict_port & victim_wready) | (out_ready & ((hitting & ~hit_port_r) | (will_hit & ~hit_port)) & ~(db_out_last[0] & (finish_full | ext_returning_last_w))));
     assign db_out_ready[1] = db_out_valid[1] & ((evicting & evict_port & victim_wready) | (out_ready & ((hitting & hit_port_r) | (will_hit & hit_port)) & ~(db_out_last[1] & (finish_full | ext_returning_last_w))));
@@ -1332,7 +1351,12 @@ module l2_cache
         if (start_evict) begin
             evict_port <= next_evict_port;
             victim_awid <= db_out_id[next_evict_port];
-            victim_awaddr <= OMITTED_CONSTANT | 32'({db_out_saved[next_evict_port].tag, db_out_saved[next_evict_port].line, db_out_saved[next_evict_port].block, {LOG2_BLOCK_BYTES{1'b0}}});
+            victim_awaddr <= OMITTED_CONSTANT | ADDR_W'({
+                db_out_saved[next_evict_port].tag,
+                db_out_saved[next_evict_port].line,
+                db_out_saved[next_evict_port].block,
+                {LOG2_BLOCK_BYTES{1'b0}}
+            });
             uncacheable_write <= db_out_saved[next_evict_port].clean;
         end
     end
@@ -1419,6 +1443,7 @@ module l2_cache
     generate if (INCLUDE_VICTIM) begin : gen_victim
         victim_cache #(
             .LINES(VICTIM_LINES),
+            .ADDR_W(ADDR_W),
             .ADDR_RANGE_H(ADDR_RANGE_H),
             .ADDR_RANGE_L(ADDR_RANGE_L),
             .LINE_W(LINE_W),

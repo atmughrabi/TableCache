@@ -123,7 +123,8 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 | `VICTIM_LINES` | 8 | Size of the victim cache; any value >=2 is supported. |
 | `INCLUDE_CBOM` | 1 | Enables the ACE snoop opcodes above. |
 | `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | 4 | Must be equal and >=1. The memory-side ID adds one read/write namespace bit. |
-| `ADDR_RANGE_L/H` | 0x80000000 / 0xFFFFFFFF | Bounding address range; must be NAPOT. A base-0 full range `[0, 0xFFFFFFFF]` is supported (the whole 32-bit space is cached; `OMITTED_ADDR_W=0`). |
+| `ADDR_W` | 32 | Meaningful AXI address bits; supported range is 32–64, subject to the cache geometry leaving at least one tag bit. |
+| `ADDR_RANGE_L/H` | 0x80000000 / 0xFFFFFFFF | Bounding address range; must be NAPOT and fit in `ADDR_W`. Base-0 full-width ranges are supported, including `[0, 0xFFFFFFFFFFFFFFFF]` at `ADDR_W=64`. |
 | `DATABANK_SDP` | 0 | **0** = TDP databank (`tdp_ram`, BRAM only). **1** = SDP+URAM databank (`sdp_ram_uram`, AMD UltraRAM mapping). See §5.1. |
 | `N_BANKS` | 1 | SDP bank count; must be a power of two that divides `LINES` (including one line per bank). |
 | `CASCADE_DEPTH` | 8 | URAM/BRAM cascade depth, 1–8. |
@@ -410,6 +411,11 @@ hand-rolling a width converter.
 | `ADDR_W`   | 32 | address width |
 | `MAX_OUTSTANDING_W` | 16 | depth of AW→W FIFO; should match `2^WRITE_ID_WIDTH` at the cache |
 | `ENABLE_LINE_BUFFER` | 1 | set 0 to disable the L0 line buffer (every narrow request becomes a wide round-trip) |
+
+`l2_cache`, `l2_top`, `tc_flush_controller`, and `tc_narrow_shim` accept
+address widths from 32 through 64 bits. Internally, the packed AXI request structs use
+a 64-bit carrier; `ADDR_W` selects the meaningful low bits, and synthesis
+removes unused upper bits in narrower configurations.
 
 ### 13.3 Narrow-side request contract (asserted)
 

@@ -37,6 +37,11 @@ module dut_flush
 `endif
         parameter int READ_ID_WIDTH  = 4,
         parameter int WRITE_ID_WIDTH = 4,
+`ifdef TC_ADDR_W
+        parameter int ADDR_W = `TC_ADDR_W,
+`else
+        parameter int ADDR_W = 32,
+`endif
 `ifdef TC_DB_LATENCY
         parameter int DB_LATENCY     = `TC_DB_LATENCY,
 `else
@@ -54,14 +59,14 @@ module dut_flush
 `endif
         parameter int VICTIM_LINES = 8,
 `ifdef TC_ADDR_L
-        parameter logic [31:0] ADDR_RANGE_L = `TC_ADDR_L,
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = `TC_ADDR_L,
 `else
-        parameter logic [31:0] ADDR_RANGE_L = 32'h80000000,
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = ADDR_W'(64'h8000_0000),
 `endif
 `ifdef TC_ADDR_H
-        parameter logic [31:0] ADDR_RANGE_H = `TC_ADDR_H
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = `TC_ADDR_H
 `else
-        parameter logic [31:0] ADDR_RANGE_H = 32'hFFFFFFFF
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = ADDR_W'(64'hFFFF_FFFF)
 `endif
     ) (
         input  logic clk,
@@ -74,7 +79,7 @@ module dut_flush
         output logic       flush_done,
 
         // ---- accelerator-side AXI4/ACE slave (flat for cocotb) ----
-        input  logic [31:0]                 s_araddr,
+        input  logic [ADDR_W-1:0]           s_araddr,
         input  logic [7:0]                  s_arlen,
         input  logic [2:0]                  s_arsize,
         input  logic [1:0]                  s_arburst,
@@ -95,7 +100,7 @@ module dut_flush
         output logic [READ_ID_WIDTH-1:0]    s_rid,
         input  logic                        s_rready,
 
-        input  logic [31:0]                 s_awaddr,
+        input  logic [ADDR_W-1:0]           s_awaddr,
         input  logic [7:0]                  s_awlen,
         input  logic [2:0]                  s_awsize,
         input  logic [1:0]                  s_awburst,
@@ -121,7 +126,7 @@ module dut_flush
         input  logic                        s_bready,
 
         // ---- mem-side AXI4 to AxiRam (flat) ----
-        output logic [31:0]                 m_araddr,
+        output logic [ADDR_W-1:0]           m_araddr,
         output logic [7:0]                  m_arlen,
         output logic [2:0]                  m_arsize,
         output logic [1:0]                  m_arburst,
@@ -141,7 +146,7 @@ module dut_flush
         input  logic [READ_ID_WIDTH:0]      m_rid,
         output logic                        m_rready,
 
-        output logic [31:0]                 m_awaddr,
+        output logic [ADDR_W-1:0]           m_awaddr,
         output logic [7:0]                  m_awlen,
         output logic [2:0]                  m_awsize,
         output logic [1:0]                  m_awburst,
@@ -166,8 +171,8 @@ module dut_flush
         output logic                        m_bready,
 
         // Debug: FULL reconstructed mem-side addresses BEFORE the MEM_MASK fold.
-        output logic [31:0]                 dbg_m_araddr_full,
-        output logic [31:0]                 dbg_m_awaddr_full
+        output logic [ADDR_W-1:0]           dbg_m_araddr_full,
+        output logic [ADDR_W-1:0]           dbg_m_awaddr_full
     );
 
     localparam logic[READ_ID_WIDTH-1:0] FLUSH_ID = '1;
@@ -185,7 +190,9 @@ module dut_flush
         .LINE_W  (LINE_W),
         .BLOCK_W (BLOCK_W),
         .ID_W    (READ_ID_WIDTH),
-        .ADDR_BASE(ADDR_RANGE_L)
+        .ADDR_W  (ADDR_W),
+        .ADDR_BASE(ADDR_RANGE_L),
+        .ADDR_RANGE_H(ADDR_RANGE_H)
     ) flush_ctrl (
         .clk(clk), .rst(rst),
         .flush_req(flush_req), .flush_mode(flush_mode),
@@ -279,11 +286,11 @@ module dut_flush
     assign cache_bready = s_bready;
 
     // -- Master-side flat unpack (same as dut_cocotb) --
-    localparam logic [31:0] MEM_MASK = 32'h07FF_FFFF;
+    localparam logic [ADDR_W-1:0] MEM_MASK = ADDR_W'(32'h07FF_FFFF);
     ar_t m_ar_struct;  aw_t m_aw_struct;  w_t m_w_struct;  r_t m_r_struct;  b_t m_b_struct;
-    assign m_araddr   = m_ar_struct.araddr & MEM_MASK;
-    assign dbg_m_araddr_full = m_ar_struct.araddr;   // pre-mask, for range monitor
-    assign dbg_m_awaddr_full = m_aw_struct.awaddr;   // pre-mask, for range monitor
+    assign m_araddr   = m_ar_struct.araddr[ADDR_W-1:0] & MEM_MASK;
+    assign dbg_m_araddr_full = m_ar_struct.araddr[ADDR_W-1:0];
+    assign dbg_m_awaddr_full = m_aw_struct.awaddr[ADDR_W-1:0];
     assign m_arlen    = m_ar_struct.arlen;
     assign m_arsize   = m_ar_struct.arsize;
     assign m_arburst  = m_ar_struct.arburst;
@@ -293,7 +300,7 @@ module dut_flush
     assign m_arqos    = m_ar_struct.arqos;
     assign m_arregion = m_ar_struct.arregion;
     assign m_arvalid  = m_ar_struct.arvalid;
-    assign m_awaddr   = m_aw_struct.awaddr & MEM_MASK;
+    assign m_awaddr   = m_aw_struct.awaddr[ADDR_W-1:0] & MEM_MASK;
     assign m_awlen    = m_aw_struct.awlen;
     assign m_awsize   = m_aw_struct.awsize;
     assign m_awburst  = m_aw_struct.awburst;
@@ -316,6 +323,7 @@ module dut_flush
         .BLOCK_W        (BLOCK_W),
         .READ_ID_WIDTH  (READ_ID_WIDTH),
         .WRITE_ID_WIDTH (WRITE_ID_WIDTH),
+        .ADDR_W         (ADDR_W),
         .ADDR_RANGE_L   (ADDR_RANGE_L),
         .ADDR_RANGE_H   (ADDR_RANGE_H),
         .DB_LATENCY     (DB_LATENCY),
@@ -325,8 +333,8 @@ module dut_flush
     ) cache (
         .clk(clk), .rst(rst),
         //GRASP region ports tied off (SRRIP-FP fallback; this TB doesn't exercise them).
-        .grasp_high_addr_l(32'h0), .grasp_high_addr_h(32'h0),
-        .grasp_moderate_addr_l(32'h0), .grasp_moderate_addr_h(32'h0),
+        .grasp_high_addr_l('0), .grasp_high_addr_h('0),
+        .grasp_moderate_addr_l('0), .grasp_moderate_addr_h('0),
         .req_ar(cache_ar), .req_arid(cache_arid), .req_arready(cache_arready),
         .req_r(cache_r), .req_rdata(cache_rdata), .req_rid(cache_rid), .req_rready(cache_rready),
         .req_aw(cache_aw), .req_awid(cache_awid), .req_awready(cache_awready),

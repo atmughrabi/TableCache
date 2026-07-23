@@ -187,30 +187,47 @@ def test_flush_matrix(policy, ways, db_lat, victim, cbom):
         f"---stdout tail---\n{r.stdout[-3000:]}")
 
 
-# Cacheable address-range sweep (bug #25 net). The cocotb wrapper folds mem
-# addresses through MEM_MASK, so the ONLY thing that varies the reconstruction
-# math across these is OMITTED_ADDR_W (= 32 - log2(span)); each cell drives the
+# Cacheable address-range sweep (bug #25 + 64-bit address net). The cocotb
+# wrapper folds mem addresses through MEM_MASK, so the address width and fixed
+# high prefix vary independently from the small backing RAM. Each cell drives the
 # heavy eviction + flush suites (with the MemRangeMonitor asserting every
-# reconstructed mem AR/AW stays inside the configured range) at a different
-# OMITTED_ADDR_W. The base-0 full range (OMITTED_ADDR_W=0) is the case that used
-# to be un-elaboratable (H-L+1 overflow) and was never exercised in the fast
-# flow. Each entry: (ADDR_L, ADDR_H, expected OMITTED_ADDR_W -- doc only).
+# reconstructed mem AR/AW stays inside the configured range). Base-0 full-width
+# ranges exercise the ADDR_W+1 span arithmetic that represents 2^ADDR_W.
+# Each entry: (ADDR_W, ADDR_L, ADDR_H, expected omitted prefix bits -- doc only).
 RANGE_MATRIX = [
-    ("0x80000000", "0xFFFFFFFF", 1),   # 2 GiB high  (default)
-    ("0",          "0xFFFFFFFF", 0),   # 4 GiB base-0 full range (bug #25)
-    ("0xC0000000", "0xFFFFFFFF", 2),   # 1 GiB high
-    ("0xE0000000", "0xFFFFFFFF", 3),   # 512 MiB high
+    (32, "0x80000000",  "0xFFFFFFFF",         1),   # 2 GiB high (default)
+    (32, "0",           "0xFFFFFFFF",         0),   # full 32-bit range
+    (32, "0xC0000000",  "0xFFFFFFFF",         2),   # 1 GiB high
+    (32, "0xE0000000",  "0xFFFFFFFF",         3),   # 512 MiB high
+    (64, "0x100000000", "0x1FFFFFFFF",       32),   # 4 GiB above 4 GiB
+    (64, "0",           "0xFFFFFFFFFFFFFFFF", 0),   # full 64-bit range
 ]
 
 
-@pytest.mark.parametrize("addr_l,addr_h,omitted_w", RANGE_MATRIX,
-                          ids=[f"L{l}-H{h}-O{o}" for l, h, o in RANGE_MATRIX])
-def test_eviction_range(addr_l, addr_h, omitted_w):
+def test_full_64bit_range_upper_address_reconstruction():
+    """Set bit 63 in a base-0 full-range request and require test_smoke's
+    pre-mask debug check to observe the exact same memory-side AR address."""
+    env = {
+        "ADDR_W": "64",
+        "ADDR_L": "0",
+        "ADDR_H": "0xFFFFFFFFFFFFFFFF",
+    }
+    r = _make(env, "test_smoke", timeout_s=180)
+    assert r.returncode == 0, (
+        "full-64 upper-bit reconstruction FAIL\n"
+        f"---stdout tail---\n{r.stdout[-3000:]}\n"
+        f"---stderr tail---\n{r.stderr[-1000:]}")
+    assert _cocotb_fail_count(r.stdout) == 0, r.stdout[-3000:]
+
+
+@pytest.mark.parametrize("addr_w,addr_l,addr_h,omitted_w", RANGE_MATRIX,
+                          ids=[f"A{w}-L{l}-H{h}-O{o}" for w, l, h, o in RANGE_MATRIX])
+def test_eviction_range(addr_w, addr_l, addr_h, omitted_w):
     """Heavy eviction round-trip + WritebackMonitor + MemRangeMonitor across the
     cacheable-range spectrum (OMITTED_ADDR_W 0..3), proving the base-0 full-range
     fix (bug #25) reconstructs mem addresses bit-exactly in the fast flow."""
     env = {"POLICY": "LRU", "WAYS": "4", "DB_LATENCY": "1", "VICTIM": "1",
-           "CBOM": "1", "ADDR_L": addr_l, "ADDR_H": addr_h}
+           "CBOM": "1", "ADDR_W": str(addr_w), "ADDR_L": addr_l, "ADDR_H": addr_h}
     r = _make(env, "test_eviction", timeout_s=360)
     assert r.returncode == 0, (
         f"eviction-range FAIL (L={addr_l} H={addr_h} O={omitted_w})\n"
@@ -221,15 +238,15 @@ def test_eviction_range(addr_l, addr_h, omitted_w):
         f"---stdout tail---\n{r.stdout[-3000:]}")
 
 
-@pytest.mark.parametrize("addr_l,addr_h,omitted_w", RANGE_MATRIX,
-                          ids=[f"L{l}-H{h}-O{o}" for l, h, o in RANGE_MATRIX])
-def test_flush_range(addr_l, addr_h, omitted_w):
+@pytest.mark.parametrize("addr_w,addr_l,addr_h,omitted_w", RANGE_MATRIX,
+                          ids=[f"A{w}-L{l}-H{h}-O{o}" for w, l, h, o in RANGE_MATRIX])
+def test_flush_range(addr_w, addr_l, addr_h, omitted_w):
     """Whole-cache flush suite across the cacheable-range spectrum. The flush
     controller's ADDR_BASE tracks ADDR_RANGE_L and the by-index writeback
     reconstructs its AW from the stored tag, so the MemRangeMonitor here checks
     both the flush AR and the reconstructed writeback AW stay in range."""
     env = {"POLICY": "LRU", "WAYS": "4", "DB_LATENCY": "1", "VICTIM": "1",
-           "CBOM": "1", "ADDR_L": addr_l, "ADDR_H": addr_h}
+           "CBOM": "1", "ADDR_W": str(addr_w), "ADDR_L": addr_l, "ADDR_H": addr_h}
     r = _make(env, "test_flush", timeout_s=360)
     assert r.returncode == 0, (
         f"flush-range FAIL (L={addr_l} H={addr_h} O={omitted_w})\n"

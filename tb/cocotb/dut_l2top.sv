@@ -45,6 +45,21 @@ module dut_l2top
 `else
         parameter int M_ID_WIDTH = READ_ID_WIDTH + 1,
 `endif
+`ifdef TC_ADDR_W
+        parameter int ADDR_W = `TC_ADDR_W,
+`else
+        parameter int ADDR_W = 32,
+`endif
+`ifdef TC_ADDR_L
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = `TC_ADDR_L,
+`else
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_L = ADDR_W'(64'h8000_0000),
+`endif
+`ifdef TC_ADDR_H
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = `TC_ADDR_H,
+`else
+        parameter logic [ADDR_W-1:0] ADDR_RANGE_H = ADDR_W'(64'hFFFF_FFFF),
+`endif
 `ifdef TC_POLICY_INT
         parameter int REPLACEMENT_POLICY = `TC_POLICY_INT,
 `else
@@ -86,7 +101,7 @@ module dut_l2top
         input  logic rst,
 
         // Slave (request) port -- s_* mirror of s00_axi_*
-        input  logic [31:0]                  s_araddr,
+        input  logic [ADDR_W-1:0]            s_araddr,
         input  logic [7:0]                   s_arlen,
         input  logic [2:0]                   s_arsize,
         input  logic [1:0]                   s_arburst,
@@ -105,7 +120,7 @@ module dut_l2top
         output logic [BLOCK_W-1:0]           s_rdata,
         output logic [READ_ID_WIDTH-1:0]     s_rid,
         input  logic                         s_rready,
-        input  logic [31:0]                  s_awaddr,
+        input  logic [ADDR_W-1:0]            s_awaddr,
         input  logic [7:0]                   s_awlen,
         input  logic [2:0]                   s_awsize,
         input  logic [1:0]                   s_awburst,
@@ -129,7 +144,7 @@ module dut_l2top
         input  logic                         s_bready,
 
         // Master (memory) port -- m_* mirror of m00_axi_*
-        output logic [31:0]                  m_araddr,
+        output logic [ADDR_W-1:0]            m_araddr,
         output logic [7:0]                   m_arlen,
         output logic [2:0]                   m_arsize,
         output logic [1:0]                   m_arburst,
@@ -146,7 +161,7 @@ module dut_l2top
         input  logic [BLOCK_W-1:0]           m_rdata,
         input  logic [M_ID_WIDTH-1:0]        m_rid,
         output logic                         m_rready,
-        output logic [31:0]                  m_awaddr,
+        output logic [ADDR_W-1:0]            m_awaddr,
         output logic [7:0]                   m_awlen,
         output logic [2:0]                   m_awsize,
         output logic [1:0]                   m_awburst,
@@ -169,14 +184,14 @@ module dut_l2top
     );
 
     // GRASP region ports tied off (SRRIP-FP fallback; integration smoke).
-    wire [31:0] grasp_high_addr_l     = 32'h0;
-    wire [31:0] grasp_high_addr_h     = 32'h0;
-    wire [31:0] grasp_moderate_addr_l = 32'h0;
-    wire [31:0] grasp_moderate_addr_h = 32'h0;
+    wire [ADDR_W-1:0] grasp_high_addr_l     = '0;
+    wire [ADDR_W-1:0] grasp_high_addr_h     = '0;
+    wire [ADDR_W-1:0] grasp_moderate_addr_l = '0;
+    wire [ADDR_W-1:0] grasp_moderate_addr_h = '0;
 
     l2_top #(
-        .ADDR_L              (32'h80000000),
-        .ADDR_H              (32'hFFFFFFFF),
+        .ADDR_L              (ADDR_RANGE_L),
+        .ADDR_H              (ADDR_RANGE_H),
         .WAYS                (WAYS),
         .LINES               (LINES),
         .LINE_W              (LINE_W),
@@ -191,7 +206,8 @@ module dut_l2top
         .C_S00_AXI_ID_WIDTH  (READ_ID_WIDTH),
         .C_M00_AXI_ID_WIDTH  (M_ID_WIDTH),
         .C_S00_AXI_DATA_WIDTH(BLOCK_W),
-        .C_S00_AXI_ADDR_WIDTH(32)
+        .C_S00_AXI_ADDR_WIDTH(ADDR_W),
+        .C_M00_AXI_ADDR_WIDTH(ADDR_W)
     ) inst (
         // Clock + active-low reset (l2_top expects aresetn)
         .s00_axi_aclk     (clk),

@@ -15,8 +15,10 @@ module tc_flush_controller
         parameter int unsigned LINE_W       = 8,
         parameter int unsigned BLOCK_W      = 32,
         parameter int unsigned ID_W         = 4,
-        parameter logic[31:0]  ADDR_BASE    = 32'h80000000,
-        parameter logic[3:0]   DEFAULT_MODE = 4'b1011   // CleanInvalidByIndex (whole-set clean, all ways/tags)
+        parameter logic[CACHE_ADDR_MAX_W-1:0] ADDR_BASE = 64'h0000_0000_8000_0000,
+        parameter logic[3:0]   DEFAULT_MODE = 4'b1011,  // CleanInvalidByIndex (whole-set clean, all ways/tags)
+        parameter int unsigned ADDR_W = 32,
+        parameter logic[CACHE_ADDR_MAX_W-1:0] ADDR_RANGE_H = 64'h0000_0000_FFFF_FFFF
     )
     (
         input  logic clk,
@@ -49,6 +51,29 @@ module tc_flush_controller
     localparam int unsigned LINE_STRIDE  = LINE_W * BLOCK_BYTES;
     localparam int unsigned LOG2_STRIDE  = $clog2(LINE_STRIDE);
     localparam logic[ID_W-1:0] FLUSH_ID  = '1;
+    localparam logic[ADDR_W-1:0] ADDR_BASE_USED = ADDR_BASE[ADDR_W-1:0];
+    localparam logic[ADDR_W-1:0] ADDR_RANGE_H_USED = ADDR_RANGE_H[ADDR_W-1:0];
+    localparam logic[ADDR_W:0] RANGE_ONE = {{ADDR_W{1'b0}}, 1'b1};
+    localparam logic[ADDR_W:0] RANGE_SPAN =
+        ({1'b0, ADDR_RANGE_H_USED} - {1'b0, ADDR_BASE_USED}) + RANGE_ONE;
+    localparam logic[ADDR_W:0] SWEEP_BYTES =
+        (ADDR_W+1)'(TOTAL_LINES) << LOG2_STRIDE;
+
+    if (ADDR_W < 32 || ADDR_W > CACHE_ADDR_MAX_W) begin : gen_addr_width_guard
+        $fatal(1, "tc_flush_controller: ADDR_W=%0d unsupported; must be 32..%0d.", ADDR_W, CACHE_ADDR_MAX_W);
+    end
+    if ((ADDR_BASE >> ADDR_W) != '0 || (ADDR_RANGE_H >> ADDR_W) != '0) begin : gen_range_width_guard
+        $fatal(1, "tc_flush_controller: ADDR_BASE/ADDR_RANGE_H set bits above ADDR_W=%0d.", ADDR_W);
+    end
+    if (ADDR_RANGE_H_USED < ADDR_BASE_USED) begin : gen_range_order_guard
+        $fatal(1, "tc_flush_controller: ADDR_RANGE_H=0x%0h is below ADDR_BASE=0x%0h.", ADDR_RANGE_H_USED, ADDR_BASE_USED);
+    end
+    if (LOG2_TOTAL + LOG2_STRIDE > ADDR_W) begin : gen_address_capacity_guard
+        $fatal(1, "tc_flush_controller: ADDR_W=%0d cannot encode TOTAL_LINES=%0d at stride %0d.", ADDR_W, TOTAL_LINES, LINE_STRIDE);
+    end
+    if (RANGE_SPAN < SWEEP_BYTES) begin : gen_range_capacity_guard
+        $fatal(1, "tc_flush_controller: range span 0x%0h cannot encode %0d ways x %0d sets at stride %0d.", RANGE_SPAN, WAYS, LINES, LINE_STRIDE);
+    end
 
     typedef enum logic[1:0] {
         IDLE     = 2'd0,
@@ -96,7 +121,7 @@ module tc_flush_controller
     always_comb begin
         m_ar          = '0;
         m_ar.arvalid  = (state == ISSUE) && (line_idx != TOTAL_LINES[LOG2_TOTAL:0]);
-        m_ar.araddr   = ADDR_BASE + ({{(32-LOG2_TOTAL-1){1'b0}}, line_idx} << LOG2_STRIDE);
+        m_ar.araddr[ADDR_W-1:0] = ADDR_BASE_USED + (ADDR_W'(line_idx) << LOG2_STRIDE);
         m_ar.arlen    = 8'd0;              // CBOM single-beat (matches test_cbom._drive_cbom)
         m_ar.arsize   = 3'($clog2(BLOCK_BYTES));
         m_ar.arburst  = 2'b01;             // INCR

@@ -15,8 +15,8 @@ module l2_top
 
     #(
         //Cache configuration
-        parameter logic[31:0] ADDR_L = 32'h80000000,
-        parameter logic[31:0] ADDR_H = 32'hFFFFFFFF,
+        parameter logic[CACHE_ADDR_MAX_W-1:0] ADDR_L = 64'h0000_0000_8000_0000,
+        parameter logic[CACHE_ADDR_MAX_W-1:0] ADDR_H = 64'h0000_0000_FFFF_FFFF,
         parameter int WAYS = 4,
         parameter int LINES = 512, //Per way
         parameter int LINE_W = 8, //In blocks
@@ -56,7 +56,6 @@ module l2_top
         // Parameters of Axi Slave Bus Interface S00_AXI
         parameter integer C_S00_AXI_ID_WIDTH = 4,
         parameter integer C_S00_AXI_DATA_WIDTH = 32,
-        //!!!DO NOT TOUCH BEYOND THIS POINT!!!
         parameter integer C_S00_AXI_ADDR_WIDTH = 32,
 
         // Parameters of Axi Master Bus Interface M00_AXI
@@ -173,17 +172,22 @@ module l2_top
 
     //Input packing
     // The internal cache adds one discriminator bit to every memory-side ID
-    // (read/write namespace), and its AXI/address structs are 32-bit. These
-    // wrapper parameters are exposed by generated AXI templates, so reject
-    // incompatible overrides instead of silently truncating/extending ports.
+    // (read/write namespace). Slave and master address widths must match because
+    // the cache preserves full addresses on misses and dirty writebacks.
     if (C_S00_AXI_ID_WIDTH < 1) begin : gen_s_id_width_guard
         $fatal(1, "l2_top: C_S00_AXI_ID_WIDTH=%0d unsupported; must be >= 1.", C_S00_AXI_ID_WIDTH);
     end
     if (C_M00_AXI_ID_WIDTH != C_S00_AXI_ID_WIDTH + 1) begin : gen_m_id_width_guard
         $fatal(1, "l2_top: C_M00_AXI_ID_WIDTH=%0d must equal C_S00_AXI_ID_WIDTH+1 (%0d).", C_M00_AXI_ID_WIDTH, C_S00_AXI_ID_WIDTH + 1);
     end
-    if (C_S00_AXI_ADDR_WIDTH != 32 || C_M00_AXI_ADDR_WIDTH != 32) begin : gen_addr_width_guard
-        $fatal(1, "l2_top: only 32-bit AXI addresses are supported (S=%0d M=%0d).", C_S00_AXI_ADDR_WIDTH, C_M00_AXI_ADDR_WIDTH);
+    if (C_S00_AXI_ADDR_WIDTH < 32 || C_S00_AXI_ADDR_WIDTH > CACHE_ADDR_MAX_W) begin : gen_s_addr_width_guard
+        $fatal(1, "l2_top: C_S00_AXI_ADDR_WIDTH=%0d unsupported; must be 32..%0d.", C_S00_AXI_ADDR_WIDTH, CACHE_ADDR_MAX_W);
+    end
+    if (C_M00_AXI_ADDR_WIDTH != C_S00_AXI_ADDR_WIDTH) begin : gen_m_addr_width_guard
+        $fatal(1, "l2_top: C_M00_AXI_ADDR_WIDTH=%0d must equal C_S00_AXI_ADDR_WIDTH=%0d.", C_M00_AXI_ADDR_WIDTH, C_S00_AXI_ADDR_WIDTH);
+    end
+    if ((ADDR_L >> C_S00_AXI_ADDR_WIDTH) != '0 || (ADDR_H >> C_S00_AXI_ADDR_WIDTH) != '0) begin : gen_range_width_guard
+        $fatal(1, "l2_top: ADDR_L/H set bits above C_S00_AXI_ADDR_WIDTH=%0d.", C_S00_AXI_ADDR_WIDTH);
     end
     if (C_M00_AXI_DATA_WIDTH != C_S00_AXI_DATA_WIDTH) begin : gen_data_width_match_guard
         $fatal(1, "l2_top: C_M00_AXI_DATA_WIDTH=%0d must equal C_S00_AXI_DATA_WIDTH=%0d.", C_M00_AXI_DATA_WIDTH, C_S00_AXI_DATA_WIDTH);

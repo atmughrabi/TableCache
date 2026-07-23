@@ -24,9 +24,8 @@ from __future__ import annotations
 import os
 import cocotb
 from cocotb.triggers import RisingEdge
-from tb_common import reset_dut, attach_mem, CLK_PERIOD_NS
+from tb_common import reset_dut, attach_mem, CLK_PERIOD_NS, BASE
 
-BASE        = 0x80000000
 BLOCK_BYTES = 4
 LINE_W      = 8
 LINE_BYTES  = LINE_W * BLOCK_BYTES   # 32B default
@@ -242,4 +241,3 @@ async def test_grasp_overlap_priority(dut):
     assert hits >= len(hot_addrs) - 1, (
         f"hot precedence broken in overlap: {hits}/{len(hot_addrs)}"
     )
-
