@@ -50,6 +50,7 @@ order.
 |---|---|---|
 | Same-ID reads overwrote per-ID state | Serialize in the core; optional reorder buffer maps to distinct IDs | ID/depth matrix |
 | Prefill arbitration changed a stalled AR payload | Hold the selected AR until handshake | prefill-race protocol test |
+| Stalled promoted AW depended on live line-buffer state | Latch forwarding eligibility until handshake | AW-backpressure refill test |
 | A stalled buffered R response lost channel ownership | Hold the buffered response until handshake | buffered-response backpressure test |
 | Concurrent fill and write merge mixed different lines | Merge only when the incoming fill tag matches | fill/write collision test |
 | Depth-one AW FIFO used a zero-width index | Explicit constant index | minimum-depth tests |
