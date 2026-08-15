@@ -9,13 +9,8 @@ l2_cache path at BLOCK_W=32 (the block == the AXI beat, so "block i" is the
   B) LINE_W separate single-beat reads, word by word (a front-end that reads a
      structure field-by-field after the line is warm)
 
-Motivated by a GraphBlox report of "odd 32-bit words return X" at
-BLOCK_W==NARROW_W==32. NOTE: that symptom was ultimately the shim's RATIO=1 word-
-offset slice (bug #32, fixed in tc_narrow_shim.sv; covered by the strict-xsim
-tb/vip/tb_shim_ratio1.sv, since Verilator masks the out-of-range part-select).
-This test runs the BARE l2_cache path (no shim), so it does NOT exercise that shim
-slice; it is a complementary guard that the databank fill + per-block read return
-every block correctly across the reported WAYS/VICTIM/DB_LATENCY sweep.
+The test complements the strict-xsim RATIO=1 shim regression by checking every
+databank block through the bare cache path.
 """
 from __future__ import annotations
 import os

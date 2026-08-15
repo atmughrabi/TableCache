@@ -88,9 +88,6 @@ class MemMonitor:
                 self.aw += 1
 
 
-# ----------------------------------------------------------------------
-# Test 1 — basic read returns the right narrow word
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_basic_read(dut):
     await reset_and_clock(dut)
@@ -107,9 +104,6 @@ async def test_basic_read(dut):
     dut._log.info("[basic_read] 8 distinct-line reads OK")
 
 
-# ----------------------------------------------------------------------
-# Test 2 — L0 line buffer: sequential reads in one line use 1 wide AR
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_line_buffer_hits(dut):
     await reset_and_clock(dut)
@@ -128,12 +122,9 @@ async def test_line_buffer_hits(dut):
     dut._log.info(f"[line_buffer_hits] {RATIO} reads -> {mon.ar} wide AR OK")
 
 
-# ----------------------------------------------------------------------
-# Test 2b -- pipelined back-to-back buffered reads (drain path)
 # Targets mutation `drop_buf_drain_term`: if ar_buf_drain_this_cycle is
 # forced to 0, the buffer can hold only ONE pending response at a time;
 # 4 reads fired back-to-back would either hang or take much longer.
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_buffered_reads_pipelined(dut):
     await reset_and_clock(dut)
@@ -163,12 +154,9 @@ async def test_buffered_reads_pipelined(dut):
     dut._log.info("[buffered_reads_pipelined] 4 pipelined buffered reads -> 0 extra AR OK")
 
 
-# ----------------------------------------------------------------------
-# Test 2c -- mem-side AR back-pressure during a write-prefill sequence.
 # Targets mutations `drop_m_arready_dep` (s_arready ignores m_arready)
 # and `drop_prefill_check` (m_arvalid asserted during active prefill).
 # Forces the shim to hold s_arready/m_arvalid stable across a stall.
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_mem_arready_backpressure(dut):
     import random as _r
@@ -210,9 +198,6 @@ async def test_mem_arready_backpressure(dut):
     dut._log.info(f"[mem_arready_backpressure] 8 W/R/R sequences under m_arready stall OK (ar={mon.ar} aw={mon.aw})")
 
 
-# ----------------------------------------------------------------------
-# Test 3 -- write invalidates buffer; next read sees fresh data
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_write_invalidates_buffer(dut):
     await reset_and_clock(dut)
@@ -249,9 +234,6 @@ async def test_write_invalidates_buffer(dut):
     dut._log.info(f"[write_invalidates_buffer] OK (mem ARs: {ar_before}->{mon.ar})")
 
 
-# ----------------------------------------------------------------------
-# Test 4 — many back-to-back writes (AW FIFO + W-ordering)
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_aw_fifo_burst(dut):
     await reset_and_clock(dut)
@@ -276,9 +258,6 @@ async def test_aw_fifo_burst(dut):
     dut._log.info(f"[aw_fifo_burst] {N} writes + readbacks OK")
 
 
-# ----------------------------------------------------------------------
-# Test 5 — random R/W against a golden memory model
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_random_rw(dut):
     await reset_and_clock(dut)
@@ -320,10 +299,6 @@ async def test_random_rw(dut):
     dut._log.info(f"[random_rw] {N} txns ({rd_pct}% R) clean")
 
 
-# ----------------------------------------------------------------------
-# Test 6 — write-merge: read warms buffer, write updates buffer in-place,
-# read-back returns merged data WITHOUT a second wide AR.
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_write_merge_no_refetch(dut):
     await reset_and_clock(dut)
@@ -331,14 +306,14 @@ async def test_write_merge_no_refetch(dut):
     mon = MemMonitor(dut); cocotb.start_soon(mon.run())
 
     line_base = BASE | (10 * BLOCK_B)
-    # 1. Warm the buffer with a read of lane 0
+    # Warm the buffer with a read of lane 0.
     _ = await master.read(line_base, NARROW_B)
-    # 2. Write lane 5 with new value
+    # Write lane 5 with a new value.
     lane = 5
     new_val = 0xCAFEBABE & WORD_MASK
     await master.write(line_base + lane * NARROW_B,
                        new_val.to_bytes(NARROW_B, "little"))
-    # 3. Read lane 5 back — should hit merged buffer; no NEW wide AR
+    # Read lane 5 from the merged buffer without another wide AR.
     ar_before_read = mon.ar
     data = await master.read(line_base + lane * NARROW_B, NARROW_B)
     val  = int.from_bytes(data.data, "little")
@@ -348,7 +323,7 @@ async def test_write_merge_no_refetch(dut):
     assert ar_after_read == ar_before_read, \
         f"buffer should hit after merge: AR before={ar_before_read} after={ar_after_read}"
 
-    # 4. Also verify untouched lanes preserved (read lane 0, original golden)
+    # Verify that untouched lanes retain their original data.
     data0 = await master.read(line_base, NARROW_B)
     val0  = int.from_bytes(data0.data, "little")
     assert val0 == golden_word(line_base), \
@@ -357,9 +332,6 @@ async def test_write_merge_no_refetch(dut):
     dut._log.info(f"[write_merge_no_refetch] OK (total wide ARs: {mon.ar})")
 
 
-# ----------------------------------------------------------------------
-# Test 7 — full-line scan: 1 cold AR, then N writes + N reads all from buffer.
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_full_line_rmw_scan(dut):
     await reset_and_clock(dut)
@@ -388,11 +360,8 @@ async def test_full_line_rmw_scan(dut):
                   f"wide ARs={mon.ar} (expected 1)")
 
 
-# ----------------------------------------------------------------------
-# Test 8 (replaces partial-strobe — cocotbext-axi 0.1.28 has no strb kwarg).
 # Short-data write at a sub-lane offset: AxiMaster derives wstrb automatically.
 # Validates that the shim+merge handles short-byte writes correctly.
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_subword_write_merge(dut):
     await reset_and_clock(dut)
@@ -415,9 +384,6 @@ async def test_subword_write_merge(dut):
     dut._log.info(f"[subword_write_merge] old={old:#x} -> got={got:#x} OK")
 
 
-# ----------------------------------------------------------------------
-# Test 9 — different-line write must NOT corrupt buffer.
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_other_line_write_no_corruption(dut):
     await reset_and_clock(dut)
@@ -443,10 +409,6 @@ async def test_other_line_write_no_corruption(dut):
     dut._log.info(f"[other_line_write_no_corruption] wide ARs={mon.ar}")
 
 
-# ----------------------------------------------------------------------
-# Test 10 — heavy random with strict per-byte golden tracking,
-# multiple seeds, partial-strobe writes, locality-rich addressing.
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_heavy_random(dut):
     await reset_and_clock(dut)

@@ -1,7 +1,6 @@
 # TableCache Interfacing Guide
 
-How to drop `l2_cache` into a design, what to wire on the front and back
-ports, and what latency to budget for in your system.
+Interface, parameter, timing, and integration requirements for `l2_cache`.
 
 ---
 
@@ -33,7 +32,7 @@ ports, and what latency to budget for in your system.
 All widths use these parameters: `BLOCK_W` (data, default 32 bits),
 `READ_ID_WIDTH` (4), `WRITE_ID_WIDTH` (4).
 
-### Front end – `req_*` (slave, you drive this)
+### Front end – `req_*` (slave-facing)
 
 | Channel | Direction | Signal(s) | Width |
 |---|---|---|---|
@@ -43,7 +42,7 @@ All widths use these parameters: `BLOCK_W` (data, default 32 bits),
 | W  | in/out | `req_w` (w_t), `req_wdata`, `req_wstrb` / `req_wready` | struct / `BLOCK_W` / `BLOCK_W/8` / 1 |
 | B  | out/in | `req_b` (b_t), `req_bid` / `req_bready` | struct / `WRITE_ID_WIDTH` / 1 |
 
-`ar_t` / `aw_t` definitions are in [src/cache_config.sv](src/cache_config.sv).
+`ar_t` / `aw_t` definitions are in [src/cache_config.sv](../src/cache_config.sv).
 Notable embedded fields:
 - `ar_t.arsnoop[3:0]` — ACE snoop on reads (CBOM ops).
 - `aw_t.awsnoop[2:0]` — ACE snoop on writes (WriteEvict shortcut).
@@ -58,13 +57,13 @@ Notable embedded fields:
 | `grasp_moderate_addr_l` / `grasp_moderate_addr_h` | in | `GRASP_MODERATE_REGIONS * ADDR_W` | "moderate" windows, same packing. Insert at RRPV=1. |
 
 Each window matches a **real, line-aligned bus address** in `[_l, _h]`.
-Drive a window's `_h` field to `0` to disable just that window; with
+An `_h` field of `0` disables that window; with
 every window disabled GRASP behaves exactly like SRRIP-FP. At the
 default counts of 1 these are single `[ADDR_W-1:0]` ports. For any other
 policy, tie all four to `0`. See
 [doc/wiki/GRASP_Policy.md](wiki/GRASP_Policy.md) for the full spec.
 
-### Back end – `mem_*` (master, you wire to RAM/interconnect)
+### Back end – `mem_*` (master-facing)
 
 Same shape as the front end, with **no snoop** (the cache forces
 `mem_ar.arsnoop = '0`, `mem_aw.awsnoop = 3'b101` for WriteBack).
@@ -75,7 +74,8 @@ can mux read vs. write IDs on the same channel.
 
 ## 3. AXI restrictions the cache enforces (asserted at boundary)
 
-Violating any of these will fire an `$error` in [l2_cache.sv assertion block](src/l2_cache.sv):
+Violating any of these fires an `$error` in the
+[l2_cache.sv assertion block](../src/l2_cache.sv):
 
 1. **Address in range** `[ADDR_RANGE_L, ADDR_RANGE_H]` (default 0x80000000..0xFFFFFFFF). Range must be NAPOT (a non-NAPOT range fails loudly at elaboration with a clear `$fatal`, rather than silently mis-decoding).
 2. **Single-line bursts only** — `arlen < LINE_W` and `awlen < LINE_W`. A request must NOT cross a cache-line boundary.
@@ -84,7 +84,7 @@ Violating any of these will fire an `$error` in [l2_cache.sv assertion block](sr
 5. **No locks** — `arlock`/`awlock` = 0.
 6. **All cacheable** — `arcache`/`awcache` = `4'b1111`.
 
-For INCR bursts you must additionally ensure that `block + len < LINE_W` so the burst fits within the line.
+For INCR bursts, `block + len < LINE_W` is also required.
 
 ---
 
@@ -92,7 +92,7 @@ For INCR bursts you must additionally ensure that `block + len < LINE_W` so the 
 
 | `awsnoop` | Name | Meaning to TableCache |
 |---|---|---|
-| `3'b101` | **WriteEvict** | Full-line update. Skips read fill on miss. **Use whenever you write all bytes of a line.** |
+| `3'b101` | **WriteEvict** | Full-line update. Skips read fill on miss. Use for complete-line writes. |
 | anything else | regular write | RMW: cache fetches the line first, merges, marks dirty. |
 
 | `arsnoop` | Name | Effect (requires `INCLUDE_CBOM=1`) |
@@ -114,7 +114,7 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 | `POLICY` | `LRU` | Replacement policy. Also: FRQ, SECOND_CHANCE, RANDOM, SRRIP, **GRASP** (address-region-aware; see below). |
 | `GRASP_HIGH_REGIONS` | 1 | GRASP only: number of independent "hot" address windows (each pins a buffer at RRPV=0). |
 | `GRASP_MODERATE_REGIONS` | 1 | GRASP only: number of independent "moderate" address windows (insert at RRPV=1). |
-| `LINES` | 512 | Lines per way; must be a power of two and at least 2. |
+| `LINES` | 512 | Lines per way; power of two in the range 2–65,536. |
 | `WAYS` | 4 | Set-associativity; any value >=1 is supported (including 3/5-way). |
 | `LINE_W` | 8 | Blocks per line; supported values are `{2,4,8,16}` (AXI WRAP beat-count requirement). Line size = `LINE_W * BLOCK_W/8` bytes. |
 | `BLOCK_W` | 32 | Data bus width; 8–1024 bits with a power-of-two byte count. |
@@ -122,7 +122,7 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 | `INCLUDE_VICTIM` | 1 | Adds a small fully-associative victim cache between L2 and mem. |
 | `VICTIM_LINES` | 8 | Size of the victim cache; any value >=2 is supported. |
 | `INCLUDE_CBOM` | 1 | Enables the ACE snoop opcodes above. |
-| `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | 4 | Must be equal and >=1. The memory-side ID adds one read/write namespace bit. |
+| `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | 4 | Must be equal and in the range 1–15. The memory-side ID adds one read/write namespace bit. |
 | `ADDR_W` | 32 | Meaningful AXI address bits; supported range is 32–64, subject to the cache geometry leaving at least one tag bit. |
 | `ADDR_RANGE_L/H` | 0x80000000 / 0xFFFFFFFF | Bounding address range; must be NAPOT and fit in `ADDR_W`. Base-0 full-width ranges are supported, including `[0, 0xFFFFFFFFFFFFFFFF]` at `ADDR_W=64`. |
 | `DATABANK_SDP` | 0 | **0** = TDP databank (`tdp_ram`, BRAM only). **1** = SDP+URAM databank (`sdp_ram_uram`, AMD UltraRAM mapping). See §5.1. |
@@ -135,30 +135,12 @@ CBOM ops return one R beat with `rdata = 'x` and `rlast = 1`.
 |---|---|---|
 | Data-array primitive | `tdp_ram` → BRAM | `sdp_ram_uram` → UltraRAM |
 | Storage ports | True dual-port (R/W each) | 1 read + 1 write port; port 1 disabled in FSM |
-| 512 KB / 8-way / 64 B line on U250 | 132 BRAM, 0 URAM, 3194 LUT | 5 BRAM, **16 URAM**, 1919 LUT |
-| Sustained throughput | baseline | **-6.3 %** (measured on `test_workload`, 5000 txn) |
-| 16-cache fit on U250 (2688 BRAM / 1280 URAM) | 2112 BRAM (79 %), 0 URAM | 80 BRAM (3 %), 256 URAM (20 %) |
-| Vivado synth target | any UltraScale+ | UltraScale+ with URAM (U250/U280/V80/…) |
-| Throughput cost source | n/a | port 1 of the databank is disabled (`port_ready[1] & ~DATABANK_SDP`); all R/W serialise through port 0, so fills and reads cannot overlap |
+| Concurrency | two databank ports | requests serialize through port 0 |
+| Primary use | maximum databank concurrency | reduced BRAM pressure |
 
-**When to enable**: multi-cache deployments on URAM-rich parts where
-BRAM is the binding constraint (the 16-CU GraphBlox-style scenario was
-the original driver). For single-cache designs the TDP default has
-better throughput and uses BRAM more naturally.
-
-**Verified**: 9/9 cocotb test modules pass with `DATABANK_SDP=1`
-(29/29 tests including the full back-pressure suite). Mutation score
-100 % on the SDP gating logic (4/4 effective mutations killed, 2
-documented equivalent). Vivado synth (Vivado 2025.2 on
-`xcu250-figd2104-2L-e`) infers UltraRAM cleanly with cascade height 8.
-
-**History**: the chosen "disable port 1 entirely" implementation is the
-third attempt — two earlier approaches (runtime conflict-stall with
-output `ready` gating, then with only data-handshake gating) closed a
-combinational loop through the upstream `req_fifo`/`fill_request`
-paths in `l2_cache.sv` and caused write-data loss respectively. See
-`doc/ARCHITECTURE.md` §7.5 bug #14 for the full failure-modes and
-fix rationale.
+Use SDP mode when replicated caches make BRAM capacity the limiting resource.
+Use TDP mode when databank concurrency is more important. Banking and cascade
+controls are described in [wiki/URAM_Mode.md](wiki/URAM_Mode.md).
 
 ---
 
@@ -183,7 +165,7 @@ l2_cache #(
     .ADDR_RANGE_H   (32'hFFFF_FFFF)
 ) u_l2 (
     .clk(clk), .rst(rst),
-    // master-side (request port from your CPU/DMA)
+    // request-side master
     .req_ar (m_ar),  .req_arid (m_arid),  .req_arready (m_arready),
     .req_r  (m_r),   .req_rdata(m_rdata), .req_rid (m_rid),
     .req_rdata(m_rdata), .req_rready(m_rready),
@@ -202,9 +184,8 @@ l2_cache #(
 );
 ```
 
-A wrapper with **flat AXI signals** (no `ar_t`/`aw_t` structs) is
-available in [tb/cocotb/dut_cocotb.sv](tb/cocotb/dut_cocotb.sv) — useful
-if your interconnect doesn't speak the packed types.
+A flat-signal reference wrapper is available in
+[tb/cocotb/dut_cocotb.sv](../tb/cocotb/dut_cocotb.sv).
 
 ---
 
@@ -220,7 +201,7 @@ Default config (`LRU LINES=64 WAYS=4 LINE_W=8 BLOCK_W=32 DB_LATENCY=1 INCLUDE_VI
 | Full-line WriteEvict, AW→B | **4** | — |
 | Partial / RMW single-beat write, AW→B | **2** (B fires when wdata buffered; fill continues async) | — |
 
-Adjustments to make in your budget:
+Latency budget adjustments:
 * Each additional `DB_LATENCY` cycle adds **+1** to read hit and read fill.
 * Real memory RTT adds to miss latency only (hit unaffected).
 * A dirty victim adds `LINE_W + ~3` cycles of mem-side write traffic; the
@@ -241,7 +222,7 @@ make MODULE=test_latency POLICY=LRU DB_LATENCY=1
 | Streaming reads, all hits (same line repeatedly) | **1 beat / cycle** on the front-end R channel |
 | Streaming reads, all misses, no contention | mem-AR-rate-limited (typically 1 fill burst per `LINE_W + small overhead` cycles) |
 | Streaming WriteEvict, hits or misses | **1 W beat / cycle** sustained, B fires every `LINE_W` cycles |
-| Mixed RMW writes | Bounded by the RMW path: each write triggers a mem AR (≥ `LINE_W` cycles of mem traffic). Use WriteEvict whenever you cover the full line. |
+| Mixed RMW writes | Bounded by the RMW path: each write triggers a mem AR (≥ `LINE_W` cycles of mem traffic). Complete-line writes should use WriteEvict. |
 
 The internal FIFOs are sized so a single in-flight burst rarely back-pressures the master. The `READ_ID_WIDTH`/`WRITE_ID_WIDTH` limit the **number of unique IDs** in flight — repeating the same ID serializes naturally.
 
@@ -260,12 +241,12 @@ The internal FIFOs are sized so a single in-flight burst rarely back-pressures t
 ## 10. Reset
 
 * Active-high synchronous `rst`.
-* **Hold for at LEAST `2^ADDR_WIDTH` cycles**, where `ADDR_WIDTH = $clog2(LINES)`. The tag-bank and replacement-policy storage (`sdp_ram_rst`) use an LFSR-driven reset that walks every entry; under-resetting leaves uninitialized lines that silently corrupt the LRU WAYS>4 path (the `INIT_POLICY` is non-zero there).
-  * `LINES=128` → ≥128 cycles. `LINES=2048` → ≥2048 cycles.
-  * **Recommended floor: 4096 cycles**, which covers every `LINES` value the cache supports. The bundled cocotb harness uses 4096.
-  * The `sdp_ram_rst.sv` header comment says `$clog2(ADDR_WIDTH)` cycles — that comment is incorrect; trust this section.
+* Hold reset for at least
+  `max(LINES, 2**(max(READ_ID_WIDTH,WRITE_ID_WIDTH)+1))` cycles. Line metadata and occupancy
+  tables use LFSR-driven reset walks; shorter resets leave entries uncleared.
+* The cocotb harness applies a two-times margin to this minimum.
 * All in-flight state is dropped. Memory contents survive.
-* Mid-burst reset is **not verified** by the current testbench.
+* `test_reset_recovery.py` covers reset during active read and write traffic.
 
 ---
 
@@ -277,6 +258,12 @@ The internal FIFOs are sized so a single in-flight burst rarely back-pressures t
 `READ_ID_WIDTH+1` and `WRITE_ID_WIDTH+1`; the interconnect must allow at
 least that many in-flight transactions.
 
+If a backend exposes fewer ID bits, do not truncate cache IDs. Either preserve
+the full width or serialize AR/R and AW/B onto a single external ID, recording
+the full IDs in separate in-order shadow FIFOs and restoring them on R-last/B.
+The backend must preserve order for the flattened ID, and the shadow queues
+must cover the configured outstanding depth.
+
 ### DDR controller via AXI
 Wire `mem_*` to the DDR controller's S_AXI port. Set
 `ADDR_RANGE_L/H` to the DDR address window. The cache's WRAP bursts will
@@ -285,29 +272,22 @@ need to be supported by the controller (most modern controllers do).
 ### Local BRAM / scratchpad
 Use `cocotbext-axi`'s `AxiRam` (Python) or any simple AXI memory model
 in SV. Mask high address bits if the local memory window is smaller than
-the cache's address range — see [tb/cocotb/dut_cocotb.sv](tb/cocotb/dut_cocotb.sv)
+the cache's address range — see
+[tb/cocotb/dut_cocotb.sv](../tb/cocotb/dut_cocotb.sv)
 which uses `MEM_MASK = 32'h000F_FFFF` for a 1 MiB shadow.
 
 ### Caveat for AXI memories
 The cache uses **WRAP bursts** on mem-AR when starting block is non-zero
-(critical-word-first fill). Your memory MUST honor WRAP semantics. The
-bundled SV test memory model historically did not, leading to bug #5;
-see [tb/common/axi_mem_model.sv](tb/common/axi_mem_model.sv) for a
-correct WRAP implementation.
+(critical-word-first fill). The memory system must honor WRAP semantics.
+See [tb/common/axi_mem_model.sv](../tb/common/axi_mem_model.sv) for the
+reference implementation.
 
 ### Whole-cache flush controller ([`src/tc_flush_controller.sv`](../src/tc_flush_controller.sv))
 
-> **Status: working.** Validated by
-> [tb/cocotb/test_flush.py](../tb/cocotb/test_flush.py) (7 tests, all
-> PASS), including `test_flush_cold_cache` (flushes an unwarmed cache: 0
-> mem ARs, 0 mem AWs), `test_flush_multitag_all_ways` and
-> `test_flush_scattered_multitag` (dirty every way of a set at high/
-> scattered tags — writeback + invalidation enforced).
-
 Optional drop-in sequencer that walks every physical line (`LINES × WAYS`)
 of the cache and issues a single-beat CBOM per line. Use when the
-accelerator needs an atomic "drain everything to memory" handshake rather
-than per-line snoops.
+accelerator needs a whole-cache clean/invalidate sequence rather than
+per-line snoops.
 
 **Default snoop is `CleanInvalidByIndex` (`4'b1011`).** For each line the
 sequencer presents `araddr = ADDR_BASE + line_idx * LINE_STRIDE`, where
@@ -334,9 +314,13 @@ Ports and params:
 | `flush_active` | output | high from `flush_req` until the last R beat drains |
 | `flush_done` | output | single-cycle pulse on completion |
 
-Reserved ID: `FLUSH_ID = (1<<ID_W)-1`. The accelerator must not issue
-this ID while `flush_active=1`. (The narrow-port shim already reserves
-the same ID for its own prefill traffic.)
+`flush_done` marks completion of the CBOM walk, not completion of all
+memory-side B responses. A persistence barrier must also observe downstream
+outstanding writes.
+
+Reserved ID: `FLUSH_ID = (1<<ID_W)-1`. Assert `flush_req` only when the
+slave port is quiescent: no outstanding AR, AW, or W traffic, including a
+pending response for `FLUSH_ID`. Keep normal traffic idle until `flush_done`.
 
 Integration with the cache requires a 2:1 priority mux on the cache's
 slave port:
@@ -362,19 +346,21 @@ assign cache_arid   = flush_active ? flush_arid   : acc_arid;
 assign acc_arready  = flush_active ? 1'b0         : cache_arready;
 assign flush_arready= flush_active ? cache_arready: 1'b0;
 
-// R demux by id: FLUSH_ID -> controller, else -> accelerator
-assign flush_rready = (cache_rid == FLUSH_ID) ? acc_rready_or_1 : 1'b0;
-assign acc_rready_visible = (cache_rid != FLUSH_ID) & cache_rvalid;
+// R demux. RID is meaningful only while RVALID is asserted.
+wire route_to_flush = flush_active & cache_rvalid & (cache_rid == FLUSH_ID);
+assign flush_r.rvalid = route_to_flush;
+assign acc_rvalid = cache_rvalid & ~route_to_flush;
+assign cache_rready = route_to_flush ? flush_rready : acc_rready;
 
 // AW gated during flush so no new writes land mid-sweep
 assign cache_aw.awvalid = acc_aw.awvalid & ~flush_active;
 assign acc_awready      = cache_awready  & ~flush_active;
+assign cache_w.wvalid   = acc_w.wvalid   & ~flush_active;
+assign acc_wready       = cache_wready   & ~flush_active;
 ```
 
-Estimated latency: ~`LINES * (DB_LATENCY + 4)` cycles for a fully-empty
-cache, plus the mem writeback time for every dirty line. Default
-config (LINES=64, DB_LATENCY=1) flushes a fully-dirty cache in ~5000-
-10000 cycles depending on mem latency.
+Flush latency scales with `LINES × WAYS`, databank latency, and the number and
+duration of dirty writebacks.
 
 ---
 
@@ -411,6 +397,8 @@ hand-rolling a width converter.
 | `ADDR_W`   | 32 | address width |
 | `MAX_OUTSTANDING_W` | 16 | depth of AW→W FIFO; should match `2^WRITE_ID_WIDTH` at the cache |
 | `ENABLE_LINE_BUFFER` | 1 | set 0 to disable the L0 line buffer (every narrow request becomes a wide round-trip) |
+| `PROMOTE_WMISS_TO_RW` | 0 | prefill a missing write line before forwarding AW; requires `ENABLE_LINE_BUFFER=1` and reserves the all-ones read ID |
+| `READ_REORDER_DEPTH` | 1 | map one upstream read ID onto multiple cache IDs and restore issue order; maximum `2**ID_W-1` |
 
 `l2_cache`, `l2_top`, `tc_flush_controller`, and `tc_narrow_shim` accept
 address widths from 32 through 64 bits. Internally, the packed AXI request structs use
@@ -422,10 +410,10 @@ removes unused upper bits in narrower configurations.
 * `arlen = awlen = 0` (single beat only).
 * `arsize = awsize = log2(NARROW_W/8)`.
 * `araddr`/`awaddr` aligned to `NARROW_W/8`.
-* For full-line WriteEvict you **cannot** use the shim — the narrow port
+* The shim cannot carry full-line WriteEvict traffic because the narrow port
   can never claim full-line coverage. `awsnoop = 3'b101` is rewritten to
-  `3'b000` on the way out (cache will RMW). If you need WriteEvict, route
-  it through a separate wide path.
+  `3'b000` on the way out, selecting RMW. WriteEvict requires a separate
+  wide path.
 
 ### 13.4 What the shim does to each transaction
 
@@ -481,8 +469,8 @@ tc_narrow_shim #(
 
 ### 13.7 Tests
 
-* `tb/cocotb/test_narrow_shim.py` — 10 directed + random campaign (50 000-op heavy random).
+* `tb/cocotb/test_narrow_shim.py` — directed and randomized shim behavior.
 * `tb/cocotb/test_shim_latency.py` — per-operation cycle counts.
-* `tb/cocotb/test_shim_throughput.py` — hand-driven AR pump proving 1 beat/cycle steady state.
+* `tb/cocotb/test_shim_throughput.py` — buffered-read throughput.
 
 Run with `cd tb/cocotb && make MODULE=test_narrow_shim` (or `test_shim_latency` / `test_shim_throughput`).

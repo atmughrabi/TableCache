@@ -199,22 +199,22 @@ async def test_grasp_runtime_reconfig(dut):
     await reset_dut(dut)
     attach_mem(dut, size_bytes=1 << 22)
 
-    # Phase 1: pin set-A as hot, thrash with set-B.
+    # Pin set A as hot and thrash with set B.
     set_a = [BASE + (i * LINE_BYTES) for i in range(8)]
     set_b = [BASE + 0x00040000 + (i * LINE_BYTES) for i in range(8)]
     cold  = [BASE + 0x00100000 + (i * LINE_BYTES) for i in range(64)]
 
     _set_grasp(dut, hot_l=set_a[0], hot_h=set_a[-1] + LINE_BYTES - 1)
     hits_a1 = await _hot_cold_workload(dut, set_a, cold)
-    dut._log.info(f"phase1 set_a-hot: A hits {hits_a1}/8")
+    dut._log.info(f"initial set_a-hot: A hits {hits_a1}/8")
 
-    # Phase 2: pin set-B as hot instead; set-A is now cold; thrash with cold pool.
+    # Reconfigure set B as hot, then thrash the now-cold set A.
     _set_grasp(dut, hot_l=set_b[0], hot_h=set_b[-1] + LINE_BYTES - 1)
     hits_b = await _hot_cold_workload(dut, set_b, cold)
-    dut._log.info(f"phase2 set_b-hot: B hits {hits_b}/8")
+    dut._log.info(f"reconfigured set_b-hot: B hits {hits_b}/8")
 
-    assert hits_a1 >= 7, f"phase1 set_a retention failed: {hits_a1}/8"
-    assert hits_b   >= 7, f"phase2 set_b retention failed after reconfig: {hits_b}/8"
+    assert hits_a1 >= 7, f"initial set_a retention failed: {hits_a1}/8"
+    assert hits_b   >= 7, f"set_b retention failed after reconfiguration: {hits_b}/8"
 
 
 @cocotb.test()

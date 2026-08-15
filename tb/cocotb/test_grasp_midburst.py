@@ -6,11 +6,6 @@ classifiers (no latching) — reconfiguring mid-burst should affect
 every access from the reconfigure cycle onward, with no replay or
 loss of in-flight transactions.
 
-Mutation gap coverage: any RTL refactor that accidentally latches
-the region bounds (e.g., to break a long timing path) would break
-this test even though test_grasp's per-phase reconfig (where reads
-between phases are fully drained) would pass.
-
 POLICY=GRASP required.
 """
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 `DATABANK_SDP=1` selects a simple-dual-port data array implemented by
 [`sdp_ram_uram.sv`](../../src/sdp_ram_uram.sv). It trades databank concurrency
-for UltraRAM inference on AMD UltraScale+ devices.
+for UltraRAM inference on supported AMD FPGA families.
 
 Integration details: [`doc/FPGA_INTEGRATION.md`](../FPGA_INTEGRATION.md)
 

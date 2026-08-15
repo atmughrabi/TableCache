@@ -44,7 +44,7 @@ module tc_flush_controller
     // whole-set clean, line_idx encodes {way, set}: set = line_idx mod LINES sits
     // in the address set bits; way = line_idx / LINES rides the tag position, and
     // the cache reads the way from the tag field's low bits. With WAYS=1 (default)
-    // this degenerates to the legacy per-set walk.
+    // WAYS=1 reduces to one request per set.
     localparam int unsigned TOTAL_LINES  = LINES * WAYS;
     localparam int unsigned LOG2_TOTAL   = $clog2(TOTAL_LINES);
     localparam int unsigned BLOCK_BYTES  = BLOCK_W / 8;

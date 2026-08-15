@@ -1,24 +1,4 @@
-"""Reproduce (and now regression-guard) the residual reported in
-tablecache_flush_rootcause UPDATE 22/23 -- root-caused as bug #28.
-
-Two tests:
-  * test_burst_idle_liveness -- COLD same-id read burst + idle + reread. Always
-    stayed live even pre-fix (cold reads never evict), so it does NOT trip the
-    bug; kept as a baseline liveness check.
-  * test_evict_burst_idle_liveness -- the real repro. Warm the cache dirty, then
-    a back-to-back same-id read burst that EVICTS dirty lines PIPELINED across
-    the databank's 2 ports (round-robin sets), drain, idle, reread.
-
-Bug #28: needs_rdata (the "fill pending" per-id toggle) was set on req_arready
-(the slave-port accept into the 1-deep AR skid) instead of the arbitrated
-advance, so two back-to-back same-id reads toggled it twice -> 0. A writeback
-that retired before its paired fill then read "fill done" and cleared inuse a
-second time -> inuse_id/inuse_line stuck SET -> every later same-id/same-set
-read wedged (accepted at the slave, no fetch, no rvalid). Needs a small geometry
-(e.g. LINES=2 WAYS=2) so the burst actually evicts dirty lines.
-
-This drives l2_cache's s_ AR/R (and s_ AW/W to warm) channels directly; its own
-inuse_stall serializes same-id reads, like the shim would.
+"""Same-ID burst, idle, eviction, and liveness regressions.
 
 Run:  make MODULE=test_burst_idle LINES=2 WAYS=2 \
            [TC_BURST_N=..] [TC_IDLE=..] [TESTCASE=test_evict_burst_idle_liveness]
@@ -39,7 +19,7 @@ ARSIZE      = (BLOCK_BYTES.bit_length() - 1)   # log2(4) = 2
 
 
 def _lines(n, base=0xB000):
-    # n distinct cache lines (cold), spaced by one line, like GraphBlox 0xB000..
+    # Distinct cold cache lines spaced by one line.
     return [BASE | (base + i * LINE_BYTES) for i in range(n)]
 
 
@@ -131,12 +111,7 @@ async def test_burst_idle_liveness(dut):
 
 @cocotb.test()
 async def test_evict_burst_idle_liveness(dut):
-    """The UPDATE-22/23 wedge needs the back-to-back same-id burst to EVICT
-    dirty lines -- that is what produces split rvalid+bvalid finish entries and
-    exercises the deferred_inuse_clear (bug #2) path under back-to-back same-id.
-    Cold-cache read bursts (test_burst_idle_liveness) never evict, so they can't
-    trip it. Here: warm the (small) cache fully dirty, then a same-id read burst
-    that evicts every line, drain, idle, reread -> must stay live.
+    """Evict dirty lines with a same-ID burst, idle, then verify progress.
 
     Run small:  make MODULE=test_burst_idle LINES=2 WAYS=2 \
                      TESTCASE=test_evict_burst_idle_liveness

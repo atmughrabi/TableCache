@@ -1,18 +1,9 @@
-"""Smoke test for l2_top (the AXI4 wrapper around l2_cache).
-
-Before this test, all cocotb regression went through dut_*.sv wrappers
-that instantiate l2_cache directly. l2_top's parameter casting,
-port forwarding, and the .* connection from l2_top to l2_cache were
-only validated at synthesis time (`syn/vivado/run_synth.sh TOP=l2_top`),
-never functionally. This test closes that gap.
-
-POLICY=LRU (the l2_top default).
-"""
+"""Functional tests for the flat AXI l2_top wrapper."""
 from __future__ import annotations
 import cocotb
 from cocotb.triggers import RisingEdge, Timer
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
-from tb_common import CLK_PERIOD_NS, BASE
+from tb_common import CLK_PERIOD_NS, BASE, cacheable_master
 from cocotb.clock import Clock
 
 BLOCK_BYTES = 4
@@ -37,7 +28,9 @@ async def _reset(dut, cycles=4096):
 
 def _attach_master(dut):
     bus = AxiBus.from_prefix(dut, "s")
-    return AxiMaster(bus, dut.clk, dut.rst, reset_active_level=True)
+    return cacheable_master(
+        AxiMaster(bus, dut.clk, dut.rst, reset_active_level=True)
+    )
 
 
 def _attach_mem(dut, size_bytes=1 << 20):
@@ -97,9 +90,7 @@ async def test_l2top_two_addresses(dut):
 
 @cocotb.test()
 async def test_l2top_burst_idle_liveness(dut):
-    """UPDATE-22 repro on the FULL l2_top path: N back-to-back same-id (arid=0)
-    reads, drain, IDLE window, then one more read -- l2_top must stay LIVE
-    (the post-idle read must be serviced, not accepted-then-dropped)."""
+    """Back-to-back same-ID reads remain live across an idle interval."""
     import os
     from cocotb.triggers import ReadOnly
     await _reset(dut)
@@ -112,7 +103,7 @@ async def test_l2top_burst_idle_liveness(dut):
     ARSIZE  = (BLOCK_BYTES.bit_length() - 1)
     MEM_MASK = 0x000F_FFFF
 
-    # 4 distinct cold lines (a la GraphBlox 0xB000/0xB020/..), seeded in mem.
+    # Four distinct cold lines, seeded in memory.
     addrs = [BASE | (0xB000 + i * LINE_BYTES) for i in range(BURST_N)]
     for i, a in enumerate(addrs):
         ram.write(a & MEM_MASK, bytes([(0x11 * (i + 1)) & 0xFF, 0x2c, 0x00, 0x7c]))

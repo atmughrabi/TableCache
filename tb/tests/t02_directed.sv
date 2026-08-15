@@ -134,7 +134,7 @@ module t02_directed
                             `MEM.mem_read(a), wd[i]);
             end
 
-            // Post-eviction re-read of base[0] (RTL bug #2 regression).
+            // Post-eviction re-read of base[0].
             // Must miss in cache, fetch from mem, return the writeback data.
             `BFM.issue_read(base[0], 8'd7, 2'b01, 4'hD);
             `BFM.wait_read_done(4'hD, 1000);
@@ -196,7 +196,7 @@ module t02_directed
         // completes the inuse_id slot must be cleared so the second can be
         // accepted. (The BFM's read_log is keyed by ID, so we wait for the
         // first to finish before re-issuing.)  This is the same path that
-        // RTL bug #2 broke; D8 is a focused regression for that fix.
+        // Focused split-completion occupancy regression.
         begin
             automatic logic [31:0] a0 = 32'h8000_A000;
             automatic logic [31:0] a1 = 32'h8000_B000;

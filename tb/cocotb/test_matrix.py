@@ -135,29 +135,27 @@ def test_db_latency_three_rejected():
     }
     r = _make(env, "test_smoke", timeout_s=180)
     assert r.returncode != 0, "DB_LATENCY=3 unexpectedly built"
-    assert "DB_LATENCY=3 unsupported; must be 1..2" in (r.stdout + r.stderr)
+    assert "DB_LATENCY=3 unsupported; whole-cache flush requires 1..2" in (
+        r.stdout + r.stderr)
 
 
-# Focused subset for the heavier enrichment tests (writeback monitor + flush
-# tag-coverage). Policy is largely orthogonal to writeback/flush correctness, so
-# we sweep what actually matters: VICTIM on/off and the associativity, plus one
-# non-LRU policy. Each entry: (POLICY, WAYS, DB_LATENCY, VICTIM, CBOM).
-ENRICH_MATRIX = [
+# Focused writeback and flush configurations.
+FOCUSED_MATRIX = [
     ("LRU",   4, 1, 0, 1),   # baseline
     ("LRU",   4, 1, 1, 1),   # + victim cache
-    ("LRU",   2, 1, 1, 1),   # WAYS=2 + victim (deployment-like)
+    ("LRU",   2, 1, 1, 1),   # WAYS=2 + victim
     ("LRU",   8, 1, 0, 1),   # WAYS=8
     ("SRRIP", 4, 1, 1, 1),   # non-LRU policy + victim
-    ("LRU",   4, 2, 1, 1),   # DB_LATENCY=2 (deep databank read; flush bug #27 guard)
+    ("LRU",   4, 2, 1, 1),   # Deepest supported databank latency
     ("LRU",   4, 2, 0, 1),   # DB_LATENCY=2, no victim
 ]
 
 
-@pytest.mark.parametrize("policy,ways,db_lat,victim,cbom", ENRICH_MATRIX,
-                          ids=[f"{p}-W{w}-L{l}-V{v}-C{c}" for p, w, l, v, c in ENRICH_MATRIX])
+@pytest.mark.parametrize("policy,ways,db_lat,victim,cbom", FOCUSED_MATRIX,
+                          ids=[f"{p}-W{w}-L{l}-V{v}-C{c}" for p, w, l, v, c in FOCUSED_MATRIX])
 def test_eviction_matrix(policy, ways, db_lat, victim, cbom):
     """Heavy non-aligned eviction round-trip + backend WritebackMonitor across
-    configs (the FIX-A / writeback-correctness net)."""
+    configurations."""
     env = {"POLICY": policy, "WAYS": str(ways), "DB_LATENCY": str(db_lat),
            "VICTIM": str(victim), "CBOM": str(cbom)}
     r = _make(env, "test_eviction", timeout_s=360)
@@ -170,11 +168,11 @@ def test_eviction_matrix(policy, ways, db_lat, victim, cbom):
         f"---stdout tail---\n{r.stdout[-3000:]}")
 
 
-@pytest.mark.parametrize("policy,ways,db_lat,victim,cbom", ENRICH_MATRIX,
-                          ids=[f"{p}-W{w}-L{l}-V{v}-C{c}" for p, w, l, v, c in ENRICH_MATRIX])
+@pytest.mark.parametrize("policy,ways,db_lat,victim,cbom", FOCUSED_MATRIX,
+                          ids=[f"{p}-W{w}-L{l}-V{v}-C{c}" for p, w, l, v, c in FOCUSED_MATRIX])
 def test_flush_matrix(policy, ways, db_lat, victim, cbom):
     """Whole-cache flush suite incl. multi-tag/all-ways + scattered high-tag
-    regressions (the FIX-B / flush tag-coverage net) across configs."""
+    coverage across configurations."""
     env = {"POLICY": policy, "WAYS": str(ways), "DB_LATENCY": str(db_lat),
            "VICTIM": str(victim), "CBOM": str(cbom)}
     r = _make(env, "test_flush", timeout_s=360)
@@ -187,7 +185,7 @@ def test_flush_matrix(policy, ways, db_lat, victim, cbom):
         f"---stdout tail---\n{r.stdout[-3000:]}")
 
 
-# Cacheable address-range sweep (bug #25 + 64-bit address net). The cocotb
+# Cacheable address-range and 64-bit address sweep. The cocotb
 # wrapper folds mem addresses through MEM_MASK, so the address width and fixed
 # high prefix vary independently from the small backing RAM. Each cell drives the
 # heavy eviction + flush suites (with the MemRangeMonitor asserting every
@@ -225,7 +223,7 @@ def test_full_64bit_range_upper_address_reconstruction():
 def test_eviction_range(addr_w, addr_l, addr_h, omitted_w):
     """Heavy eviction round-trip + WritebackMonitor + MemRangeMonitor across the
     cacheable-range spectrum (OMITTED_ADDR_W 0..3), proving the base-0 full-range
-    fix (bug #25) reconstructs mem addresses bit-exactly in the fast flow."""
+    address reconstruction is bit-exact across the supported range."""
     env = {"POLICY": "LRU", "WAYS": "4", "DB_LATENCY": "1", "VICTIM": "1",
            "CBOM": "1", "ADDR_W": str(addr_w), "ADDR_L": addr_l, "ADDR_H": addr_h}
     r = _make(env, "test_eviction", timeout_s=360)

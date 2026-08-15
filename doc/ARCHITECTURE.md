@@ -1,29 +1,16 @@
-# TableCache Architecture & Internal Flow
+# TableCache Architecture
 
-Companion to [INTERFACING.md](INTERFACING.md) (boundary spec) and
-[../README.md](../README.md) (parameters / tests). Subjects covered:
-
-1. Background — paper & thesis pointers.
-2. High-level block diagram.
-3. Per-request flow (read / write / CBOM).
-4. State trackers (the “toggle / set-clear / lutram” zoo).
-5. ASCII pipeline diagrams.
-6. Replacement policy, victim cache, CBOM.
-7. Known gaps, design caveats, and verification status
-   (verification gaps, architectural caveats, test-infrastructure gaps,
-   AXI4 protocol checker, bug history).
-8. Narrow-port shim (`src/tc_narrow_shim.sv`) and where to read further.
+This document describes the internal request flow, state tracking, data and tag
+paths, replacement policies, victim cache, maintenance operations, and narrow
+interface. Boundary requirements are defined in
+[INTERFACING.md](INTERFACING.md).
 
 ---
 
 ## 1. Source material
 
-* Paper: `research/TableCache_An_Open-Source_Configurable_Last-Level_Cache_for_FPGA_Systems.pdf` (FPT 2024).
-* Thesis: `research/etd23318.pdf` (full SFU thesis underpinning the design).
-
-The diagrams below are derived from the RTL as-built; cross-check
-against the paper’s Fig. 1 / Fig. 2 (overall structure + read-miss
-walk-through) and the thesis chapter on the data-bank / tag-bank split.
+Academic references are linked from the repository
+[README](../README.md). The diagrams below describe the current RTL.
 
 ---
 
@@ -184,8 +171,7 @@ Key modules (each is its own `.sv`):
 ## 4. State trackers
 
 The cache uses a **family** of small memories to track in-flight requests
-without a CAM. They look similar but each has a distinct invariant. This
-zoo is the source of most subtle bugs.
+without a CAM. Each has a distinct ownership and update invariant.
 
 | Storage | Indexed by | What it tracks | Backing |
 |---|---|---|---|
@@ -195,34 +181,16 @@ zoo is the source of most subtle bugs.
 | `evict_table` | `cache_id_t` | "this id is awaiting its writeback to drain" | `set_clear_memory` |
 | `needs_rdata_table` | `cache_id_t` | "this id is awaiting fill data from mem" | `set_clear_memory` |
 | `needs_wdata_table` | `wid_t` | "this write hasn't received its W beats yet" | `toggle_memory_set` |
-| `deferred_inuse_clear` | `cache_id_t` (bit array) | bug-#2 fix: defer clear past split B+R finishes | flat reg |
+| `deferred_inuse_clear` | `cache_id_t` (bit array) | defer occupancy clear across split B/R finishes | flat register |
 | `needs_evict_table` | `rid_t` | "this read miss is gated on prior evict draining" | `set_clear_memory` |
 | `premature_valid` + `premature_discard_table` | `rid_t` | speculative CBOM/clean read that will be discarded in DB | `toggle_memory_set` + LUTRAM |
 | `fill_info_table` | `cache_id_t` (full) | mem-rid → {line, block, way, len} for fill | LUTRAM |
 | `way_table` | `cache_id_t` | id → {tag, line, block, way, discard, evict} for DB | LUTRAM (mr) |
 
-The `set_clear_memory` and `toggle_memory_set` primitives are
-**XOR-backed**: setting and clearing the same bit twice = stuck. That’s
-why finish-FIFO bookkeeping is so picky (see bugs #3, #6). The same
-fragility applies to **set timing**: these trackers must be set on the
-*arbitrated advance* (`chosen_arready`/`tb_advance`), never on the AXI
-slave-port accept (`req_arready = ~saved_arvalid`, which buffers a 2nd
-same-id request into the 1-deep skid while the 1st is still in flight).
-Setting `needs_rdata_table` on `req_arready` let two back-to-back same-id
-reads toggle the same id-bit twice → 0, so a writeback that retired before
-its paired fill saw "fill done" and cleared `inuse` a second time → stuck
-SET → the cache wedged on the next same-id/same-set read (bug #28).
-
-The same double-toggle also bites in the **time** dimension: a fresh accept
-(`tb_advance`) and a `finish_clear` on the **same id/hash the same cycle**
-set-and-clear the bit → no-change → the new request's occupancy is lost →
-stuck. `~same_target` only suppresses a finish *re-clearing* an
-already-cleared `(id,hash)` — it does not cover accept-vs-finish. A combined
-multi-phase finish (`bid→rid→wid`) opens the window: an early phase drops
-`inuse` so `inuse_stall` reads 0, and the new accept lands on a later
-phase's clear. Guarded by `accept_conflict` (defer the accept one cycle when
-`finish_clear` targets the incoming id/hash) and asserted by
-`inuse_id/line_no_same_cycle_collide` (bug #29).
+The occupancy memories are XOR-backed. Each request must toggle its ID and
+line-hash entries once on arbitrated acceptance and once on completion.
+`accept_conflict` defers a request when its set operation would coincide with
+a clear of the same entry.
 
 ---
 
@@ -290,159 +258,75 @@ side.
                  pop = 1  → cdh resets, next entry advances
 ```
 
-This is the bug-#6 fix in [src/l2_cache.sv lines 388-421](../src/l2_cache.sv#L388-L421).
+The implementation is in
+[src/l2_cache.sv](../src/l2_cache.sv).
 
 ---
 
 ## 6. Replacement, victim cache, CBOM
 
 * **Replacement policy** lives in `replacement_policy.sv`; the policy is selected at compile time via the `POLICY` parameter. The interface (`cache_eviction`, `cache_way_used_int`, `cache_original_status`, `cache_new_status`, `cache_addr`) is intentionally narrow so any of {LRU, FRQ, SECOND_CHANCE, RANDOM, SRRIP, **GRASP**} drops in. Initial status comes from `INIT_POLICY` in `replacement_policy.sv`.
-* **GRASP** (`GRASP.sv`) is an address-region-aware 3-bit RRIP variant inspired by Faldu et al., HPCA'20. Each reuse class (hot/high and moderate) is a configurable set of **N independent address windows** — `GRASP_HIGH_REGIONS` and `GRASP_MODERATE_REGIONS`, both default 1 — so several disjoint buffers can be pinned at once. The four runtime ports (`grasp_high_addr_l/h`, `grasp_moderate_addr_l/h`) are flattened packed buses: window `i` occupies bits `[i*ADDR_W +: ADDR_W]`, so at the default count of 1 the interface is bit-identical to a single `[ADDR_W-1:0]` window. A window is **disabled** by driving its `_h` field to `0`; with every window disabled GRASP reduces to SRRIP-FP. `high_reuse`/`moderate_reuse` are OR-reductions of the per-window in-range comparators (`moderate_reuse` masked by `~high_reuse` so high wins on overlap). The region-count params thread `l2_top → l2_cache → l2_tagbank → replacement_policy → GRASP`. The cache passes the full reconstructed line-aligned address (`policy_addr`, including the `ADDR_RANGE_L` upper bits — see bugs #15/#17 below) so region matching uses real bus addresses. **GRASP adds 0 ns of WNS overhead** vs SRRIP at the 512 KB/8-way SDP+URAM target — the address-region predicates stay off the critical path (re-measure WNS for very large window counts). See [syn/vivado/sweep_results.md](../syn/vivado/sweep_results.md).
+* **GRASP** (`GRASP.sv`) is an address-aware 3-bit RRIP policy. High and moderate reuse classes each accept a configurable number of packed address windows. High reuse takes precedence on overlap; disabling all windows reduces the policy to SRRIP frequency-priority behavior. See [wiki/GRASP_Policy.md](wiki/GRASP_Policy.md).
 * **Victim cache** (`victim_cache.sv`) sits between `l2_cache` and the memory side when `INCLUDE_VICTIM=1`. It holds recently-evicted lines so a quick re-reference avoids the round-trip to DDR. The cache treats it as transparent — `mem_*` ports look identical externally. **Timing note:** on big SDP+URAM configs (≥512 KB), the victim cache's `pending_reads` LFSR drives a ~24-LUT combinational chain into the SDP databank URAM cascade write input that adds ~1.37 ns to WNS. For URAM-rich deployments where the victim cache's hit-rate benefit doesn't justify the timing cost, set `INCLUDE_VICTIM=0`.
 * **CBOM** ops modify dirty/valid bits in the tagbank and may force a writeback. They go through the same FIFOs as ordinary reads, marked with the `cbom` bit in `ar_request_t`.
 
 ---
 
-## 7. Known gaps / caveats (what the bundled tests DO NOT cover)
+## 7. Supported envelope and caveats
 
-Read this list before depending on TableCache in a production design.
+### 7.1 Supported parameter envelope
 
-### 7.1 Verification gaps
+| Area | Supported values |
+|---|---|
+| Address width | 32–64 bits |
+| Cacheable range | naturally aligned power-of-two window |
+| `LINES` | power of two, 2–65,536 |
+| `WAYS` | integer at least 1 |
+| `LINE_W` | 2, 4, 8, or 16 blocks |
+| `BLOCK_W` | 8–1024 bits with a power-of-two byte count |
+| ID widths | equal read/write widths, 1–15 |
+| `DB_LATENCY` | 1 or 2 |
+| Victim entries | at least 2 |
+| SDP banks | power of two dividing `LINES` |
+| Cascade depth | 1–8 |
 
-| Area | Status | Notes |
-|---|---|---|
-| `BLOCK_W` ≠ 32 | VERIFIED (shim integration path) | [test_shim_wrap_matrix.py](../tb/cocotb/test_shim_wrap_matrix.py) exercises `BLOCK_W={32,64,128,256,512}` with front-shim ratios 1/2/4/8/16, every critical block and narrow lane, TDP/SDP, DB latency 1/2, backpressure, and ROB overlap. The bare-cocotb path remains intentionally fixed at 32 bits; wider widths use `dut_shim_cache`. This sweep exposed the wide-SDP simulator bug #34. |
-| `LINE_W` | VERIFIED / constrained | Supported values are exactly `{2,4,8,16}`: AXI WRAP permits only those beat counts, and the databank block counter requires a power of two. The WRAP matrix exercises all four; invalid 1/3/32 configurations fail with the explicit `l2_cache` guard (bug #33). |
-| `LINES` | VERIFIED / constrained | `LINES={2,8,128,512,1024}` receive functional random stress; long cells cover tiny direct-mapped and large banked-SDP caches. Non-power-of-two/one-line values are rejected because address decoding uses a binary set field. |
-| ID widths / outstanding depth | VERIFIED / constrained | [test_id_depth_matrix.py](../tb/cocotb/test_id_depth_matrix.py) covers `ID_W=1..4`, reorder depth `1,2,3,4,7,8,15`, write FIFO depths `1,2,4,8,16`, every usable/reserved ID, and l2_top memory-ID namespace mapping. Read/write widths must be equal; l2_top M-ID width must be S-ID+1. |
-| `ADDR_W`, `ADDR_RANGE_*` | VERIFIED / constrained | Address widths from 32 through 64 bits are supported. The range matrix covers 32-bit omitted widths 0–3 plus a 64-bit window above 4 GiB and the base-0 full 64-bit space. Invalid non-power-of-two and misaligned ranges, insufficient by-index way bits, and a zero-tag geometry are rejected at generation time. |
-| Odd/non-power-of-two associativity | VERIFIED | Exact software-LRU oracle covers `WAYS={2,3,4,5,8}`; all policies receive odd-way random stress and l2_top runs POLICY `{LRU,SRRIP,GRASP}` × WAYS `{1,2,3,4,5,8}`. |
-| Victim capacity | VERIFIED | `VICTIM_LINES={3,5,8}` directed victim + eviction tests; replacement index wraps explicitly at `LINES-1`. |
-| Address-aware policy classification | VERIFIED | [test_grasp.py](../tb/cocotb/test_grasp.py) exercises GRASP hot-region retention and the all-zero SRRIP-FP fallback. Surfaced **bug #15**: `policy_addr` in `l2_tagbank.sv` was passing the tag-projected address (upper `OMITTED_ADDR_W` bits stripped) to address-aware policies. With `ADDR_RANGE_L=0x80000000` the GRASP region match could never fire for any address \u2265 0x80000000, silently degrading GRASP to plain RRIP-FP. Hit-rate stayed flat across associativity sweeps (4-way 57.4% \u2192 8-way 57.6%) while SRRIP scaled (69.8% \u2192 74.4%). Fix: add `ADDR_BASE` parameter to `l2_tagbank`, reconstruct `policy_addr = ADDR_BASE \\| {tag, line, 0}` before passing to the policy. After fix: GRASP scales (69.1% \u2192 74.1%) and matches SRRIP within 0.3pp. Lesson: functional tests don't catch silent performance bugs; perf-sweep deltas across associativity are a strong oracle. |
-| SDP databank with 1-cycle write-input register | VERIFIED | `SDP_WRITE_INPUT_REG=1` (optional 1-cycle register on the SDP URAM write port; see [sdp_ram_uram.sv](../src/sdp_ram_uram.sv) header). Functional regression of 32/32 PASS across {smoke, random, scoreboard, workload, reset_recovery, backpressure, strobe, latency} × {LRU, GRASP} with `+define+TC_DATABANK_SDP=1 +define+TC_SDP_WRITE_INPUT_REG=1`. Confirms the FSM-correctness analysis: WRITING → READY → READING serialisation provides a 1-cycle slack that absorbs the extra write commit latency. Off by default. |
-| Post-synth timing on big SDP+URAM configs | VERIFIED | [syn/vivado/sweep_results.md](../syn/vivado/sweep_results.md) holds the OOC sweep matrix on U250 (xcu250-figd2104-2L-e). With `DIRECTIVE=default INCLUDE_VICTIM=0 DB_LATENCY=2 DATABANK_SDP=1` (the recommended URAM-deployment knobs), 512 KB / 8-way / GRASP closes 250 MHz post-synth (WNS = +0.186 ns); 1 MB / 8-way / GRASP misses by -0.186 ns (closes post-PnR on the same family). Two synth-flow pitfalls documented in [syn/vivado/README.md](../syn/vivado/README.md): (a) `REPLACEMENT_POLICY` is a no-op for `TOP=l2_cache` (the module declares `POLICY` instead) and silently produces an LRU build; (b) `AreaOptimized_high` costs ~1.36 ns of WNS vs `default` on the URAM cascade critical path. |
-| Mid-burst reset | VERIFIED | [test_reset_recovery.py](../tb/cocotb/test_reset_recovery.py) exercises 4 reset scenarios (between transactions, during a read fill, during a multi-beat write burst, with two reads in flight). Each scenario asserts reset before the response returns, holds for the LFSR-init window (`2*LINES` cycles), then verifies a fresh transaction completes correctly *and* `pc_violations_total == 0` (i.e. no AXI4 protocol violations across the reset boundary). Bug history: surfaced #10 (cache held `req_r.rvalid`/`req_b.bvalid` for one cycle into reset) and #11 (checker's `vcount` had a multi-driver race that silently masked B1 violations occurring during reset). |
-| `req_rready` / `req_bready` held LOW for many cycles | VERIFIED | [test_backpressure.py](../tb/cocotb/test_backpressure.py) drives randomized 1–16-cycle pauses on `s_rready` and `s_bready` via cocotbext-axi `set_pause_generator(...)`. AXI4 PC stays clean (no A1/A2 violations). |
-| `mem_arready` / `mem_wready` held LOW for many cycles | VERIFIED | [test_backpressure.py](../tb/cocotb/test_backpressure.py) drives randomized 1–20-cycle pauses on `m_arready`, `m_wready`, and `m_awready`. Surfaced bug #12 (mem-side B1: `m_arvalid` held for one cycle into reset on the next test's `reset_dut`). |
-| Reset-then-recover after long idle | VERIFIED | [test_realism.py::test_long_idle_then_reset_recover](../tb/cocotb/test_realism.py) idles for `max(4096, LINES·8)` cycles between a warm-up burst and a reset, then verifies a fresh post-reset transaction. |
-| AXI4 protocol-checker compliance | VERIFIED on DUT-driven signals | Custom in-tree [axi_protocol_checker.sv](../tb/cocotb/axi_protocol_checker.sv) wired on every AXI bus of every DUT wrapper. Full 12-module cocotb regression + 22-combo pytest matrix produce **zero violations** on every checker instance that watches DUT-driven signals (cache m_*, shim s_*/m_*, shim↔cache bus). See §7.4 below for rule coverage, the two per-instance trust knobs that mask known cocotbext-axi v0.1.28 quirks, and what each knob trades off. |
-| Real DDR latency (10s of cycles for mem-R first beat) | VERIFIED | [test_realism.py::test_ddr_first_beat_latency_{20,40,80}](../tb/cocotb/test_realism.py) stalls every mem R beat by 20/40/80 cycles via cocotbext-axi `set_pause_generator(...)` on `r_channel` (a strictly more stressful pattern than DDR's first-beat-only delay). 30-op R/W mix passes per latency with zero PC violations. |
-| Coverage closure (line / toggle / FSM) | NOT MEASURED | Verilator coverage not yet enabled |
+Invalid combinations fail during elaboration. Functional coverage spans direct
+cache, flat AXI wrapper, narrow shim, victim cache, TDP/SDP storage, banking,
+multiple policies, reset, backpressure, and address-range variations.
 
-### 7.2 Architectural caveats
+### 7.2 Architectural constraints
 
-| # | Caveat | Mitigation |
-|---|---|---|
-| 1 | **WRAP burst on mem-AR** is mandatory when fill starts at non-zero block (critical-word-first). | Memory model / interconnect MUST honor AXI WRAP. See bug #5. |
-| 2 | **Only `awsnoop=3'b101`** (WriteEvict) is treated as full-line shortcut. WriteBack `3'b001` is RMW. | Document loudly to masters; otherwise expect extra mem ARs. |
-| 3 | **Same-line requests serialize** (different IDs on same hash block). | Throughput-limiting under heavy same-set traffic; consider larger LINES or different hash. |
-| 4 | **Same-ID requests serialize** (max one in-flight per id). | Limits parallelism for masters that reuse IDs; spread across IDs. |
-| 5 | **inuse tables are toggle-XOR backed**: any clear that fires twice for the same target causes a stuck-busy hang. | Source of bugs #3 + #6; future RTL edits to `finish_clear` must preserve "fire-once per (id, hash) per head". |
-| 6 | **`DB_LATENCY` adds 1 cycle to read hits per +1**. | Increase only if synthesis FMAX demands it. |
-| 7 | **`fill_info_table` is shared across all in-flight fills**, keyed by `cache_id_t`. If a master ever reuses an id while a fill is in flight (which the cache blocks via `inuse_id`), bookkeeping would alias. | inuse_id is the single point of trust here. Any regression there breaks all fills. |
-| 8 | **No partial-line writes via mem-AW**: the cache always writes full lines back (`victim_wstrb='1`, `victim_aw.awlen=LINE_W-1`). | Memory must accept full-line bursts. |
-| 9 | **`READ_ID_WIDTH=WRITE_ID_WIDTH`** is the only combination tested. Mismatched widths build but are unverified. | Keep them equal unless you investigate `cache_id_t` packing first. |
-| 10 | **Verilator quirk**: `b_t.bid` / `r_t.rid` of all-ones can bleed into `bvalid`/`rvalid` (commented in `l2_cache.sv` line 240). Stick with even-width IDs. | Don't widen ID_W past 5 without re-testing in Verilator. |
-| 11 | **Reset value of way 0 tag is `'x`** (see `l2_tagbank.sv:128`): only `valid=0` is reset. Random simulators may flag X-prop; production should rely on `valid=0`. | Not a bug; awareness item for X-aware sims. |
-| 12 | **`sdp_ram_rst` LFSR reset requires `2^ADDR_WIDTH` cycles** to initialize every entry. Under-resetting leaves uninitialized LRU policy storage (catastrophic for LRU WAYS>4 where `INIT_POLICY` is non-zero); FRQ/SRRIP/RANDOM tolerate it accidentally. | Integrators MUST hold `rst` ≥ `2^$clog2(LINES)` cycles. Use 4096 as a safe upper bound. The bundled `sdp_ram_rst.sv` docstring (`$clog2(ADDR_WIDTH)`) is wrong. |
-| 13 | **Verilator wide-NBA quirk in `tdp_ram.sv` (AMD branch)**: the original per-byte `for`-loop of partial-bit-slice NBAs silently drops all but the highest-indexed active byte when `NUM_COL = WAYS × (BLOCK_W/8)` becomes large (e.g. `WAYS=8, BLOCK_W=512` ⇒ `NUM_COL=512`). Symptom: a fill writes only one byte of the target way; subsequent partial reads return zeros. Invisible at `BLOCK_W=32` baseline. | Replaced with a single full-width NBA driven by a precomputed bit mask (synth tools still infer per-byte WE). Do not refactor back. See bug #7 and the README "Note on `src/tdp_ram.sv`". The Intel branch (`gen_intel_tdp`) uses a different (packed-element, hand-unrolled) pattern and is unaffected. |
+| Constraint | Consequence |
+|---|---|
+| Memory fills and writebacks may use AXI WRAP | Every backend component must implement WRAP correctly |
+| One request per ID and line hash in the cache core | Reused IDs and same-line traffic serialize |
+| Occupancy tables are toggle-backed | Each tracked request must set and clear exactly once |
+| Whole-cache flush reuses one reserved ID | The reserved all-ones ID cannot be used concurrently by normal traffic |
+| Writebacks are full-line bursts | The memory backend must accept complete cache-line writes |
+| Memory responses must be `OKAY` | Recoverable fill and writeback errors are not implemented |
+| Reset initializes metadata by walking storage | Hold reset for at least `max(LINES, 2**(max(READ_ID_WIDTH,WRITE_ID_WIDTH)+1))` cycles |
+| Narrow shim accepts single-beat aligned accesses | Bursting narrow masters require an upstream width converter |
 
-### 7.3 Test-infrastructure gaps
+### 7.3 Residual verification scope
 
-* The **reference-model scoreboard** ([test_scoreboard.py](../tb/cocotb/test_scoreboard.py)) uses an approximate AR drift (≤ 10%) because shadow-LRU encoding doesn’t exactly match the bit-level cache LRU. Exact prediction would require porting the encoded LRU permutation tables from `LRU.sv` into Python.
-* **Inuse-leak sweep** ([test_random.py](../tb/cocotb/test_random.py)) catches bug-#6-class hangs by poking every (set, tag) with a rolling id after the random phase. It does NOT detect partial leaks where some bits are stuck and others are not — only a subsequent hang.
-* **CBOM tests** ([test_cbom.py](../tb/cocotb/test_cbom.py)) are sequential single-shot. Concurrent CBOM + read/write to same line is not exercised.
-* **Strobe tests** ([test_strobe.py](../tb/cocotb/test_strobe.py)) hand-drive AW/W because cocotbext-axi’s `AxiMaster` lacks per-beat strobe. The hand-drive doesn’t enforce AW-W ordering rules beyond what the cache asserts; the in-tree protocol checker (see §7.4) covers the rest at the bus level.
-* **Pytest matrix harness** ([test_matrix.py](../tb/cocotb/test_matrix.py)) previously checked `"FAIL" not in r.stdout`, which trips on cocotb's own success banner (`** TESTS=1 PASS=1 FAIL=0 SKIP=0 **`). Replaced with a regex that parses the `FAIL=<n>` field and asserts the integer is zero. Without this fix every matrix combo reports failure even when the underlying cocotb test passes — which masked bug #8 until the matrix sweep was re-run with the corrected assertion.
-* **`tb_common.attach_mem` golden seeding** previously read `TC_BLOCK_W` and zero-extended the 32-bit `golden(addr)` value to `BLOCK_W/8` bytes per stride. At `TC_BLOCK_W=64` this clobbered bytes 4..7 of every 8-byte block with zeros, so any subsequent 4-byte read of an odd-block-offset address returned `0x00000000` instead of the expected `golden(addr)`. Symptom: `data mismatch at addr 0x80001004 got=0x00000000 exp=0x1044cafe`. Fix: always seed at the 4-byte golden-word granularity in [tb_common.py](../tb/cocotb/tb_common.py); the bus width only affects how many golden words pack into one beat. The bug was latent because no existing test ran with `TC_BLOCK_W != 32`; it was discovered while probing the (now-locked-out) `BLOCK_W` Makefile knob.
+The regression does not model AXI exclusive accesses, multiple independent
+upstream masters, clock-domain crossings, or recoverable memory errors. Exact
+performance depends on workload, board, floorplan, and memory system.
 
-### 7.4 AXI4 protocol checker
+See [VERIFICATION.md](VERIFICATION.md) for the current test inventory and
+[AXI_VIP.md](AXI_VIP.md) for strict 4-state coverage.
 
-See [VERIFICATION.md §2](VERIFICATION.md#2-axi4-protocol-checker) for the
-full rule table and trust-knob settings. Summary: 14 rules enforced on
-every AXI bus of every wrapper; one combined regression produces zero
-`AXI_PC_VIOLATION` lines.
+### 7.4 AXI protocol checker
 
-### 7.5 Bug history (already fixed)
+The in-tree checker verifies reset behavior, VALID stability, payload stability,
+burst legality, response framing, and per-ID outstanding constraints. See
+[VERIFICATION.md](VERIFICATION.md#axi-protocol-checker).
 
-| # | File | Defect | Fix location | Found by |
-|---|---|---|---|---|
-| 1 | `l2_cache.sv` | Saved AR/AW handshake race | ~line 486 `saved_arvalid`/`saved_awvalid` rewrite | t02 directed |
-| 2 | `l2_cache.sv` | Deferred in-use clear for split B+R finish | `deferred_inuse_clear` flat register, lines 332-381 | t02 directed |
-| 3 | `l2_cache.sv` | Double-toggle of `inuse_*` on bid==rid self-eviction | `clear_done_for_head` latch, lines 388-421 | t02 directed (D5 corner) |
-| 4 | `l2_databank.sv` | `past_original_last` stuck on premature-discard exit | reset on READY→READING transition | cocotb random seed=23 stall at txn[148] |
-| 5 | `tb/common/axi_mem_model.sv` | WRAP burst not implemented in mem model | added burst tracking + addr wrap | cocotb random seed=1 mis-data at txn[36] |
-| 6 | `l2_cache.sv` | `clear_done_for_head` over-suppressed combined R+W entries | track `(cleared_id, cleared_hash)` and only suppress same-target re-fire, lines 388-421 | cocotb random seed=11 stall at txn[217], seed=23 @ txn[148] post-#4 |
-| 7 | `tdp_ram.sv` | AMD branch per-byte NBA loop drops bytes when `NUM_COL` is wide (Verilator quirk at `WAYS=8, BLOCK_W=512` ⇒ `NUM_COL=512`). Each fill committed only one byte. | Single full-width NBA with precomputed bit mask: `mem <= (mem & ~mask) | (data & mask)`. Intel branch unaffected. | shim+cache random_stack: `got=0x3D000000 want=0x3D68EDFC`. |
-| 8 | `replacement_policy.sv` | `POLICY_W==0` when `POLICY=RANDOM` makes `logic[POLICY_W-1:0]` resolve to `logic[-1:0]`; Verilator 5.x rejects (was tolerated before). | Ternary: `logic[(POLICY_W==0 ? 0 : POLICY_W-1) : 0]`. Dummy bit unused. | `pytest test_matrix.py` `POLICY=RANDOM` combo. |
-| 9 | [tc_narrow_shim.sv](../src/tc_narrow_shim.sv) | `PROMOTE_WMISS_TO_RW=1` workaround predated bug #7; issued an extra wide AR per "far" write. Post-#7 the cache's RTL RMW path handles cold-write-miss correctly. | Default flipped to `0`. Workaround retained as escape hatch. | `test_cold_write_miss_preserves_other_lanes` PASS with `PROMOTE_WMISS_TO_RW=0`. |
-| 10 | `l2_cache.sv` | `req_r.rvalid` / `req_b.bvalid` driven from FIFOs with synchronous reset → held high one cycle into `rst==1`. AXI4 B1 violation. | Route FIFO valids through intermediate signals, AND with `~rst` at the slave-port boundary (lines ~689, ~1296). | `test_reset_recovery::test_reset_with_two_in_flight` (only after bug #11 fix). |
-| 11 | `tb/cocotb/axi_protocol_checker.sv` | `vcount` had two drivers: B1 increment block and a separate `if (rst) vcount <= 0;`. The rst-clear won every cycle, so B1 violations during reset printed via `$display` but never counted. | Removed the rst-clear block; initialize via `integer vcount = 0;` at declaration. | Test PASS while log showed `AXI_PC_VIOLATION B1 RVALID asserted during rst`. |
-| 12 | `l2_cache.sv` | Master-side mirror of #10: `mem_ar.arvalid` / `mem_aw.awvalid` / `mem_w.wvalid` held one cycle into reset under m_arready / m_wready back-pressure. | Restructured `gen_victim`/`gen_no_victim` to drive internal `mem_*_int`; an `always_comb` outside the generate gates the three VALIDs with `~rst`. | `test_backpressure::test_mem_wready_backpressure`. |
-| 13 | `tdp_ram.sv` | Original AMD branch set `(* ram_style = "ultra" *)`. Vivado 2025.x rejects the masked-NBA + true-dual-port + per-byte-enable pattern for UltraRAM ("Unsupported RAM template"), since URAM is internally SDP/multi-pumped and cannot service simultaneous per-byte writes on both ports. | Hard-code `(* ram_style = "block" *)` on the AMD TDP path. Verilator (the masked-single-NBA form needed by bug #7) is gated behind `\`ifdef COCOTB_SIM`; Vivado synthesises the original per-byte-NBA loop, which is the canonical BRAM-with-byte-enable template. Comment in `src/tdp_ram.sv:86` records the rationale. | First Vivado OOC build on Alveo U250 (`syn/vivado/run_synth.sh`). |
-| 14 | `l2_databank.sv` | New `DATABANK_SDP=1` mode (paper-style URAM packing via `sdp_ram_uram`) initially gated `port_*_data_ready` outputs with a runtime `sdp_p1_stall` signal. That created a combinational loop through the upstream `req_fifo`/`fill_request` bypass paths in `l2_cache.sv` ("Input combinational region did not converge" at runtime under `test_backpressure`). A second attempt that only gated the data-handshake signals avoided the loop but corrupted port-1 fill data (4/6 backpressure tests failed because upstream had already committed the gated beat). | Switched to the simplest provably-correct strategy: in SDP mode disable databank port 1 entirely via parameter-elaborated `~DATABANK_SDP` masks on `port_ready[1]`, `port_write_data_ready[1]`, `port_fill_data_ready[1]`, and `en_gated[1]`. No runtime signal feeds back; the FSM serializes all traffic through port 0. Cost: -6.3% throughput (vs the 1.3% the broken stall logic predicted). Win: 132 BRAM → 16 URAM + 5 BRAM @ 512 KB/8-way on U250. The two failed approaches are documented above so they aren't re-attempted. | Initial fail: `test_backpressure` with `+define+TC_DATABANK_SDP=1`. Fix verified by 9/9-module 29/29-test regression with SDP=1, plus Vivado URAM-inference confirmation. |
-| 15 | `l2_tagbank.sv` | `policy_addr` was projected from the stored tag (`{tag, line, 0}`), losing the upper `OMITTED_ADDR_W` bits the cache strips before tagging. Address-aware policies (GRASP) thus saw addresses missing the `ADDR_RANGE_L` prefix; with the default `ADDR_RANGE_L=0x8000_0000`, every region-match test against an address ≥ `0x8000_0000` failed, silently degrading GRASP to plain RRIP-FP. Functional tests passed (RRIP-FP is correct); the bug only showed up in perf-sweep deltas across associativity (4-way 57.4% → 8-way 57.6% for "GRASP" vs SRRIP's 69.8% → 74.4%). | Added `ADDR_BASE` parameter to `l2_tagbank` (defaulted from `l2_cache.ADDR_RANGE_L`); reconstruct `policy_addr = ADDR_BASE \| ADDR_W'({tag, line, 0})` before passing to the policy. With the fix in place, GRASP scales 69.1% → 74.1% and matches SRRIP within 0.3pp. | Surfaced by `tb/cocotb/test_grasp.py::test_grasp_hot_retained` returning the same hit-rate as the SRRIP fallback; confirmed by `tb/cocotb/perf_sweep.py` showing GRASP scaling that finally matches SRRIP. |
-| 16 | `l2_tagbank.sv` | `out_dirty` and `out_tag` were unconditionally read from `evict_entry = tb_rdata_r[policy_replacement_way_int]` -- the way the replacement policy would pick if a NEW line had to be allocated. On a CBOM `CleanInvalid` / `CleanShared` HIT, the line being evicted is the HIT way (which may be a different way than the policy's first pick); the writeback then issued mem-AW using the policy way's stale tag (typically 0 for a never-touched way), so the dirty data got written to the WRONG memory address. Existing `test_cbom_*` directed tests pre-warm the line with a full-line READ before the partial write; that pattern always places the line at the policy way, so the wrong-way bug never fires. Adversarial pattern (single-beat partial write to an uncached line that triggers RMW, then `CleanInvalid` back-to-back) exposes it. | Introduce `evicted_entry = hit ? tb_rdata_r[hit_index] : evict_entry`; have `out_dirty` and `out_tag` both source from `evicted_entry`. One-line semantic change. | `tb/cocotb/test_cbom_rmw_race.py` -- 4 directed scenarios; on broken RTL, `test_rmw_then_cbom_minimal` logs a `RACE CONFIRMED` warning and the mem-side AW appears at `awaddr=0x00000000` instead of the line's real address. With the fix in place, all 4 PASS. |
-| 17 | `l2_tagbank.sv` | Sibling of #15. After #15 restored the `ADDR_BASE` high bits, `policy_addr = ADDR_BASE \| {tag, line, {LOG2_BLOCK_BYTES{1'b0}}}` still appended only `LOG2_BLOCK_BYTES` (byte-in-block) zeros, omitting the `BLOCK_ADDR_W = $clog2(LINE_W)` block-in-line bits. The real address (see `l2_cache.sv` `araddr[LOG2_BLOCK_BYTES+BLOCK_ADDR_W +: LINE_ADDR_W]`) carries the line index at bit `LOG2_BLOCK_BYTES+BLOCK_ADDR_W`, so `policy_addr` was compressed `2^BLOCK_ADDR_W`-fold and the line index landed at the wrong bit position. Wide/coarse GRASP windows still worked (the original tests use MB-scale base-aligned windows), so this stayed latent. But **tight per-line / per-buffer windows matched the wrong lines** — an adjacent line could alias into a window (e.g. real `0x80000080` compressed to `0x80000010`, falsely inside `[0x80000000, 0x8000001f]`). This blocks the N-window "pin several specific buffers" use case. | Zero `BLOCK_ADDR_W + LOG2_BLOCK_BYTES` low bits: `policy_addr = ADDR_BASE \| ADDR_W'({tag, line, {(BLOCK_ADDR_W+LOG2_BLOCK_BYTES){1'b0}}})`. `policy_addr` now equals the real line-aligned bus address, so GRASP windows are specified in real addresses. | `tb/cocotb/test_grasp_multi.py::test_grasp_multi_disabled_window_does_not_match` -- a line in set 4, covered by NO window, was wrongly retained because a set-0 window's compressed range aliased onto it. With the fix the unpinned line evicts as expected; existing wide-window GRASP tests (`test_grasp*.py`, 9 cases) still PASS. |
-| 18 | `l2_top.sv` | The AXI4 wrapper hard-tied `s00_axi_arsnoop`/`awsnoop` to `0` and instantiated `l2_cache` with `INCLUDE_CBOM=0`, so **no CBOM or whole-cache flush could reach the core through the wrapper** — CBOM ops degraded to regular reads. Only exercised once traffic went through `l2_top` (the cocotb bare-cache path drives `l2_cache` directly). | Forward `arsnoop`/`awsnoop` end-to-end and expose `INCLUDE_CBOM` as a wrapper parameter (default 1). | `tb/cocotb/test_l2top_flush.py` (flush through `l2_top`) + `tb/vip` T5/T6. |
-| 19 | `lfsr.sv`, `toggle_memory_set.sv` | **4-state (xsim) cold-init.** The array-clear routines drive an LFSR from `~module_rst` to walk addresses during reset; the LFSR `value` powered up X, so `X<<1` / `XNOR(X)` stayed X, the walk never advanced, and the tag/valid/inuse arrays never cleared → cold reads/flush returned or wedged on X. Invisible in Verilator (2-state 0-init); only 4-state sim (xsim) or a specific power-up shows it. Benign on real Xilinx HW (flops power to 0). | Declaration initializer `output logic[WIDTH-1:0] value = '0` (a separate `initial` conflicts with `always_ff` under xsim's "invalid combination of procedural drivers"); mask external toggles during `init_clear`. Added the Vivado AXI-VIP TB (`tb/vip`) as a 4-state guard. | `tb/vip/run_vip.sh` (strict xsim, no `--relax`): cold read `0x40→0x7c000010` now defined. |
-| 20 | `l2_cache.sv`, `sdp_ram.sv`, `tdp_ram.sv` | Cold-init siblings of #19: `bvalid_handled`/`rvalid_handled` had no reset (X until first response), and the databank BRAM data (`DATABANK_SDP=0` path) was uninitialized (X on a cold read of a never-filled line). | Add resets on the handled flags; give the BRAM a `= '{default:0}` declaration initializer (INIT=0, the FPGA default). | `tb/vip` cold read/write. |
-| 21 | `toggle_memory.sv`, `toggle_memory_set.sv` | Cold-init sibling of #19, deeper: `toggle_memory` hard-tied `.ram_write(1'b1)` (rewrites the lutram every cycle with `toggle^read`). During reset the external ports' `toggle_id` (`in_id`/`finish_id`) can be X, so the always-write corrupts the array at an X address and defeats the lutram's own 0-init — the clear-walk then reads the still-X `in_use` and toggles by X forever. Masking only the toggle *value* (#19) was insufficient. | Add a `wen` port to `toggle_memory`; gate the external write ports OFF during `init_clear` in `toggle_memory_set` (the clear-walk port keeps writing its defined index). | `tb/vip` cold single write to a fresh set (`inuse_id_rdata` no longer X). |
-| 22 | `tc_narrow_shim.sv` | At `MAX_OUTSTANDING_W=1`, `FIFO_AW=$clog2(1)=0`, so every `aw_fifo_{w,r}ptr[FIFO_AW-1:0]` is an illegal zero-width `[-1:0]` select → `w_sel=aw_fifo_mem[X]` reads X and `m_wdata[X*NARROW_W +: NARROW_W]` writes nothing (`m_wdata`/`m_wstrb=0`): **write data silently dropped**. The power-of-two guard passes for depth-1 (`1<<0==1`) so the shim advertised it as supported. | Derive `aw_wr_idx`/`aw_rd_idx` = low `FIFO_AW` ptr bits for `FIFO_AW>0`, constant `0` for the degenerate depth-1 FIFO; the `[FIFO_AW-1:0]` selects now live only in the `FIFO_AW>0` generate branch. | Focused shim write at `MAX_OUTSTANDING_W=1`: `w_sel X→0`, `m_wdata 0→0xDEADBEEF`; `test_narrow_shim` 12/12 + `test_shim_cache` 7/7 unchanged at default depth. |
-| 23 | `l2_cache.sv`, `l2_tagbank.sv`, `tc_flush_controller.sv` | **Whole-cache flush could not flush a set-associative cache.** `tc_flush_controller` walked addresses (`araddr = ADDR_BASE + line_idx*STRIDE`), so the CBOM tag it presented was `line_idx/num_sets`, i.e. only tags `0..(walk/num_sets-1)`. A `CleanInvalid` matches a single `(set, tag)`; dirty lines whose tag fell outside that range (any realistic working set) were silently never written back or invalidated. A by-address CBOM fundamentally cannot flush a set-associative cache. | New `CleanInvalidByIndex` (reserved ACE arsnoop `4'b1011`): in `l2_tagbank` the hit is forced to the WAY carried in the tag field's low `$clog2(WAYS)` bits (instead of a tag compare); the dirty-line writeback falls back to the tagbank's STORED tag (`tb_tag`) so it lands at the real `{tag,set}`. `tc_flush_controller` gains a `WAYS` param and walks `LINES*WAYS` (set × way; way rides the tag position), defaulting to `4'b1011`. Per-line `CleanInvalid` (`4'b1001`) semantics unchanged. Verified at `INCLUDE_VICTIM=0` and `1` (the write-through victim stays coherent). | `tb/cocotb/test_flush.py::test_flush_multitag_all_ways` (dirty all ways at high tags 0x30..0x33 → flush → 4/4 written back + refill). Negative control forcing the old `4'b1001` mode logs `0 writebacks`. Also `test_flush_scattered_multitag` + `tb/vip` T6. |
-| 24 | `fifo.sv` | The `fifo_pop \|-> fifo_valid` ("FIFO underflow") and overflow SVAs fired ~724× during a whole-cache flush (databank output FIFO lane 0). **Not a real underflow**: the occupancy counter `inflight_count` is provably never X (a def→X detector caught 0 transitions across the flush) and the raw `fifo_valid` is always defined, but `$sampled(fifo_valid)` reads X in the assertion's Preponed region — the databank pop = `out_ready & valid` where `out_ready` (l2_cache `db_out_ready`) depends combinationally on that same FIFO's valid, so xsim evaluates the cone X-pessimistically at the sample point. The pop is gated by valid so no real pop-while-empty occurs. | Guard both assertions to fire only on a KNOWN violation: `(fifo_pop & ~$isunknown(fifo_valid)) \|-> fifo_valid` (and the overflow mirror). A genuine over/underflow drives full/valid to a known 1/0, so detection is preserved. | Strict xsim flush firings 91→0; a standalone xsim unit test that pops a genuinely-EMPTY FIFO still fires "FIFO underflow" (real detection intact). |
-| 25 | `l2_cache.sv`, `victim_cache.sv` | A **base-0 full 32-bit cacheable range** (`ADDR_RANGE_L=0, ADDR_RANGE_H=0xFFFFFFFF`) was un-elaboratable — and it is the natural config when memory is addressed from 0 (and the vendored wrapper's own default). `OMITTED_ADDR_W = 32 - $clog2(ADDR_RANGE_H-ADDR_RANGE_L+1)` computes the span in 32-bit, so `0xFFFFFFFF-0+1` overflows to 0 → `$clog2(0)=0` → `OMITTED_ADDR_W=32` → `araddr[31-32:2]=araddr[-1:2]` (VRFC 10-1219 at `l2_cache.sv:583`). Once that is fixed, a full range gives `OMITTED_ADDR_W=0`, and the `OMITTED_ADDR_W`-wide `OMITTED_CONSTANT` / victim `upper_constant` become `logic[-1:0]` (same shape as the `FIFO_AW=0` bug #22). | (1) Compute the span in 33-bit: `RANGE_SPAN_LOG2 = $clog2(({1'b0,ADDR_RANGE_H}-{1'b0,ADDR_RANGE_L})+33'd1)`, `OMITTED_ADDR_W = 32-RANGE_SPAN_LOG2`. (2) Make `OMITTED_CONSTANT` a full 32-bit value (fixed high bits in place, all-zero for a full range) and reconstruct addresses as `OMITTED_CONSTANT \| 32'({tag,line,block,0})`; in `victim_cache` replace the `addr_t` struct (zero-width `upper_constant`) with position-based part-selects. | `tb/vip` at `VIP_ADDR_L=0` (`[0,0xFFFFFFFF]`, `OMITTED_ADDR_W=0`) T1-T6 PASS in strict xsim; negative control (original RTL, same range) fails elaboration with VRFC 10-1219. No regression at the default `[0x80000000,0xFFFFFFFF]`. Nightly Phase 6 adds a full-range run. |
-| 26 | `tc_narrow_shim.sv` | **Same-id pipelined reads returned the previous read's line ("one line off").** `l2_cache` is strictly **1-outstanding-per-id** (a 2nd read sharing an in-flight id is stalled by `inuse_stall`, `l2_cache.sv:670-679`; the bundled AXI protocol checker also assumes 1-per-id). The shim's wide-side `m_arvalid = prefill_ar_fire \| (s_arvalid & ~ar_hits_buffer & ~prefill_active)` lacked the `~rid_outstanding_q[s_arid]` gate that `s_arready`/`ar_miss_accept` already carry. So while a same-id read was in flight the shim kept asserting `m_arvalid`; whenever the cache's `m_arready` was high it accepted a **second** same-id AR (though `s_arready` was held low), clobbering the cache's per-id line slot -> the fill returned the previous read's line. A master pipelining reads on a single id (all `rid=0`) hits this on every read after the first. Distinct-id multi-outstanding was always correct. | (1) Gate the narrow-miss term of `m_arvalid` on `~rid_outstanding_q[s_arid]`. (2) Add `~prefill_active` to `ar_miss_accept` (it only had the 1-cycle `~prefill_ar_fire`) so accept and wide-AR-issue stay consistent -- without it, a read accepted mid-prefill sets `rid_outstanding` without issuing a wide AR, and (1) then wedges it. | `tb/cocotb/test_shim_multiread.py`: distinct-id (8 concurrent, peak 3 in flight, all correct) + same-id (8 reads arid=0, serialized, all correct). Before the fix same-id returned 6/8 wrong and the shim->cache checker fired "AR re-issued for ID 0 while R burst pending"; after, 0 violations. Full shim regression green incl. `test_shim_prefill_race` (`TC_PROMOTE_WMISS=1`). |
-| 27 | `l2_databank.sv`, `l2_cache.sv` | **Whole-cache by-index flush hung at `DB_LATENCY>=2`** when a set held multiple dirty ways (`test_flush_multitag_all_ways`). The flush issues every CBOM with one reserved `FLUSH_ID`. The databank READING **premature-exit** (aborts a discarded speculative clean read-miss) matched the discarded pipeline beat to the current read by `info_pipeline[LATENCY].id == saved_request.id` — **id only**. At `DB_LATENCY>=2` the deeper read pipeline still holds a prior same-`FLUSH_ID` discarded beat when the next dirty-eviction read enters READING, so its id falsely matches and aborts the eviction read after ~`LATENCY` beats → the writeback burst never completes → the flush hangs. Only reproduced at `DB_LATENCY>=2` (the flush matrix ran only `DB_LATENCY=1`) and with multiple dirty ways of one set evicted back-to-back. Regular eviction works at higher `DB_LATENCY`. | Tag every read with a per-port **generation** `GEN_W=$clog2(LATENCY+2)` carried through the read info pipeline; match the premature-exit on **both** id and gen so a stale prior same-id beat cannot abort the current read. For `DB_LATENCY>2` a SEPARATE clobber remains (the id-keyed `way_table` lookup in `l2_cache`; its fix needs gen-threading through the 3-stage `l2_tagbank`), so **cap `DB_LATENCY<=2`** with an elaboration-time `$fatal` in `l2_cache` (the flush is unsupported there — fail the build loudly rather than hang). `DB_LATENCY=2` is the recommended URAM/large-cache config (`syn/vivado/sweep_results.md`). | `test_matrix` `ENRICH_MATRIX` gains `DB_LATENCY=2` cells (eviction + flush, 7/7 was an infinite hang); no regression at `DB_LATENCY=1` (28/28 across smoke/random/cbom/eviction/flush/workload/scoreboard/l2top/lru); `DB_LATENCY=3` build fails loudly with the cap message. |
-| 31 | `l2_databank.sv`, `tc_narrow_shim.sv` | **Concurrent reads to consecutive lines that HIT returned the sibling block and exposed an AXI-illegal cache R tail.** `past_original_last` suppresses physical-line beats after the requested block, but it was cleared immediately on `READY→READING`; a new request could therefore let the prior generation's sibling beat escape after `rlast`. The shim originally forwarded every beat, turning it into wrong data. | Root fix: pair `past_original_last` with the existing read generation and suppress only matching-generation tail beats; clear on physical `last` or when a newer generation reaches the output. The shim's `rlast=0` drain/drop remains defensive. This preserves bug #4 premature-exit recovery and bug #27 same-ID generation handling. | `test_shim_multiread::test_distinct_id_hit_concurrency` runs 8 rounds (generation wrap), both block offsets, DB latency 1/2, and asserts zero protocol violations; reorder, flush/eviction DB2, and random seed 23 all pass. Databank mutation score 6/6. |
-| 32 | `tc_narrow_shim.sv` | **At `BLOCK_W == NARROW_W` (`RATIO=1`) every ODD 4-byte-offset read returned X and every odd-offset write was silently dropped** — the GraphBlox `TC_BLOCK_W = NARROW_W = 32` deploy geometry. At `RATIO=1` a block IS one narrow word: `$clog2(1)=0` address bits select the sub-block offset, so it must be 0. But `OFF_W = (RATIO==1)?1:$clog2(RATIO)` was pinned to **1** (to dodge an illegal zero-width `[-1:0]` offset signal, like bugs #22/#30), and the capture `s_araddr[OFF_LSB +: OFF_W]` then latched **address bit 2**. For a bit-2-set address the read slice `m_rdata[1*NARROW_W +: NARROW_W]` = `m_rdata[63:32]` on a 32-bit word → **out of range → X**; the write lane `m_wdata[1*NARROW_W +: …]` was out of range → the odd write dropped. **Verilator masks out-of-range part-selects, so the entire cocotb suite passed** — only 4-state xsim exposes the X, which is how it reached deployment. (My first RCA wrongly blamed a mem-side width converter; it is a shim slice bug.) | Force the captured offset to `0` at `RATIO=1` at all three capture points — `rid_offset_q`, `buf_pend_off_q`, `aw_fifo_mem` — so the read, buffered-read, write-lane, and line-buffer-merge slices all index bit 0. Transparent for `RATIO>1` (`OFF_W=$clog2(RATIO)`, slices in range). | `tb/vip/tb_shim_ratio1.sv` (`run_shim_ratio1.sh`), strict 4-state xsim: asserts odd-offset reads `!== 'x` and odd writes land on the lane. Negative control (pre-fix RTL) fails with X on odd reads + `m_wdata=0` on the odd write; Verilator regression unchanged (RATIO=16 12/12, shim_cache 8/8). |
-| 33 | `l2_cache.sv` | Unsupported `LINE_W` values could emit illegal WRAP lengths or use a non-modulo-`LINE_W` block counter. `LINE_W=3` produced WRAP-3 then crossed a line; `LINE_W>16` is illegal AXI WRAP. | Unconditional generate-time `$fatal`; supported values are `{2,4,8,16}`. | WRAP matrix covers all legal values and rejects 1/3/32. |
-| 34 | `sdp_ram_uram.sv` | Wide SDP fills (`BLOCK_W>=256`) lost most enabled bytes in Verilator because the URAM model used a for-loop of partial NBAs, the same simulator bug class as TDP bug #7. Hardware inference template was sound. | Under `COCOTB_SIM`, expand enables to a bit mask and use one full-width masked NBA; retain the canonical per-column loop for Vivado synthesis. | 256/512-bit negative-to-positive repro; WRAP matrix includes real SDP cells at 64 and 512 bits, DB latency 2. |
-| 35 | `LRU.sv` | Compressed 3-/4-way LRU selected the wrong victim; 3-way hit keys also collided because the generator used a 1-bit state shift. | Regenerate with permutation order LRU→MRU, victim=`entry[0]`, and shift width `(n-1).bit_length()`. | Exact software-LRU oracle WAYS 2/3/4/5/8; mutations 2/2. |
-| 36 | `tc_narrow_shim.sv` | Pending buffer-hit response stored an offset into live `lb_data`; an unrelated refill before drain changed the response word. | Latch the selected narrow word on buffer-hit AR acceptance. | Deterministic shim-only race + ID/depth matrix (failure at ID3/depth7 before fix); shim mutations 8/8. |
-| 37 | `victim_cache.sv` | Non-power-of-two `LINES` replacement counter wrapped at `2^clog2(LINES)` and indexed outside tags/reservations/storage. | Explicit wrap at `LINES-1`; require at least 2 entries. | Victim/eviction tests at 3/5/8 entries. |
-| 38 | configuration guards | Wrapper/cache/shim allowed incompatible widths, ID relations, line counts, bank/cascade geometry, and zero-tag capacity. | Generation-time fatal guards plus zero-width-safe one-line-per-bank address generation. | ID/depth matrix 18 cells; geometry matrix 42 cells; l2_top matrix 18 cells; invalid configs reject deterministically. |
-| 39 | `victim_cache.sv`, `l2_cache.sv` | Victim-cache passthrough replaced downstream `RRESP/BRESP` with `OKAY`; the cache has no recovery path for fill or writeback errors. | Preserve responses through the victim path and assert the supported error-free backend contract at the cache boundary. | Four negative controls inject read/writeback `SLVERR` with victim disabled/enabled. |
+### 7.5 Resolved issue classes
 
-All documented fixes were caught by tests in this repo. Bugs #1-#3 by the
-upstream SV directed suite, #4-#6 by the cocotb random scoreboard at
-scale, #7 by the wide-port shim+cache TB at `BLOCK_W=512`, #8 by the
-pytest matrix `POLICY=RANDOM` combo, #9 was a stale workaround whose
-redundancy became provable after #7, and #10-#12 by the mid-burst-reset
-+ adversarial-back-pressure tests (#11 had to be fixed first; it was
-masking #10, which then exposed #12's mirror on the mem side). Bugs #13
-and #14 were found by the OOC Vivado synthesis flow against Alveo U250
-(`syn/vivado/run_synth.sh`) — #13 in the first ever Vivado build, #14
-while developing the optional `DATABANK_SDP=1` UltraRAM-packing mode.
-Bug #15 was found by the perf-sweep oracle (associativity scaling) while
-adding `POLICY=GRASP` — functional tests passed because the RRIP-FP
-fallback under a stripped address is itself correct; only the policy's
-intent was being silently discarded. Bug #16 was found by directed
-adversarial CBOM stress (`test_cbom_rmw_race`) — every existing CBOM
-test pre-warm the line with a full-line read, which coincidentally
-placed the line at the policy way and masked the wrong-way writeback;
-breaking that pattern (single-beat partial write to an uncached line
-followed by `CleanInvalid` back-to-back) reproduced the bug
-deterministically. Bug #17 was found while adding the N-window GRASP
-generalization (`test_grasp_multi`) — tight per-buffer windows exposed
-the residual block-bit compression in `policy_addr` that the coarse
-windows of the original GRASP tests never triggered.
-
-Bugs #18-#24 were surfaced during the GraphBlox FPGA-overlay integration,
-which drives the cache through `l2_top` in **4-state Vivado xsim** (the
-cocotb flow is Verilator/2-state and 0-initializes everything, hiding the
-cold-init class). #18 (wrapper CBOM/snoop drop) and #22 (`MAX_OUTSTANDING_W=1`
-dropped writes) are genuine functional bugs on real hardware for any user
-with those configs; #23 (whole-cache flush missing every non-swept tag) is a
-fundamental flush-correctness bug on any set-associative config. #19-#21 are
-4-state cold-init robustness (benign on real Xilinx HW, required for xsim
-verification) — they motivated the `tb/vip` AXI-VIP testbench and its
-`$isunknown` X-monitor. #24 is an assertion-robustness fix (an xsim Preponed
-X-pessimism false positive, not a real underflow). A backend **WritebackMonitor**
-(`tb/cocotb/tb_common.py`) and the `test_eviction` / multi-tag `test_flush`
-regressions were added so these classes are caught in-repo going forward.
-
----
+Implementation changes that established current invariants are summarized in
+[wiki/Resolved_Issues.md](wiki/Resolved_Issues.md). The source and regression
+tests are authoritative for current behavior.
 
 ## 8. Narrow-port shim ([`src/tc_narrow_shim.sv`](../src/tc_narrow_shim.sv))
 
@@ -505,26 +389,26 @@ parameterised; the cache RTL is unchanged.
 | Invariant | How enforced |
 |---|---|
 | Same-id reads serialise | `rid_outstanding_q[NUM_IDS]`; new AR with in-flight id is stalled |
+| Stalled wide AR payload is stable | Selected user or prefill AR is held until handshake |
 | W beat selects the correct lane | AW FIFO orders {offset, tag} in AW arrival order; W beats pop in same order (AXI4 rule) |
 | Buffer never returns stale data after write | Write-merge updates `lb_data` byte-by-byte in place at W-beat time |
+| Buffered R payload is stable under backpressure | A sticky owner holds the buffered response until handshake |
+| Concurrent fill and write affect one line only | Fill replaces a different tag; same-tag writes merge into the incoming fill |
 | Buffer never holds CBOM data | CBOM rdata is `'x`; `cbom_outstanding_q[rid]` suppresses lb_fill on that response, and a CBOM AR that matches lb invalidates it |
 | Buffer never holds aliased line | Tag = address bits `[ADDR_W-1:ALIGN_LSB]` (no hashing); only one line of state |
 | Write back-pressure can never lose a W beat | `s_wready` gated by `~aw_fifo_empty` AND `m_wready`; `s_awready` gated by `~aw_fifo_full` |
-| Exactly one narrow response per read (bug #31) | The shim issues `arlen=0` (one beat). A cache R beat is a response only when `rlast=1` (`cache_r_resp`); a trailing `rlast=0` beat (`cache_r_extra`, the databank's sibling-block leak on paired concurrent hits) is drained and dropped. The `rid_outstanding_q`/`cbom_outstanding_q` clears and the lb fill are all gated on `& m_rlast`. |
+| Exactly one narrow response per read | The shim forwards only the completing `rlast=1` beat and drains any other cache beat. |
 
 ### 8.5 What is NOT in the shim
 
-* **No miss-under-miss** on the wide port: only one outstanding wide AR
-  at a time. Adding it would require extending the per-rid tables to
-  carry an "in-flight to wide" bit and forwarding fills to the right
-  consumer (FIFO of pending narrow ARs per line).
+* **One outstanding read per ID**: distinct IDs may overlap on the wide port,
+  while same-ID reads serialize. The line buffer and narrow R output remain
+  shared across all IDs.
 * **No coalescing across lines**: only one line is cached in the L0
   buffer. A two- or four-line victim-style L0 would help workloads that
   ping-pong between a small set of lines; not implemented.
-* **No WriteEvict bypass**: a narrow port cannot legitimately claim
-  full-line coverage. If your accelerator can batch writes externally,
-  give it a second wide path that bypasses the shim and joins the cache
-  via an AXI crossbar.
+* **No WriteEvict bypass**: a narrow port cannot claim full-line coverage.
+  Full-line producers require a separate wide path.
 
 ### 8.6 Verification
 
@@ -533,10 +417,10 @@ parameterised; the cache RTL is unchanged.
 | [test_narrow_shim.py](../tb/cocotb/test_narrow_shim.py) | 10 directed (cold/hot, buffer merge, AW FIFO, sub-word) + heavy random (50 000 ops × 5 seeds, byte-granular golden, 0 mismatches) |
 | [test_shim_latency.py](../tb/cocotb/test_shim_latency.py) | per-op latency: cold-R=4, hot-R=3, write=5, merged-R=3 cycles |
 | [test_shim_throughput.py](../tb/cocotb/test_shim_throughput.py) | hand-driven AR pump: 16 buffered reads in 18 cycles, ≈1 narrow R beat/cycle steady state |
-| [test_shim_multiread.py](../tb/cocotb/test_shim_multiread.py) | distinct-id multi-outstanding overlap + same-id serialise (bug #26); repeated concurrent hits to consecutive lines, both blocks, DB latency 1/2, generation wrap, zero cache-side AXI violations (bug #31 root fix) |
+| [test_shim_multiread.py](../tb/cocotb/test_shim_multiread.py) | distinct-ID overlap, same-ID serialization, concurrent hits, generation wrap, and protocol framing |
 | [test_shim_reorder.py](../tb/cocotb/test_shim_reorder.py) | `READ_REORDER_DEPTH>1`: a single engine id keeps N reads outstanding (engine + cache concurrency proven), delivered strictly in issue order; out-of-order cache completion (head miss + warm hits) reordered correctly |
 | [test_shim_wrap_matrix.py](../tb/cocotb/test_shim_wrap_matrix.py) | critical-word-first fill contract across every legal `LINE_W`, bus widths 32–512, ratios 1–16, TDP/SDP, DB latency 1/2, backpressure/ROB/refill; invalid line lengths rejected |
-| [test_shim_wrap_negative.py](../tb/cocotb/test_shim_wrap_negative.py) | isolated downstream-converter mutation analog reproduces the literal `aux1[13],[14]=0` sparse-data symptom |
+| [test_shim_wrap_negative.py](../tb/cocotb/test_shim_wrap_negative.py) | isolated wrong-boundary mutation produces sparse WRAP-tail corruption |
 
 `test_narrow_shim`/latency/throughput run shim-only. The multiread, reorder,
 shim-cache, and WRAP suites run the shim in front of `l2_cache` end-to-end.
@@ -544,8 +428,8 @@ shim-cache, and WRAP suites run the shim in front of `l2_cache` end-to-end.
 ### 8.7 Optional read reorder buffer (`READ_REORDER_DEPTH`)
 
 `tc_narrow_shim` is a thin wrapper. At the default `READ_REORDER_DEPTH=1` it
-instantiates `tc_narrow_shim_core` straight through — byte-identical to the
-historical shim, one read outstanding per id. At `READ_REORDER_DEPTH=N` (>1) it
+instantiates `tc_narrow_shim_core` directly, with one read outstanding per ID.
+At `READ_REORDER_DEPTH=N` (>1) it
 inserts `tc_read_reorder` on the read path so a **single-id, in-order engine**
 (one that cannot rotate `arid`) can still keep `N` reads outstanding:
 
@@ -561,15 +445,9 @@ inserts `tc_read_reorder` on the read path so a **single-id, in-order engine**
   RMW prefill). An elaboration assert enforces it. Write/AW/W/B and CBOM paths are
   unchanged (bypass straight to the core).
 
-The reorder buffer is what first drives concurrent same-engine reads through the
-cache, which is how the bug #31 sibling-block extra beat was found; both live in
-`tc_narrow_shim.sv` so a re-vendor is a single-file drop-in.
-
----
-
-## 8. Where to read further
+## 9. Where to read further
 
 * [INTERFACING.md](INTERFACING.md) — boundary spec, parameters, latency / throughput table, common back-ends.
 * [../tb/cocotb/test_*.py](../tb/cocotb/) — executable specs of every cache behaviour (smoke, cbom, strobe, latency, random, scoreboard, matrix).
 * RTL header comment in [`src/l2_cache.sv`](../src/l2_cache.sv) — definitive enumeration of design restrictions.
-* The paper (`research/`) and thesis (`research/`) for the academic motivation, FPGA resource numbers, and design-space exploration the RTL is parameterised around.
+* The cited paper and thesis for the academic motivation and design space.

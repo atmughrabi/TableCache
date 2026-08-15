@@ -84,6 +84,16 @@ def test_l2top_id_namespace(id_w):
     assert f"+define+TC_M_ID_W={m_id_w}" in output
 
 
+def test_core_wide_id_warm_reset():
+    args = [
+        "MODULE=test_reset_recovery", "ID_W=7", "LINES=64",
+        "LINE_W=8", "WAYS=2", "POLICY=LRU",
+        "DB_LATENCY=1",
+    ]
+    result, output = run_make("ids", "core_id7_reset", args, timeout=700)
+    assert_clean_summary("core-id7-reset", result, output)
+
+
 @pytest.mark.parametrize(
     "tag,args,diagnostic",
     INVALID_CELLS, ids=[cell[0] for cell in INVALID_CELLS])

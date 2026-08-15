@@ -6,11 +6,12 @@ issue order despite concurrent and out-of-order completion.
 from __future__ import annotations
 import os
 import cocotb
-from cocotb.triggers import RisingEdge, ReadOnly
+from cocotb.triggers import RisingEdge, ReadOnly, Timer
 from test_shim_multiread import (
     golden, reset_dut, _attach_mem,
     BASE, NARROW_B, BLOCK_B,
 )
+from tb_common import reset_cycle_count
 
 DEPTH = int(os.environ.get("TC_READ_REORDER_DEPTH", "8"))
 LINE_W = int(os.environ.get("TC_LINE_W", "8"))
@@ -152,8 +153,7 @@ async def test_reorder_in_order_concurrency(dut):
         f"expected exactly {N} responses, got {len(got)} "
         "(duplicate/trailing response escaped the reorder buffer)")
 
-    # ---- checks ----
-    # 1) all responses carry the engine id (0) and are in ISSUE ORDER
+    # Responses carry the engine ID and remain in issue order.
     for k in range(N):
         rid, data, last = got[k]
         assert rid == 0, f"response {k} has rid={rid}, expected engine id 0"
@@ -162,9 +162,7 @@ async def test_reorder_in_order_concurrency(dut):
         assert data == exp, (
             f"OUT-OF-ORDER/wrong data at response {k}: got 0x{data:08x} "
             f"exp 0x{exp:08x} for addr 0x{addrs[k]:08x} -- reorder buffer failed")
-    # 2) reads genuinely overlapped -- the whole point. Prove it two independent
-    #    ways: (a) the engine kept >1 read outstanding (accepted >1 AR with zero
-    #    responses drained); (b) the cache serviced >1 memory read concurrently.
+    # Both the engine-facing queue and cache-side reads must overlap.
     assert eng_peak > 1, (
         f"engine did NOT keep >1 read outstanding (eng_peak={eng_peak}); the "
         f"reorder buffer did not lift the 1-outstanding-per-id serialization")
@@ -272,10 +270,7 @@ async def test_reorder_out_of_order_completion(dut):
         f"expected exactly {N} responses, got {len(got)} "
         "(duplicate/trailing response escaped the reorder buffer)")
 
-    # 1) strict issue-order delivery despite out-of-order cache completion. The
-    #    trailing hits complete at the cache before the head miss; a databank that
-    #    emits an extra sibling-block beat on paired hits would corrupt the word
-    #    here (the shim must drop the rlast=0 extra and keep the requested block).
+    # Require issue-order delivery despite out-of-order cache completion.
     for k in range(N):
         rid, data, last = got[k]
         assert rid == 0, f"response {k} rid={rid} != engine id 0"
@@ -285,9 +280,7 @@ async def test_reorder_out_of_order_completion(dut):
             f"OUT-OF-ORDER/wrong data at response {k}: got 0x{data:08x} exp "
             f"0x{exp:08x} for addr 0x{addrs[k]:08x} -- reorder failed; "
             f"core completions={core_done}")
-    # 2) the reorder path was genuinely exercised: the head miss issued a memory
-    #    read and NO engine response was produced until that read completed, i.e.
-    #    the trailing hits (serviceable earlier) were held behind the pending head.
+    # The head miss must hold later hit responses until memory completion.
     assert taps["miss_rlast_t"] is not None, (
         "head read did not miss to memory -- test did not create a miss/hit split")
     assert taps["first_s_r_t"] is not None
@@ -305,3 +298,48 @@ async def test_reorder_out_of_order_completion(dut):
         f"[shim reorder OoO] N={N}: head miss (mem id {taps['miss_rid']}) done @"
         f"{taps['miss_rlast_t']}ns, first engine response @{taps['first_s_r_t']}ns "
         f"-> {N-1} trailing hits held behind the pending head, delivered in order")
+
+
+@cocotb.test(skip=DEPTH <= 1)
+async def test_reorder_pending_response_drops_valid_on_reset(dut):
+    await reset_dut(dut)
+    _attach_mem(dut)
+    dut.s_rready.value = 0
+
+    dut.s_araddr.value = BASE
+    dut.s_arid.value = 0
+    dut.s_arlen.value = 0
+    dut.s_arsize.value = ARSIZE
+    dut.s_arburst.value = 1
+    if hasattr(dut, "s_arsnoop"):
+        dut.s_arsnoop.value = 0
+    dut.s_arvalid.value = 1
+    for _ in range(4000):
+        await RisingEdge(dut.clk)
+        if int(dut.s_arready):
+            await Timer(1, units="ps")
+            dut.s_arvalid.value = 0
+            break
+    else:
+        raise AssertionError("reorder reset test AR was not accepted")
+
+    for _ in range(6000):
+        await RisingEdge(dut.clk)
+        if int(dut.s_rvalid):
+            break
+    else:
+        raise AssertionError("reorder response did not become pending")
+
+    dut.rst.value = 1
+    await Timer(1, units="ps")
+    assert not int(dut.s_rvalid)
+    await RisingEdge(dut.clk)
+    assert not int(dut.s_rvalid)
+
+    for _ in range(reset_cycle_count() - 1):
+        await RisingEdge(dut.clk)
+    dut.rst.value = 0
+    dut.s_rready.value = 1
+    await RisingEdge(dut.clk)
+    await _read_one(dut, BASE + LINE_B)
+    assert int(dut.pc_violations_total.value) == 0

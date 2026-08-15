@@ -1,21 +1,4 @@
-"""Directed victim_cache.sv coverage. Only meaningful when built with
-VICTIM=1 (i.e. `VICTIM=1 make MODULE=test_victim`).
-
-Targets two victim_cache mutations that survive the general suite:
-  - drop_invalidate_clear:  removes `tags_valid <= tags_valid & ~hit_one_hot`
-                            in the invalidate path. Killed by issuing a
-                            MakeInvalid CBOM after victim has a hit-able
-                            line, then re-reading and observing fresh data
-                            (mem updated between flush and re-read).
-  - swap_write_hit_check:   inverts `tags[i] == w_addr.tag`. Killed by
-                            writing N+1 distinct lines that evict, then
-                            re-writing one of the evicted lines (write
-                            hit in victim) and reading it back; under the
-                            mutation, the wrong tag invalidates and a
-                            stale read is returned.
-
-Skipped (passes trivially) when VICTIM=0.
-"""
+"""Directed victim-cache invalidation and write-hit coverage."""
 from __future__ import annotations
 import os
 import cocotb
@@ -38,6 +21,12 @@ WB_ALLOC = 0xF
 
 def line_addr(s: int, t: int) -> int:
     return BASE | ((t & 0xFFFFF) << 11) | ((s & (NUM_SETS - 1)) << 5)
+
+
+def victim_valid_mask(dut) -> int:
+    return int(
+        dut._id("dut.gen_victim.vic_inst.tags_valid", extended=False).value
+    )
 
 
 async def _read_block(master, addr):
@@ -65,17 +54,7 @@ async def _cbom(dut, master, addr, snoop):
 
 @cocotb.test(skip=not VICTIM_ON)
 async def test_victim_invalidate_clears_tag(dut):
-    """Drive a sequence that lands a DIRTY line in victim, then
-    MakeInvalidates it. Must clear the victim tag so the re-read
-    refetches from mem. Kills drop_invalidate_clear: under the
-    mutation, the victim tag stays valid and the re-read returns
-    the stale (dirty) victim copy.
-
-    KEY: the line must be dirty before eviction, otherwise the L1
-    evicts without issuing victim_aw/victim_w and the victim's
-    line_storage never receives data -- only a tag-only entry. With
-    no data in victim, the L1 always falls through to mem and the
-    test cannot distinguish the mutation."""
+    """MakeInvalid clears the matching victim tag."""
     await reset_dut(dut)
     ram = attach_mem(dut, size_bytes=1 << 20)
     master = attach_master(dut)
@@ -90,6 +69,8 @@ async def test_victim_invalidate_clears_tag(dut):
     # line_storage. The dirty value `dirty_val` is what victim will hold.
     dirty_val = 0xDEADC0DE
     await _write_block(master, addrs[0], dirty_val)
+    for addr in addrs[1:]:
+        await _read_block(master, addr)
     await Timer(20 * CLK_PERIOD_NS, "ns")
 
     # Force eviction: read WAYS+1th tag in same set; oldest dirty line
@@ -107,6 +88,8 @@ async def test_victim_invalidate_clears_tag(dut):
         f"expected dirty value 0x{dirty_val:08x} -- did the dirty line "
         f"actually reach victim's line_storage?"
     )
+    valid_before = victim_valid_mask(dut)
+    assert valid_before
 
     # Mutate mem behind the cache's back so a fresh fetch yields a known
     # sentinel that's distinct from both the original and the dirty value.
@@ -118,6 +101,11 @@ async def test_victim_invalidate_clears_tag(dut):
     # tag. Drop the L1 copy too via the cache's CBOM path.
     await _cbom(dut, master, victim_addr, ARSNOOP_MAKE_INVALID)
     await Timer(40 * CLK_PERIOD_NS, "ns")
+    valid_after = victim_valid_mask(dut)
+    assert (valid_before & ~valid_after).bit_count() == 1, (
+        f"victim invalidate did not clear exactly one tag: "
+        f"before=0x{valid_before:x} after=0x{valid_after:x}"
+    )
 
     # Re-read: must MISS in victim (tag cleared) and refetch from mem.
     second_read = await _read_block(master, victim_addr)
@@ -233,22 +221,28 @@ async def test_victim_write_hit_preserves_others(dut):
     ram = attach_mem(dut, size_bytes=1 << 20)
     master = attach_master(dut)
 
-    # Choose 4 lines in DIFFERENT sets so dirty-eviction of each goes
-    # to a fresh victim slot (one set's L1 can only evict 1 line at a time).
+    # Choose four target lines in different sets.
     bases = [line_addr(s=s, t=10 + s) for s in range(4)]
     dirties = [0xD17710A0 | (i << 4) for i in range(4)]
 
-    # 1+2. Dirty each, then trigger its eviction by reading a fresh
-    # extra line in the SAME set.
+    # Fill each set, dirty its target, make that target LRU, then evict it.
     for i, (a, d) in enumerate(zip(bases, dirties)):
-        await _read_block(master, a)
+        fillers = [line_addr(s=i, t=100 + i * 16 + k)
+                   for k in range(WAYS - 1)]
+        for addr in [a, *fillers]:
+            await _read_block(master, addr)
         await _write_block(master, a, d)
+        for addr in fillers:
+            await _read_block(master, addr)
         await Timer(10 * CLK_PERIOD_NS, "ns")
         extra = line_addr(s=i, t=200 + i)
         await _read_block(master, extra)
         await Timer(30 * CLK_PERIOD_NS, "ns")
 
-    # 3. Sanity: each addrs[i] should hit victim with dirty_val_i.
+    valid_before = victim_valid_mask(dut)
+    assert valid_before.bit_count() >= len(bases)
+
+    # Each address should hit the victim cache with its dirty value.
     for a, d in zip(bases, dirties):
         v = await _read_block(master, a)
         assert v == d, (
@@ -256,7 +250,7 @@ async def test_victim_write_hit_preserves_others(dut):
             f"0x{d:08x}, got 0x{v:08x}"
         )
 
-    # 4. Re-cache addrs[0] in L1 (sanity read above did), write NEW value,
+    # Re-cache addrs[0] in L1, write a new value,
     #    then force re-eviction to trigger write_hit_one_hot.
     new0 = 0xACCE5500
     await _write_block(master, bases[0], new0)
@@ -265,6 +259,11 @@ async def test_victim_write_hit_preserves_others(dut):
     for k in range(WAYS + 1):
         await _read_block(master, line_addr(s=0, t=500 + k))
     await Timer(40 * CLK_PERIOD_NS, "ns")
+    valid_after = victim_valid_mask(dut)
+    assert valid_after.bit_count() >= len(bases) - 1, (
+        f"write hit cleared unrelated victim tags: "
+        f"before=0x{valid_before:x} after=0x{valid_after:x}"
+    )
 
     # Mutate mem for addrs[1..3] so a fresh mem fetch is observable as
     # a value distinct from both the dirty and the original mem contents.
@@ -280,7 +279,7 @@ async def test_victim_write_hit_preserves_others(dut):
             await _read_block(master, line_addr(s=i, t=700 + 10*i + k))
     await Timer(40 * CLK_PERIOD_NS, "ns")
 
-    # 5. Re-read addrs[1..3]: clean RTL -> still in victim with dirty_val_i.
+    # Re-read the remaining victim entries; all must retain their dirty values.
     #    Mutated RTL -> invalidated by step 4's write_hit, mem fetch returns sentinel.
     for i, a in enumerate(bases[1:], start=1):
         v = await _read_block(master, a)

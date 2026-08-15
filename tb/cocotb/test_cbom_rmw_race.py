@@ -1,13 +1,8 @@
-"""Minimal RMW-then-CBOM race repro.
+"""Verify RMW serialization against an immediate CleanInvalid operation.
 
-A single write to an UNCACHED line triggers RMW (cache reads line from
-mem, merges new bytes, stores dirty). A CleanInvalid CBOM issued in the
-cycle immediately after the write's B response is supposed to flush the
-dirty data, then drop the line. The cache has an inuse_line_table that
-should serialise the CBOM behind the RMW writeback.
-
-This test isolates the smallest failing pattern so a waveform trace
-shows the exact FSM state when the writeback is dropped.
+The maintenance request follows the write response without an idle cycle. It
+must wait for the line transaction, write back the merged data, and invalidate
+the line.
 """
 from __future__ import annotations
 import cocotb
@@ -136,8 +131,8 @@ async def test_rmw_write_alone(dut):
 async def test_rmw_write_then_cbom_then_cache_read(dut):
     """Combine: write (RMW) -> CBOM CleanInvalid -> read via cache.
     Per the contract: CBOM should flush the dirty data to mem, then
-    invalidate the line. So the post-CBOM cache read MUST MISS and
-    fetch from mem, which MUST contain the written data.
+    invalidate the line. The post-CBOM read must miss and refill the written
+    data from memory.
     """
     await reset_dut(dut)
     ram = attach_mem(dut, size_bytes=1 << 20)

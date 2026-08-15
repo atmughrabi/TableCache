@@ -10,7 +10,7 @@
 //
 // With INCLUDE_CBOM=0 (or arsnoop dropped) every flush CBOM is demoted to
 // a plain read, the cold-line "read" never gets a fill, and the flush
-// controller wedges in WAIT_R -- the exact GraphBlox integration hang.
+// controller wedges in WAIT_R.
 `timescale 1ns/1ps
 
 module dut_l2top_flush
@@ -262,9 +262,8 @@ module dut_l2top_flush
     end
 
     // -- l2_top R outputs (flat) --
-    // R demux by id: route FLUSH_ID responses to the controller while
-    // flushing, everything else to the accelerator.
-    wire route_to_flush = flush_active & (c_rid == FLUSH_ID);
+    // Route the reserved ID only while a flush response is valid.
+    wire route_to_flush = flush_active & c_rvalid & (c_rid == FLUSH_ID);
     assign flush_r   = '{ rvalid: c_rvalid & route_to_flush,
                           rlast:  c_rlast,
                           rresp:  {2'b00, c_rresp} };

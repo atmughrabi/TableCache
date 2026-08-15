@@ -3,16 +3,13 @@
 Four scenarios: reset between transactions, mid read fill, mid multi-beat
 write, and with two reads in flight. Each scenario asserts reset before
 the response returns, then issues a fresh transaction to verify recovery.
-All scenarios gate on `pc_violations_total == 0`.
-
-Found bugs #10 (slave VALIDs held into reset) and #11 (checker counter
-multi-driver race). See doc/ARCHITECTURE.md §7.5.
+All scenarios require `pc_violations_total == 0`.
 """
 from __future__ import annotations
 
 import cocotb
 from cocotb.triggers import RisingEdge, Timer, with_timeout
-from tb_common import reset_dut, attach_master, attach_mem, golden
+from tb_common import reset_dut, reset_cycle_count, attach_master, attach_mem, golden
 
 BLOCK_BYTES = 4
 LINE_W      = 8
@@ -21,8 +18,10 @@ LINE_BYTES  = LINE_W * BLOCK_BYTES   # 32 B at default config
 BASE = 0x80000000
 
 
-async def reassert_reset(dut, cycles: int = 128):
+async def reassert_reset(dut, cycles: int = None):
     """Re-toggle rst without spawning a new clock (use after `reset_dut`)."""
+    if cycles is None:
+        cycles = reset_cycle_count()
     dut.rst.value = 1
     for sig, val in [
         ("s_arvalid", 0), ("s_awvalid", 0), ("s_wvalid", 0),
@@ -116,7 +115,7 @@ async def test_reset_mid_write_burst(dut):
 
 @cocotb.test()
 async def test_reset_with_two_in_flight(dut):
-    """Two reads in flight, reset before either completes (exposed bug #10)."""
+    """Reset with two incomplete reads, then verify clean recovery."""
     await reset_dut(dut)
     attach_mem(dut, size_bytes=1 << 20)
     master = attach_master(dut)
@@ -141,12 +140,7 @@ async def test_reset_with_two_in_flight(dut):
 
 @cocotb.test()
 async def test_reset_with_bvalid_pending(dut):
-    """Reset while req_b.bvalid is asserted and waiting for s_bready.
-
-    Targets the B-channel half of bug #10: drops s_bready to LOW so the
-    write's B response sticks high, asserts reset, then verifies the
-    fresh read returns golden + PC stays clean. Mutation testing
-    (`drop_rst_gate_bvalid`) surfaced this as a gap in test_reset_recovery."""
+    """Reset while a write response is blocked by downstream backpressure."""
     await reset_dut(dut)
     attach_mem(dut, size_bytes=1 << 20)
     master = attach_master(dut)

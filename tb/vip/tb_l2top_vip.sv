@@ -36,7 +36,7 @@ module tb_l2top_vip;
     localparam logic [31:0] BASE = 32'h8000_0000;
     // Cacheable-range base. Default BASE ([BASE,0xFFFFFFFF], OMITTED_ADDR_W=1).
     // Set VIP_ADDR_L=0 to exercise a base-0 FULL 4GB range [0,0xFFFFFFFF]
-    // (OMITTED_ADDR_W=0) -- the case that used to fail elaboration (bug #25).
+    // (OMITTED_ADDR_W=0).
 `ifdef TC_ADDR_L
     localparam logic [31:0] CACHE_ADDR_L = `TC_ADDR_L;
 `else
@@ -44,7 +44,7 @@ module tb_l2top_vip;
 `endif
 
     // Cache geometry / policy -- overridable via +define so the same tb can
-    // run a small fast config or the GraphBlox-scale config (LINES=512, GRASP).
+    // run a small fast config or a larger LINES=512 GRASP config.
 `ifdef TC_LINES
     localparam int VLINES = `TC_LINES;
 `else
@@ -99,7 +99,9 @@ module tb_l2top_vip;
     // the inuse toggle-memories need <= 256. Hold reset generously from geometry
     // (this is exactly the wrapper-side TC_INIT_CYCLES contract: scale with the
     // cache, never a small constant).
-    localparam int RESET_CYCLES = 4*VLINES + 1024;
+    localparam int RESET_DEPTH = VLINES > (1 << (ID_W + 1))
+        ? VLINES : (1 << (ID_W + 1));
+    localparam int RESET_CYCLES = 4*RESET_DEPTH + 1024;
     // Address stride that lands on the SAME set (a full cache line-span), used to
     // force a dirty eviction -> a real mem writeback.
     localparam int SET_STRIDE = VLINES * VLINE_W * (BW/8);
@@ -193,13 +195,7 @@ module tb_l2top_vip;
         end
     end
     assign s_arready = flush_active ? 1'b0 : cs_arready;
-    // route_to_flush must be gated on cs_rvalid: cs_rid is a don't-care (X in
-    // 4-state) while cs_rvalid=0, so comparing it against FLUSH_ID during a
-    // flush's R-wait drives route_to_flush -> X -> cs_rready -> X. That X on the
-    // read-ready is exactly the "demux gated by flush_active is necessary but
-    // NOT sufficient" hazard: an X-sensitive interconnect breaks the flush
-    // R-beat handshake -> tc_flush_controller hangs in WAIT_R. Gating on
-    // cs_rvalid keeps rready defined (= s_rready) while waiting.
+    // RID is a don't-care when RVALID=0; gate the comparison for four-state safety.
     wire route_to_flush = flush_active & cs_rvalid & (cs_rid == FLUSH_ID);
     assign flush_r  = '{ rvalid: cs_rvalid & route_to_flush, rlast: cs_rlast, rresp: {2'b00, cs_rresp} };
     assign s_rvalid = cs_rvalid & ~route_to_flush;
@@ -297,13 +293,10 @@ module tb_l2top_vip;
     bit [31:0] rd;
     int       aw0;
 
-    // ---- 4-state X-monitor (enrichment) -------------------------------------
+    // ---- 4-state X-monitor --------------------------------------------------
     // After reset settles, no valid/ready handshake may be X, and no payload may
-    // be X while its VALID is asserted. This is the generic net for the cold-init
-    // X-bug class (LFSR reset-walk, toggle_memory, cbom/writeback regs) that only
-    // shows up in 4-state sim -- exactly the bugs this cache repeatedly hit. rdata
-    // is skipped on the cache->master read channel because a CBOM legitimately
-    // returns 'x (no data), but the memory-side m_rdata IS checked.
+    // be X while its VALID is asserted. Cache-side rdata is excluded because a
+    // CBOM carries no data; memory-side m_rdata remains checked.
     always @(posedge aclk) if (mon_active) begin
         if ($isunknown({s_awvalid, s_awready, s_wvalid, s_wready, s_bvalid, s_bready,
                         cs_arvalid, cs_arready, cs_rvalid, cs_rready,
@@ -345,11 +338,7 @@ module tb_l2top_vip;
         repeat (20) @(posedge aclk);
         mon_active = 1;   // arm the 4-state X-monitor once the cold reset settled
 
-        // T0: COLD whole-cache flush BEFORE any warming traffic (all lines
-        // invalid). This is the GraphBlox Experimental-BFS blocker: on
-        // INCLUDE_VICTIM=1 the invalid-line by-index CBOM was reported to hang
-        // the tc_flush_controller in WAIT_R (its R-beat never completing). The
-        // warm T5 flush below does NOT cover it. Require flush_done within a bound.
+        // T0: flush an all-invalid cache before any warming traffic.
         flush_req = 1; @(posedge aclk); flush_req = 0;
         for (int fcyc = 0; fcyc < 8*VLINES*VWAYS + 4000; fcyc++) begin
             @(posedge aclk);
@@ -412,9 +401,7 @@ module tb_l2top_vip;
             $display("PASS T4 eviction+writeback: %0d mem AW, %0d lines verified",
                      mem_aw_count - aw0, VWAYS + 1);
 
-        // T5: whole-cache flush (CleanInvalid CBOM walk via tc_flush_controller)
-        // over a cache that now holds dirty lines. The reported cold flush wedge
-        // (cbom_fifo X) would hang here; require flush_done within a bound.
+        // T5: flush a cache that now holds dirty lines.
         flush_req = 1; @(posedge aclk); flush_req = 0;
         for (int fcyc = 0; fcyc < 8*VLINES*VWAYS + 4000; fcyc++) begin
             @(posedge aclk);
@@ -425,10 +412,8 @@ module tb_l2top_vip;
         end else
             $display("PASS T5 whole-cache flush completed");
 
-        // T6 (FIX B): fill one set with dirty lines at HIGH tags (well beyond
-        // the swept tag range) and require the default by-index flush to write
-        // them ALL back. A per-line CleanInvalid flush would miss every one
-        // (it only matches tag == swept address tag). Enforces whole-set clean.
+        // T6: fill one set with dirty high-tag lines and require the default
+        // by-index flush to write back every way.
         begin
             automatic int HIGH = 32;                 // tag 0x20, >> VWAYS-1
             automatic bit ok = 1;

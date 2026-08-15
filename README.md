@@ -1,18 +1,18 @@
 <p align="center">
-  <img src="doc/assets/logo.svg" alt="TableCache logo" width="240">
+  <img src="doc/assets/logo.png" alt="TableCache logo" width="240">
 </p>
 
 # TableCache
 
 [![regression](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml/badge.svg?branch=main)](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml)
 
-Configurable FPGA L2 cache derived from
-[`sfu-rcl/tablecache`](https://gitlab.com/sfu-rcl/tablecache). This fork adds
-integration wrappers, cache maintenance, width adaptation, deployment flows,
-and systematic verification.
+Configurable FPGA L2 cache with cache maintenance, width adaptation,
+deployment flows, and systematic verification.
 
-Original RTL is by Chris Keilbart and SFU RCL. See [LICENSE](LICENSE), the
-[SFU thesis](https://summit.sfu.ca/item/39095), and the FPT 2024 paper.
+TableCache is based on
+[RTL by Chris Keilbart and SFU RCL](https://gitlab.com/sfu-rcl/tablecache).
+See [LICENSE](LICENSE), the [SFU thesis](https://summit.sfu.ca/item/39095),
+and the [FPT 2024 paper](https://doi.org/10.1109/ICFPT64416.2024.11113454).
 
 ## Capabilities
 
@@ -33,9 +33,8 @@ Original RTL is by Chris Keilbart and SFU RCL. See [LICENSE](LICENSE), the
 | Documentation index | [doc/wiki/README.md](doc/wiki/README.md) |
 | Integration and board deployment | [doc/FPGA_INTEGRATION.md](doc/FPGA_INTEGRATION.md) |
 | AXI, snoop, parameters, and latency | [doc/INTERFACING.md](doc/INTERFACING.md) |
-| Internal architecture and bug history | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) |
+| Internal architecture and invariants | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) |
 | Verification methods and test inventory | [doc/VERIFICATION.md](doc/VERIFICATION.md) |
-| Verification methodology for other RTL | [doc/VERIFICATION_GUIDELINES.md](doc/VERIFICATION_GUIDELINES.md) |
 | GRASP policy | [doc/wiki/GRASP_Policy.md](doc/wiki/GRASP_Policy.md) |
 | UltraRAM mode | [doc/wiki/URAM_Mode.md](doc/wiki/URAM_Mode.md) |
 | Board-specific results | [doc/deployment/README.md](doc/deployment/README.md) |
@@ -116,12 +115,12 @@ Vivado OOC synthesis:
 | Parameter | Supported values |
 |---|---|
 | `POLICY` | `LRU`, `FRQ`, `SECOND_CHANCE`, `RANDOM`, `SRRIP`, `GRASP` |
-| `LINES` | power of two, at least 2 |
+| `LINES` | power of two, 2–65,536 |
 | `WAYS` | any integer at least 1 |
 | `LINE_W` | 2, 4, 8, or 16 blocks |
 | `BLOCK_W` | 8–1024 bits; power-of-two bytes |
 | `DB_LATENCY` | 1 or 2 |
-| `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | equal, at least 1 |
+| `READ_ID_WIDTH`, `WRITE_ID_WIDTH` | equal, 1–15 |
 | `ADDR_W` | 32–64 bits (geometry must leave at least one tag bit) |
 | `ADDR_RANGE_L/H` | naturally aligned power-of-two range |
 | `VICTIM_LINES` | at least 2 |
@@ -153,13 +152,3 @@ flows cover functional matrices, long stress, protocol checks, mutation tests,
 formal proofs, strict xsim configurations, and representative Vivado synthesis
 corners. Current results and commands are maintained in
 [doc/VERIFICATION.md](doc/VERIFICATION.md).
-
-## Upstream synchronization
-
-```bash
-git remote add upstream https://gitlab.com/sfu-rcl/tablecache.git
-git fetch upstream
-git rebase upstream/main
-```
-
-Resolve local verification and integration changes explicitly during rebases.

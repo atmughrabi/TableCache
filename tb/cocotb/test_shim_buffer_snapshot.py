@@ -10,7 +10,7 @@ import os
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ReadOnly, RisingEdge
+from cocotb.triggers import ReadOnly, RisingEdge, Timer
 
 CLK_NS = 10
 NARROW_W = int(os.environ.get("TC_NARROW_W", "32"))
@@ -33,6 +33,16 @@ async def reset_dut(dut):
     dut.s_arvalid.value = 0
     dut.s_awvalid.value = 0
     dut.s_wvalid.value = 0
+    dut.s_awlen.value = 0
+    dut.s_awsize.value = NARROW_B.bit_length() - 1
+    dut.s_awburst.value = 1
+    dut.s_awlock.value = 0
+    dut.s_awcache.value = 0xF
+    dut.s_awprot.value = 0
+    dut.s_awqos.value = 0
+    dut.s_awregion.value = 0
+    dut.s_wlast.value = 1
+    dut.s_wstrb.value = (1 << NARROW_B) - 1
     dut.s_rready.value = 1
     dut.s_bready.value = 1
     dut.m_arready.value = 1
@@ -79,6 +89,20 @@ async def return_mem_read(dut, rid, data):
             dut.m_rlast.value = 0
             return
     raise AssertionError(f"memory R id={rid} was not accepted")
+
+
+async def issue_aw(dut, addr, awid):
+    dut.s_awaddr.value = addr
+    dut.s_awid.value = awid
+    dut.s_awvalid.value = 1
+    for _ in range(100):
+        await ReadOnly()
+        accepted = int(dut.s_awready)
+        await RisingEdge(dut.clk)
+        if accepted:
+            dut.s_awvalid.value = 0
+            return
+    raise AssertionError(f"AW id={awid} addr={addr:#x} was not accepted")
 
 
 @cocotb.test()
@@ -128,4 +152,141 @@ async def test_buffer_hit_word_is_snapshotted(dut):
     assert responses[0] == (0, 0xA000_2000 & MASK)
     assert responses[1] == (2, (0xB000_1000 + lane) & MASK), (
         f"buffered B response changed after A refill: responses={responses}")
+    assert int(dut.pc_violations_total.value) == 0
+
+
+@cocotb.test()
+async def test_stalled_buffer_response_keeps_r_channel(dut):
+    await reset_dut(dut)
+    responses = []
+
+    async def collect_responses():
+        while True:
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.s_rvalid) and int(dut.s_rready):
+                responses.append((int(dut.s_rid), int(dut.s_rdata) & MASK))
+
+    cocotb.start_soon(collect_responses())
+
+    lane = min(3, RATIO - 1)
+    line_b = 0x8000_0300
+    line_a = 0x8000_0400
+    addr_b = line_b + lane * NARROW_B
+    data_b = wide_word(0xB100_0000)
+    data_a = wide_word(0xA100_0000)
+
+    await issue_ar(dut, addr_b, 1)
+    await return_mem_read(dut, 1, data_b)
+    while not responses:
+        await RisingEdge(dut.clk)
+    responses.clear()
+
+    await issue_ar(dut, line_a, 0)
+    dut.s_rready.value = 0
+    await issue_ar(dut, addr_b, 2)
+
+    for _ in range(20):
+        await RisingEdge(dut.clk)
+        if int(dut.s_rvalid):
+            break
+    held = (int(dut.s_rid), int(dut.s_rdata) & MASK)
+    assert held == (2, (0xB100_0000 + lane) & MASK)
+
+    mem_task = cocotb.start_soon(return_mem_read(dut, 0, data_a))
+    for _ in range(3):
+        await RisingEdge(dut.clk)
+        assert int(dut.s_rvalid)
+        assert (int(dut.s_rid), int(dut.s_rdata) & MASK) == held
+
+    dut.s_rready.value = 1
+    await mem_task
+    for _ in range(30):
+        await RisingEdge(dut.clk)
+        if len(responses) >= 2:
+            break
+
+    assert responses[0] == held
+    assert responses[1] == (0, 0xA100_0000 & MASK)
+    assert int(dut.pc_violations_total.value) == 0
+
+
+@cocotb.test()
+async def test_fill_wins_over_different_line_merge(dut):
+    await reset_dut(dut)
+    responses = []
+
+    async def collect_responses():
+        while True:
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.s_rvalid) and int(dut.s_rready):
+                responses.append((int(dut.s_rid), int(dut.s_rdata) & MASK))
+
+    cocotb.start_soon(collect_responses())
+    dut.m_awready.value = 1
+    dut.m_wready.value = 1
+
+    lane = min(4, RATIO - 1)
+    line_y = 0x8000_0500
+    line_x = 0x8000_0600
+    addr_y = line_y + lane * NARROW_B
+    addr_x = line_x + lane * NARROW_B
+    data_y = wide_word(0xB200_0000)
+    data_x = wide_word(0xA200_0000)
+    write_value = 0xDEAD_BEEF & MASK
+
+    await issue_ar(dut, addr_y, 1)
+    await return_mem_read(dut, 1, data_y)
+    while not responses:
+        await RisingEdge(dut.clk)
+    responses.clear()
+
+    await issue_aw(dut, addr_y, 1)
+    await issue_ar(dut, addr_x, 0)
+
+    dut.s_wdata.value = write_value
+    dut.s_wvalid.value = 1
+    dut.m_rid.value = 0
+    dut.m_rdata.value = data_x
+    dut.m_rresp.value = 0
+    dut.m_rlast.value = 1
+    dut.m_rvalid.value = 1
+    for _ in range(20):
+        await RisingEdge(dut.clk)
+        if int(dut.s_wready) and int(dut.m_rready):
+            await Timer(1, units="ps")
+            dut.s_wvalid.value = 0
+            dut.m_rvalid.value = 0
+            dut.m_rlast.value = 0
+            break
+    else:
+        raise AssertionError("simultaneous W and memory R did not handshake")
+
+    for _ in range(20):
+        await RisingEdge(dut.clk)
+        if responses:
+            break
+    responses.clear()
+
+    await issue_ar(dut, addr_x, 2)
+    for _ in range(20):
+        await RisingEdge(dut.clk)
+        if responses:
+            break
+
+    assert responses == [(2, (0xA200_0000 + lane) & MASK)]
+    assert int(dut.pc_violations_total.value) == 0
+
+
+@cocotb.test()
+async def test_held_arvalid_drops_during_reset(dut):
+    await reset_dut(dut)
+    dut.m_arready.value = 0
+    await issue_ar(dut, 0x8000_0700, 1)
+    assert int(dut.m_arvalid), "AR was not held under backpressure"
+
+    dut.rst.value = 1
+    await RisingEdge(dut.clk)
+    assert not int(dut.m_arvalid)
     assert int(dut.pc_violations_total.value) == 0

@@ -245,11 +245,8 @@ module dut_flush
         end
     end
 
-    // R demux by id, but ONLY when flush is active. With flush_active=0
-    // all responses go to the accelerator -- otherwise cocotbext-axi's
-    // ID-rotation can pick FLUSH_ID for a normal read and the response
-    // would be silently swallowed by the controller.
-    wire route_to_flush = flush_active & (cache_rid == FLUSH_ID);
+    // Route the reserved ID only while a flush response is valid.
+    wire route_to_flush = flush_active & cache_r.rvalid & (cache_rid == FLUSH_ID);
     assign flush_r        = '{ rvalid: cache_r.rvalid & route_to_flush,
                                 rlast:  cache_r.rlast,
                                 rresp:  cache_r.rresp };

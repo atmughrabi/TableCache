@@ -15,7 +15,7 @@ Three concurrent scoreboards run on every transaction:
   3. LATENCY: per-request wall-clock cycle count, bucketed by predicted
      hit vs miss, reported as p50 / p95 / p99 / mean.
 
-Plus the inuse-leak sweep at end-of-test (regression net for bug #6).
+Includes an end-of-test occupancy leak check.
 
 Env knobs (set via Makefile or shell):
   TC_NTXN           - number of transactions (default 5000)
@@ -247,7 +247,7 @@ async def test_graph_workload(dut):
     mon.stop()
     await Timer(50, "ns")
 
-    # ---- inuse-leak sweep (bug-#6-class regression net) ----
+    # Occupancy leak sweep.
     dut._log.info("[wl] leak-check sweep on a sample of pool lines")
     for la in pool[:min(POOL_LINES, 256)]:
         try:

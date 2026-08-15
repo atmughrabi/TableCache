@@ -5,7 +5,7 @@ Triggers:
   * cp_finish_fifo_full: 8+ in-flight distinct (id, hash) pairs +
     aggressive response back-pressure so finishes queue past depth 4.
   * cp_same_target_suppression: a finish whose head (id, hash) equals the
-    just-cleared previous head's (id, hash) -- the bug-#6 guard path.
+    just-cleared previous head's (id, hash).
 
 Gates on data correctness + `pc_violations_total == 0`.
 """
@@ -86,7 +86,7 @@ async def test_finish_fifo_overflow(dut):
 
 @cocotb.test()
 async def test_same_target_finishes_back_to_back(dut):
-    """The bug-#6 path fires when finish-FIFO head N+1 carries the same
+    """Exercise consecutive finish entries carrying the same
     (id, hash) as head N. Triggers: alternating write-then-read on the
     same line under response back-pressure so consecutive finishes share
     target. With cocotbext-axi rotating IDs the cache may merge them into

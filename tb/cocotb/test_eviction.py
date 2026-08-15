@@ -1,19 +1,16 @@
-"""Enrichment: heavy eviction + writeback + refill round-trip.
+"""Heavy eviction, writeback, and refill round-trip.
 
 Deterministic-RNG single-word writes over a working set MUCH larger than the
 cache capacity, so most writes trigger a dirty eviction (writeback) and a later
 read refills from the backend. Two flavours:
 
   * test_evict_roundtrip_aligned      -- writes at the LINE base (block 0).
-  * test_evict_roundtrip_nonaligned   -- writes at random NON-line-aligned word
-                                         offsets (the FIX-A class: the writeback
-                                         must still land the whole line correctly).
+  * test_evict_roundtrip_nonaligned   -- writes at random non-line-aligned
+                                         word offsets.
 
 Both run the backend WritebackMonitor, which asserts every writeback burst
 covers exactly one cache line (never "spans two lines"), and cross-check every
-written word by reading it back through the cache. This is the regression the
-prior suite lacked: reads-through-the-cache alone passed even when the writeback
-was a bus pattern a stricter backend would mishandle.
+written word by reading it back through the cache.
 
 Run:  make MODULE=test_eviction [VICTIM=1] [TC_LINES=.. TC_WAYS=.. TC_LINE_W=..]
 """

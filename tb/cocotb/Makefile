@@ -210,23 +210,18 @@ endif
 ifeq ($(ASSERT),1)
 EXTRA_ARGS += --assert
 endif
-# DATABANK_SDP + SDP_WRITE_INPUT_REG: only forward when explicitly set so
-# pre-existing tests that don't set them keep the historical defaults.
+# Forward optional storage parameters only when set.
 ifneq ($(DATABANK_SDP),)
 EXTRA_ARGS += +define+TC_DATABANK_SDP=$(DATABANK_SDP)
 endif
 ifneq ($(SDP_WRITE_INPUT_REG),)
 EXTRA_ARGS += +define+TC_SDP_WRITE_INPUT_REG=$(SDP_WRITE_INPUT_REG)
 endif
-# N_BANKS: only forward when set so the tree's default (1) is unaffected
-# for pre-existing tests. See experiment/banked-memory and
-# experiment/DESIGN_BANKED_MEMORY.md.
+# N_BANKS defaults to 1.
 ifneq ($(N_BANKS),)
 EXTRA_ARGS += +define+TC_N_BANKS=$(N_BANKS)
 endif
-# GRASP_HIGH_REGIONS / GRASP_MODERATE_REGIONS: number of address windows per
-# GRASP reuse class. Only forwarded when set so existing tests keep the
-# single-window default (1). Used by MODULE=test_grasp_multi.
+# GRASP address-window counts default to 1.
 ifneq ($(GRASP_HIGH_REGIONS),)
 EXTRA_ARGS += +define+TC_GRASP_HIGH_REGIONS=$(GRASP_HIGH_REGIONS)
 endif
@@ -268,6 +263,8 @@ export TC_LINE_W   := $(LINE_W)
 export TC_WAYS     := $(WAYS)
 export TC_ADDR_W   := $(ADDR_W)
 export TC_ID_W     := $(ID_W)
+export TC_READ_ID_W := $(if $(READ_ID_W),$(READ_ID_W),$(ID_W))
+export TC_WRITE_ID_W := $(if $(WRITE_ID_W),$(WRITE_ID_W),$(ID_W))
 export TC_MAX_OUTSTANDING_W := $(MAX_OUTSTANDING_W)
 export TC_VICTIM_LINES := $(VICTIM_LINES)
 export TC_CASCADE_DEPTH := $(CASCADE_DEPTH)
@@ -300,14 +297,12 @@ ifneq ($(TC_FULL_PCT),)
 export TC_FULL_PCT
 endif
 
+override SIM_CMD_SUFFIX += && python3 $(TB_DIR)/check_results.py $(COCOTB_RESULTS_FILE)
+SIM_BUILD ?= sim_build/$(TOPLEVEL)
+
 include $(shell cocotb-config --makefiles)/Makefile.sim
 
-# ---- Static lint gate (item 9 in doc/VERIFICATION_XILINX_VIP_ROADMAP.md) ----
-# Runs Verilator with -Wall and the SAME suppressions the build uses (those
-# warnings are known-benign upstream patterns: UNUSEDSIGNAL, PINCONNECTEMPTY,
-# WIDTHEXPAND in assertion comparisons, etc.). Exits non-zero on anything
-# else, which is the production gate -- new latches, multi-drivers,
-# bit-width truncations would all fall out here.
+# Static lint with the same warning policy as simulation builds.
 LINT_SUPPRESS := -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
                   -Wno-PINCONNECTEMPTY -Wno-VARHIDDEN -Wno-WIDTHEXPAND \
                   -Wno-WIDTHTRUNC -Wno-BLKSEQ -Wno-INITIALDLY \
@@ -322,6 +317,10 @@ lint:
 	verilator --lint-only -Wall --top-module l2_cache $(LINT_SUPPRESS) $(LINT_DEFINES) \
 	    $(SRC_DIR)/cache_config.sv \
 	    $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/l2_top.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv))
+	verilator --lint-only -Wall --top-module tc_narrow_shim $(LINT_SUPPRESS) \
+	    $(SRC_DIR)/tc_narrow_shim.sv
+	verilator --lint-only -Wall --top-module l2_top $(LINT_SUPPRESS) \
+	    $(wildcard $(SRC_DIR)/*.sv)
 	@echo "lint: clean"
 
 .PHONY: perf
@@ -338,7 +337,7 @@ vlint:
 	    exit 1; \
 	fi; \
 	cd $(REPO_ROOT) && $$VERIBLE --rules_config_search src/*.sv && \
-	echo "vlint: clean (bug-class rules only -- see .rules.verible_lint)"
+	echo "vlint: clean (semantic rules in .rules.verible_lint)"
 
 # Open the most recent VCD in GTKWave. Re-run a test with TRACE=1 first
 # (default builds dump dump.vcd to the current dir).

@@ -30,14 +30,7 @@ module lfsr
         input logic clk,
         input logic rst,
         input logic en,
-        // Declaration initializer = HW power-on / FF INIT value. The reset-walk
-        // routines (sdp_ram_rst, sdp_ram_padded_rst, toggle_memory_set) drive
-        // this LFSR's reset from ~module_rst, so during a COLD reset (asserted
-        // at t0 and never deasserted first) the counter is in COUNT mode with
-        // no prior reset. On FPGA the flop powers up to 0; without this, a
-        // 4-state simulator (xsim) starts it X and X<<1 / XNOR(X) stays X
-        // forever -> the walk never produces real addresses and the arrays
-        // never clear. Initializing here makes 4-state sim match silicon.
+        // FPGA INIT value; keeps reset walkers defined in four-state simulation.
         output logic[WIDTH-1:0] value = '0
     );
 

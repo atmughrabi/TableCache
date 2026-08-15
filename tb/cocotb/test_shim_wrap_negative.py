@@ -1,4 +1,4 @@
-"""Negative control for the historical GraphBlox WRAP-boundary bug.
+"""Negative control for a downstream WRAP-boundary error.
 
 Runs alone because it hand-drives the memory-side AXI slave instead of attaching
 AxiRam. Keeping it in a separate cocotb module prevents bus-driver contention
@@ -29,13 +29,11 @@ async def reset_dut(dut):
 
 
 @cocotb.test()
-async def test_wrong_wrap_boundary_reproduces_aux1_bug(dut):
-    """A mod-16 instead of mod-8 drain reproduces only aux1[13],[14]=0.
+async def test_wrong_wrap_boundary_sparse_corruption(dut):
+    """A modulo-16 drain corrupts the tail of an eight-beat WRAP burst.
 
-    This is an analog of the downstream MID32->BE512 converter mutation, not a
-    claim that TableCache itself has a 16-lane memory port. The mutated slave
-    returns 15,0..6 instead of the AXI-correct 15,8..14 sequence. The sparse
-    [0]*13 ++ [1]*3 data pattern hides every wrong source except words 13/14.
+    The mutated slave returns words 15,0..6 instead of the AXI-correct
+    15,8..14 sequence. A sparse data pattern isolates the two misplaced words.
     """
     await reset_dut(dut)
     assert len(dut.s_rdata) == 32 and len(dut.m_rdata) == 32
@@ -44,7 +42,7 @@ async def test_wrong_wrap_boundary_reproduces_aux1_bug(dut):
     pc_before = int(dut.pc_violations_total.value)
     converter_words = 16
 
-    def aux_value(global_word):
+    def sparse_value(global_word):
         return 1 if global_word >= 13 else 0
 
     async def wrong_wrap_boundary_slave():
@@ -68,7 +66,7 @@ async def test_wrong_wrap_boundary_reproduces_aux1_bug(dut):
                             (start_lane + beat) % converter_words)
                     else:
                         source_word = start_word + beat
-                    dut.m_rdata.value = aux_value(source_word)
+                    dut.m_rdata.value = sparse_value(source_word)
                     dut.m_rid.value = arid
                     dut.m_rresp.value = 0
                     dut.m_rlast.value = int(beat == arlen)
@@ -103,9 +101,9 @@ async def test_wrong_wrap_boundary_reproduces_aux1_bug(dut):
                                        [15] + list(range(0, 7)))
     }
     mutated_expected = [
-        aux_value(mutated_source[global_word]) for global_word in range(8, 16)
+        sparse_value(mutated_source[global_word]) for global_word in range(8, 16)
     ]
-    correct_expected = [aux_value(global_word) for global_word in range(8, 16)]
+    correct_expected = [sparse_value(global_word) for global_word in range(8, 16)]
     assert actual == mutated_expected, (
         f"negative-control mapping changed: got={actual}, "
         f"expected={mutated_expected}")
@@ -114,10 +112,9 @@ async def test_wrong_wrap_boundary_reproduces_aux1_bug(dut):
         in enumerate(zip(actual, correct_expected)) if got != exp
     ]
     assert bad_global_words == [13, 14], (
-        f"expected literal aux1[13],[14] symptom, got {bad_global_words}")
+        f"expected corruption at words 13 and 14, got {bad_global_words}")
     pc_after = int(dut.pc_violations_total.value)
     assert pc_after == pc_before, (
         f"negative slave violated AXI protocol: before={pc_before} after={pc_after}")
     dut._log.info(
-        "[wrong_wrap_boundary] exact sparse-data symptom reproduced: "
-        "global words 13,14 read 0; all other words 8..15 match")
+        "[wrong_wrap_boundary] words 13 and 14 corrupted; other words match")

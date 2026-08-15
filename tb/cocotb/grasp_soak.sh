@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GRASP+SDP soak: N seeds of test_random under POLICY=GRASP DATABANK_SDP=1.
 # Reuses sim_build across seeds (build once, only SEED env changes) like
-# night_run.sh phase 1. Drops a per-seed log + summary.
+# Drops a per-seed log and summary.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 N_SEEDS="${N_SEEDS:-5000}"

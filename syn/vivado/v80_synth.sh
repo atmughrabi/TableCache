@@ -34,8 +34,7 @@ GRASP_MODERATE_REGIONS="${GRASP_MODERATE_REGIONS:-1}"
 # the opposite trade at 512 KB, so the src/ default stays 8; only this
 # V80 wrapper overrides.
 CASCADE_DEPTH="${CASCADE_DEPTH:-1}"
-# N_BANKS=2 banks the SDP data array on V80 (Phase 2a of
-# experiment/banked-memory). On V80 ES the data-bank cascade is the
+# N_BANKS=2 banks the SDP data array on V80. On V80 ES the cascade is the
 # binding path even at small sizes, so banking is a strict improvement:
 #   512 KB: +0.007 ns  (marginal; doesn't hurt)
 #   1 MB:   +0.093 ns  (239 -> 245 MHz)

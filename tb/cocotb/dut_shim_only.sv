@@ -153,7 +153,7 @@ module dut_shim_only
 
     // snoop pins are not exposed on AxiRam, so we just don't propagate them
     // to the master (shim does its own snoop munging on the slave side).
-    // For shim-only testing the test should drive s_arsnoop=0, s_awsnoop=0.
+    // Shim-only tests use normal read and write snoop values.
     tc_narrow_shim #(
         .NARROW_W           (NARROW_W),
         .BLOCK_W            (BLOCK_W),
@@ -206,18 +206,13 @@ module dut_shim_only
     logic [31:0] pc_violations_s, pc_violations_m;
     wire  [31:0] pc_violations_total = pc_violations_s + pc_violations_m;
 
-    // pc_slave watches the narrow side of the shim, driven by cocotbext-axi
-    // AxiMaster. Disable C6 (AxiMaster v0.1.28 WLAST timing quirk on narrow
-    // bursts) and B1_RESPONSE_VALID (the shim's s_rvalid is a combinational
-    // reflection of m_rvalid, which is in turn driven by AxiRam — AxiRam does
-    // not synchronously gate r_valid during reset, so this would fire on the
-    // shim's pass-through path even though the shim's RTL is correct).
+    // pc_slave watches the narrow side driven by cocotbext-axi AxiMaster.
+    // Disable C6 for the AxiMaster v0.1.28 WLAST timing behavior.
     axi4_protocol_checker #(
         .ADDR_W                  (ADDR_W),
         .DATA_W                  (NARROW_W),
-        .ID_W                    (ID_W),
-        .CHECK_C6                (1'b0),
-        .CHECK_B1_RESPONSE_VALID (1'b0)
+        .ID_W     (ID_W),
+        .CHECK_C6 (1'b0)
     ) pc_slave (
         .clk(clk), .rst(rst),
         .araddr(s_araddr), .arlen(s_arlen), .arsize(s_arsize), .arburst(s_arburst),
@@ -239,7 +234,8 @@ module dut_shim_only
         .ADDR_W                  (ADDR_W),
         .DATA_W                  (BLOCK_W),
         .ID_W                    (ID_W),
-        .CHECK_B1_RESPONSE_VALID (1'b0)
+        .CHECK_B1_RESPONSE_VALID (1'b0),
+        .CHECK_RESPONSE_STABILITY(1'b0)
     ) pc_mem (
         .clk(clk), .rst(rst),
         .araddr(m_araddr), .arlen(m_arlen), .arsize(m_arsize), .arburst(m_arburst),

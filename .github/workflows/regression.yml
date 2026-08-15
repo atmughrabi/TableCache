@@ -77,7 +77,7 @@ jobs:
           . .venv/bin/activate
           make lint
 
-      - name: Verible bug-class lint
+      - name: Verible semantic lint
         run: |
           set -eux
           curl -fsSL -o /tmp/verible.tar.gz \
@@ -103,7 +103,7 @@ jobs:
           . .venv/bin/activate
           set -e
           # Every LINE_W block (incl. odd blocks) must return correct data after a
-          # cold fill, across the GraphBlox-reported WAYS/VICTIM/DB_LATENCY sweep at
+          # cold fill across representative WAYS/VICTIM/DB_LATENCY settings at
           # BLOCK_W=32/LINE_W=8. Guards against a databank fill/read that drops odd
           # blocks (the mem-side must match BLOCK_W; see README AXI4 limitations).
           for w in 1 2 4 8; do
@@ -122,7 +122,7 @@ jobs:
           rm -rf sim_build
           timeout 300 make MODULE=test_random
 
-      - name: Base-0 full-range (bug #25 guard, OMITTED_ADDR_W=0)
+      - name: Base-0 full-range address reconstruction
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
@@ -148,7 +148,7 @@ jobs:
           timeout 400 make MODULE=test_eviction VICTIM=1 ADDR_W=64 \
             ADDR_L=0x100000000 ADDR_H=0x1FFFFFFFF
 
-      - name: Shim regression (5 modules)
+      - name: Shim regression
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
@@ -157,21 +157,22 @@ jobs:
             rm -rf sim_build sim_build_shim
             timeout 300 make MODULE=$mod
           done
+          rm -rf sim_build sim_build_shim
+          TC_PROMOTE_WMISS=1 ASSERT=1 timeout 300 make MODULE=test_shim_prefill_race
 
       - name: Critical-word-first WRAP line-fill contract
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
           set -e
-          # GraphBlox deployment geometry: every critical block/lane, AR metadata,
+          # Direct-mapped deployment geometry: every critical block/lane, AR metadata,
           # backpressure, same-id ROB overlap, and deterministic refill.
           rm -rf sim_build
           timeout 400 make MODULE=test_shim_cache \
            WIDE_W=32 NARROW_W=32 LINE_W=8 LINES=64 WAYS=1 \
            POLICY=LRU DB_LATENCY=1 READ_REORDER_DEPTH=8 ASSERT=1 \
-           TESTCASE=test_wrap_fill_allwords,test_aux1_boundary_zero_one,test_midline_fill_is_wrap,test_wrap_fill_backpressure,test_wrap_fill_concurrent,test_wrap_fill_refill_direct_mapped
-          # Mutation analog of the historical downstream mod-RATIO vs
-          # mod-burst-boundary bug: must reproduce aux1[13],[14]=0 exactly.
+           TESTCASE=test_wrap_fill_allwords,test_sparse_boundary_zero_one,test_midline_fill_is_wrap,test_wrap_fill_backpressure,test_wrap_fill_concurrent,test_wrap_fill_refill_direct_mapped
+          # Negative control for modulo-RATIO rather than burst-boundary wrapping.
           rm -rf sim_build
           timeout 300 make MODULE=test_shim_wrap_negative \
            WIDE_W=32 NARROW_W=32 LINE_W=8 LINES=128 WAYS=1 \
@@ -187,8 +188,7 @@ jobs:
           timeout 300 make MODULE=test_shim_id_depth \
            WIDE_W=32 NARROW_W=32 ID_W=1 READ_REORDER_DEPTH=1 \
            MAX_OUTSTANDING_W=1 LINE_W=8 LINES=64 WAYS=2
-          # Non-power-of-two maximum legal ROB depth; this caught the buffered
-          # line-word snapshot race.
+          # Non-power-of-two maximum legal ROB depth.
           rm -rf sim_build
           timeout 300 make MODULE=test_shim_reorder \
            WIDE_W=32 NARROW_W=32 ID_W=3 READ_REORDER_DEPTH=7 \
@@ -197,6 +197,10 @@ jobs:
           rm -rf sim_build
           timeout 300 make MODULE=test_l2top_ids ID_W=2 M_ID_W=3 \
            LINE_W=8 LINES=64 WAYS=2
+          # Wide core IDs exercise reset of large protocol-tracking tables.
+          rm -rf sim_build
+          timeout 300 make MODULE=test_reset_recovery \
+           ID_W=7 LINE_W=8 LINES=64 WAYS=2
           # Compressed LRU tables (3/4-way) must match strict software LRU.
           for ways in 3 4; do
            rm -rf sim_build
@@ -210,7 +214,7 @@ jobs:
           . .venv/bin/activate
           pytest -q test_mem_error_matrix.py
 
-      - name: Read reorder buffer + concurrent-hit extra-beat drop (bug #31 guard)
+      - name: Read reorder buffer and concurrent-hit response framing
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
@@ -218,12 +222,11 @@ jobs:
           # Reorder buffer: a single engine id keeps N reads outstanding, delivered
           # in issue order incl. out-of-order cache completion (miss + warm hits).
           rm -rf sim_build; timeout 300 make MODULE=test_shim_reorder READ_REORDER_DEPTH=8
-          # bug #31: concurrent hits to consecutive lines must drop the databank's
-          # trailing sibling-block beat. Guard both blocks (lower/upper) + DB lat 2.
+          # Concurrent hits must return exactly one framed response per request.
           rm -rf sim_build; timeout 300 make MODULE=test_shim_multiread TESTCASE=test_distinct_id_hit_concurrency BLOCK_OFF=64
           rm -rf sim_build; timeout 300 make MODULE=test_shim_multiread TESTCASE=test_distinct_id_hit_concurrency DB_LATENCY=2
 
-      - name: Same-id eviction-burst wedge (bug #28 guard)
+      - name: Same-ID eviction-burst liveness
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
@@ -236,7 +239,7 @@ jobs:
             timeout 300 make MODULE=test_burst_idle LINES=2 WAYS=2 DB_LATENCY=$dbl
           done
 
-      - name: Accept/finish inuse collision (bug #29 guard, ASSERT=1)
+      - name: Accept/finish occupancy collision
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
@@ -256,7 +259,7 @@ jobs:
             VICTIM=1 timeout 300 make MODULE=$mod
           done
 
-      - name: WAYS=1 direct-mapped (bug #30 build + correctness)
+      - name: WAYS=1 direct-mapped configuration
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
@@ -278,7 +281,7 @@ jobs:
           # Run the core regression with the SDP databank enabled so that
           # the port-1-disable gating (l2_databank.sv) and the dedicated
           # sdp_ram_uram primitive stay verified on every PR. See
-          # doc/INTERFACING.md section 5.1 and ARCHITECTURE.md bug #14.
+          # See doc/INTERFACING.md section 5.1.
           # Restrict to 3 fast modules on PR CI so we stay within the
           # job timeout; the full 9-module sweep with SDP=1 runs in the
           # local nightly.
@@ -357,7 +360,7 @@ jobs:
           curl -fsSL -o /tmp/sv2v.zip \
             "https://github.com/zachjs/sv2v/releases/latest/download/sv2v-Linux.zip"
           unzip -oq /tmp/sv2v.zip -d /tmp/
-          # sv2v release zip layout has historically been either
+          # sv2v release archives use either
           # /tmp/sv2v-Linux/sv2v  or  /tmp/sv2v (bare). Locate the binary
           # robustly so a layout change upstream doesn't break CI.
           SV2V_BIN=$(find /tmp -maxdepth 3 -type f -name sv2v -perm -u+x 2>/dev/null | head -1)

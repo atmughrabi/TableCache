@@ -8,6 +8,7 @@ tests cross-check.
 from __future__ import annotations
 
 import os
+from functools import partial
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer, ReadOnly
@@ -29,16 +30,20 @@ def golden(addr: int) -> int:
     return ((addr & 0xFFFF) << 16) | 0xCAFE
 
 
+def reset_cycle_count() -> int:
+    lines = int(os.environ.get("TC_LINES", "64"))
+    read_id_w = int(os.environ.get("TC_READ_ID_W",
+                                   os.environ.get("TC_ID_W", "4")))
+    write_id_w = int(os.environ.get("TC_WRITE_ID_W",
+                                    os.environ.get("TC_ID_W", "4")))
+    tracker_depth = 1 << (max(read_id_w, write_id_w) + 1)
+    return max(64, 2 * max(lines, tracker_depth))
+
+
 async def reset_dut(dut, cycles: int = None):
-    # NOTE: sdp_ram_rst uses an LFSR-driven reset that needs >= 2^ADDR_WIDTH
-    # cycles to initialize every entry. The largest storage is the tag bank
-    # (sized by LINES). If cycles=None we auto-size: 2 * LINES (some safety
-    # margin) read from env TC_LINES, capped at 4096. Manually pass cycles=N
-    # to override for shim-only builds where the cache isn't in the loop
-    # (those need only a handful of cycles).
+    # Reset walkers cover both line-indexed storage and ID occupancy tables.
     if cycles is None:
-        lines = int(os.environ.get("TC_LINES", "64"))
-        cycles = min(4096, max(64, lines * 2))
+        cycles = reset_cycle_count()
     dut.rst.value = 1
     # Hold all slave inputs at safe defaults during reset
     for sig, val in [
@@ -61,17 +66,26 @@ async def reset_dut(dut, cycles: int = None):
 def attach_master(dut):
     """Cocotb AXI master driving the cache's slave (request) port."""
     bus = AxiBus.from_prefix(dut, "s")
-    return AxiMaster(bus, dut.clk, dut.rst, reset_active_level=True)
+    return cacheable_master(
+        AxiMaster(bus, dut.clk, dut.rst, reset_active_level=True)
+    )
+
+
+def cacheable_master(master):
+    """Set the cache-required AxCACHE default while allowing per-call override."""
+    for name in ("read", "write", "init_read", "init_write"):
+        setattr(master, name, partial(getattr(master, name), cache=0xF))
+    return master
 
 
 def attach_mem(dut, size_bytes: int = 1 << 20, seed_window_bytes: int = None):
     """Cocotb AXI RAM responding to the cache's memory port.
 
     Pre-populated with the golden pattern so initial reads hit the same
-    values the legacy SV mem model returned.
+    values used by the SystemVerilog memory model.
 
     size_bytes:        total RAM size (must be >= max(addr) the test touches
-                       after MEM_MASK, default 1 MiB for legacy tests).
+                       after MEM_MASK, default 1 MiB).
     seed_window_bytes: how many bytes to seed with golden(); defaults to
                        `size_bytes`. Use a smaller value if you only need to
                        seed a hot region (saves Python init time).
@@ -96,11 +110,10 @@ def attach_mem(dut, size_bytes: int = 1 << 20, seed_window_bytes: int = None):
 
 
 # ---------------------------------------------------------------------------
-# Backend-writeback monitor (enrichment)
+# Backend writeback monitor
 #
 # Snoops the memory-side write channel (m_aw* + m_w*) and, for every completed
-# write burst, asserts it covers EXACTLY ONE cache line. This is the direct
-# net for the FIX-A class ("the 8-beat writeback spans two lines"): a full-line
+# write burst, asserts it covers exactly one cache line. A full-line
 # writeback must be either an INCR from the line base (awlen = LINE_W-1) or a
 # WRAP whose wrap boundary equals the line size -- either way every beat lands
 # in the same line. Any burst whose beats touch two distinct line bases fails.
@@ -108,7 +121,6 @@ def attach_mem(dut, size_bytes: int = 1 << 20, seed_window_bytes: int = None):
 # It also records, per completed burst, the {byte_addr: word} actually written
 # (honouring INCR/WRAP addressing and wstrb) so a test can cross-check the
 # backend contents against its reference model.
-# ---------------------------------------------------------------------------
 class WritebackMonitor:
     def __init__(self, dut, line_w: int = None, block_bytes: int = 4,
                  mem_mask: int = 0xFFFFFFFF):
@@ -168,15 +180,15 @@ class WritebackMonitor:
 
 
 # ---------------------------------------------------------------------------
-# Memory-side absolute-address range monitor (enrichment)
+# Memory-side absolute-address range monitor
 #
 # The dut_cocotb wrapper folds mem addresses through MEM_MASK (low 27 bits)
 # before the cocotb AxiRam sees them, so the masked m_araddr/m_awaddr CANNOT
 # reveal the reconstructed high bits (OMITTED_CONSTANT). This monitor instead
 # watches the PRE-MASK debug taps dbg_m_araddr_full / dbg_m_awaddr_full and
 # asserts every mem-side AR/AW lands inside the configured cacheable range
-# [range_l, range_h]. It is the fast-flow net for the base-0/full-range fix
-# (bug #25): a dropped or mis-placed OMITTED_CONSTANT sends the reconstructed
+# [range_l, range_h].
+# A dropped or misplaced address prefix sends the reconstructed
 # address outside the range and fails here, which the self-referential golden
 # scoreboard (folded + internally consistent) cannot catch on its own.
 # ---------------------------------------------------------------------------

@@ -36,10 +36,10 @@ module sdp_ram_uram
     localparam DATA_WIDTH = COL_WIDTH*NUM_COL;
 
     (* cascade_height = CASCADE_DEPTH, ramstyle = "no_rw_check", ram_style = "ultra" *)
-    // NOTE: not given a declaration initializer -- Vivado does not initialize
+    // No declaration initializer: Vivado does not initialize
     // UltraRAM. On silicon URAM powers up to 0; a DATABANK_SDP=1 build may show
     // X in 4-state sim until first written (correct on HW). DATABANK_SDP=0
-    // (tdp_ram, the default and GraphBlox's config) is 0-init'd and 4-state clean.
+    // The default TDP path is initialized and 4-state clean.
     logic[DATA_WIDTH-1:0] mem[(1<<ADDR_WIDTH)-1:0];
 
     //Optional 1-cycle write-input register (passthrough when WRITE_INPUT_REG=0)
@@ -62,11 +62,8 @@ module sdp_ram_uram
         assign a_addr_q  = a_addr;
     end endgenerate
 
-    // Expand per-column enables to a per-bit mask. Verilator silently drops
-    // partial non-blocking assignments from wide for-loops once NUM_COL grows
-    // into the hundreds (the same bug #7 class fixed in tdp_ram.sv). Use one
-    // full-width masked NBA in cocotb simulation; keep the canonical per-column
-    // template for synthesis so Vivado still infers byte-enabled UltraRAM.
+    // Simulation uses one masked write; synthesis keeps the URAM byte-enable
+    // template.
     logic[DATA_WIDTH-1:0] a_wmask;
     always_comb begin
         for (int i = 0; i < NUM_COL; i++) begin

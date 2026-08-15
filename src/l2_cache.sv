@@ -39,12 +39,7 @@ module l2_cache
         //is 8; shorter values produce more parallel cascades at the cost
         //of additional inter-cascade muxing. Range: 1..8 (URAM288 cap).
         parameter int unsigned CASCADE_DEPTH = 8,
-        //Number of banks in the SDP databank (and matching tag bank).
-        //N_BANKS=1 -> current single-bank behavior (no banking logic).
-        //N_BANKS>1 -> per-bank request muxing + concurrent storage paths
-        //(see experiment/DESIGN_BANKED_MEMORY.md for the architecture).
-        //Phase 1 (this commit): parameter plumbing only; N_BANKS>1 is
-        //rejected at elaboration with $error until Phase 2 lands.
+        // Number of SDP data banks. Must be a power of two dividing LINES.
         parameter int unsigned N_BANKS = 1,
         // GRASP: number of independent address windows per reuse class
         // (default 1 = original single-window high/moderate behaviour).
@@ -181,7 +176,7 @@ module l2_cache
 
     // Whole-cache flush is not correct beyond two databank stages.
     if (DB_LATENCY < 1 || DB_LATENCY > 2) begin : gen_db_latency_guard
-        $fatal(1, "l2_cache: DB_LATENCY=%0d unsupported; must be 1..2 (whole-cache flush is not correct for DB_LATENCY>2, bug #27).", DB_LATENCY);
+        $fatal(1, "l2_cache: DB_LATENCY=%0d unsupported; whole-cache flush requires 1..2.", DB_LATENCY);
     end
 
     // A valid NAPOT base already has every variable low bit cleared, so the
@@ -478,9 +473,7 @@ module l2_cache
         (finish_output.rvalid & ~rvalid_handled & bvalid_invalid & ~evict_rdata & ~(~finish_output.rid.rnw & wdata_rdata)) |
         (bvalid_invalid & rvalid_invalid & ~evict_rdata & ~rdata_rdata)
     );
-    // Bug #3 latch refined for bug #6: only suppress a re-fire that targets the
-    // SAME (id, hash) pair. A combined R+W finish entry has different (rid,hash)
-    // and (wid,hash); both phases must clear.
+    // Suppress only a repeated clear of the same ID and line hash.
     assign same_target = clear_done_for_head &
                          (finish_id == cleared_id) &
                          (finish_hash == cleared_hash);
@@ -787,9 +780,7 @@ module l2_cache
     logic wdata_fifo_full;
 
     assign wdata_fifo_push = req_w.wvalid & req_wready;
-    // Bug #10: gate with ~rst so bvalid is 0 the cycle of reset assertion
-    // (the wdata FIFO uses synchronous reset and would otherwise leak the
-    // pre-reset value for one cycle). See doc/ARCHITECTURE.md §7.5.
+    // The FIFO reset is synchronous; gate VALID in the reset cycle.
     assign req_b.bvalid = wdata_fifo_valid & db_wdata_ready & wdata_fifo_data_out.last & ~finish_full & ~rst;
     assign req_b.bresp = 2'b00; //OKAY
     assign wdata_fifo_pop = wdata_fifo_valid & db_wdata_ready & ~(wdata_fifo_data_out.last & (~req_bready | finish_full));
@@ -1408,9 +1399,7 @@ module l2_cache
     //Mostly to break timing paths at the output of this component
     output_data_t out_fifo_data_out;
     logic out_fifo_full;
-    // Bug #10: gate rvalid with ~rst (output FIFO uses synchronous reset,
-    // so fifo_valid is stale for one cycle into rst=1). The FIFO pop sees
-    // the gated rvalid, so it does not pop spuriously during reset.
+    // The FIFO reset is synchronous; gate VALID in the reset cycle.
     logic out_fifo_valid;
 
     assign out_ready = ~out_fifo_full;
@@ -1434,9 +1423,7 @@ module l2_cache
     //Holds evicted lines
     //Optional
     //
-    // Bug #12: drive INTERNAL mem-side signals from the generate; the
-    // `always_comb` below gates the three VALIDs with ~rst at the
-    // module boundary (sibling of bug #10 on the master side).
+    // Generate internal memory signals; gate VALID at the module boundary.
     ar_t mem_ar_int; logic[READ_ID_WIDTH:0]  mem_arid_int; logic mem_rready_int;
     aw_t mem_aw_int; logic[WRITE_ID_WIDTH:0] mem_awid_int; logic mem_bready_int;
     w_t  mem_w_int;  logic[BLOCK_W-1:0] mem_wdata_int; logic[(BLOCK_W/8)-1:0] mem_wstrb_int;
@@ -1499,7 +1486,7 @@ module l2_cache
         assign mem_bready_int = victim_bready;
     end endgenerate
 
-    // Bug #12 boundary gate: pass-through except the three VALIDs are ANDed with ~rst.
+    // Drop memory-side VALID signals immediately during reset.
     always_comb begin
         mem_ar         = mem_ar_int;
         mem_ar.arvalid = mem_ar_int.arvalid & ~rst;
@@ -1552,13 +1539,13 @@ module l2_cache
             (finish_valid && finish_clear && tb_advance
              && !$isunknown({in_id, finish_id, in_hash, finish_hash}))
             |-> (in_id != finish_id)
-        ) else $error("tb_advance + finish_clear same cycle on same id (bug #3 class)");
+        ) else $error("request accept and finish clear collide on one ID");
     inuse_line_no_same_cycle_collide:
         assert property (@(posedge clk) disable iff (rst)
             (finish_valid && finish_clear && tb_advance
              && !$isunknown({in_id, finish_id, in_hash, finish_hash}))
             |-> (in_hash != finish_hash)
-        ) else $error("tb_advance + finish_clear same cycle on same hash (bug #6 class)");
+        ) else $error("request accept and finish clear collide on one line hash");
     finish_clear_implies_valid:
         assert property (@(posedge clk) disable iff (rst)
             finish_clear |-> finish_valid
@@ -1572,13 +1559,7 @@ module l2_cache
             victim_b.bvalid |-> (victim_b.bresp == 2'b00)
         ) else $error("l2_cache: non-OKAY memory BRESP is unsupported");
 
-    // ---- Cover properties (prove the suite exercises interesting cases) ----
-    // cp_finish_fifo_full and cp_same_target_suppression hit 0 in regression;
-    // observation is that upstream throttling (inuse_stall + request-FIFO
-    // depth) structurally caps in-flight finishes below the FIFO depth.
-    // Tests in test_finish_fifo_stress.py have tried hard to force these
-    // and could not. They remain as a regression net in case future RTL
-    // changes loosen the upstream limit.
+    // Cover concurrent progress, stalls, finish pressure, and repeat suppression.
     cp_concurrent_issue_and_finish:
         cover property (@(posedge clk) disable iff (rst) tb_advance && finish_clear);
     cp_inuse_stall_seen:

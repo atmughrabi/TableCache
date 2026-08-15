@@ -17,7 +17,7 @@ from matrix_utils import assert_clean_summary, run_make
 
 POSITIVE_TESTS = ",".join([
     "test_wrap_fill_allwords",
-    "test_aux1_boundary_zero_one",
+    "test_sparse_boundary_zero_one",
     "test_midline_fill_is_wrap",
     "test_wrap_fill_backpressure",
     "test_wrap_fill_concurrent",
@@ -80,7 +80,7 @@ def test_wrap_matrix(tag, wide, narrow, line_w, ways, policy, db_latency,
 
 
 def test_wrong_wrap_boundary_negative_control():
-    """The historical device mutation must reproduce aux1[13],[14]=0 exactly."""
+    """The boundary mutation must reproduce the expected sparse-data error."""
     args = [
         "MODULE=test_shim_wrap_negative",
         "WIDE_W=32", "NARROW_W=32", "LINE_W=8", "LINES=128",
@@ -89,7 +89,7 @@ def test_wrong_wrap_boundary_negative_control():
     ]
     result, output = run_make("wrap", "negative", args, timeout=300)
     assert_clean_summary("negative control", result, output)
-    assert "global words 13,14 read 0" in output
+    assert "words 13 and 14 corrupted; other words match" in output
 
 
 @pytest.mark.parametrize("line_w", [1, 3, 32])

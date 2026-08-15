@@ -61,9 +61,6 @@ syn/build_post_pnr/
 .DS_Store
 Thumbs.db
 
-# ---- Local research / reference papers ------------------------------------
-# Not redistributed in this fork; see References section in README.md for
-# canonical links to the SFU thesis and FPT 2024 paper.
 research/
 
 # Verilator coverage outputs (per-run; merged data goes to /tmp)

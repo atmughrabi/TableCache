@@ -149,7 +149,7 @@ async def test_random_scoreboard(dut):
         f"beats_checked={n_beats} golden_writes={len(golden_mem)}"
     )
 
-    # ---- inuse-leak end-of-test assertion (regression net for bug #6 class) ----
+    # End-of-test occupancy leak check.
     # If any inuse_id or inuse_line bit is still set after the final drain, the
     # NEXT request targeting that (id, hash) will hang. Sweep every
     # (set, tag) x rolling-id so any stuck bit surfaces as a per-op timeout

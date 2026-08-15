@@ -8,9 +8,7 @@
 #   POLICY:    enum index passed to l2_cache.POLICY (4 = SRRIP, 5 = GRASP)
 #              NOTE: REPLACEMENT_POLICY also still accepted by run_synth.tcl
 #              but only takes effect when TOP=l2_top. For TOP=l2_cache use
-#              POLICY=N; previous releases silently dropped REPLACEMENT_POLICY
-#              for the l2_cache top and defaulted to LRU (sweep_results.md
-#              entries from before this fix are LRU regardless of label).
+#              POLICY=N; REPLACEMENT_POLICY does not configure an l2_cache top.
 #   VICTIM:    INCLUDE_VICTIM 0|1 (default 1 with VICTIM_LINES=16)
 #   DB_LATENCY: cache databank pipeline depth (default 1)
 set -u

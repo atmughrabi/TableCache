@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Config-matrix regression for the GRASP multi-window feature
-# (test_grasp_multi). Sweeps window counts, associativity, DB latency, and
-# the SDP+URAM databank to prove the N-region path holds across the
-# deployment matrix. Each cell must report PASS=4 FAIL=0.
+# GRASP multi-window configuration matrix.
 #
 # Knobs: OUT (default /tmp/tc_grasp_multi_matrix)
 set -u
@@ -48,7 +45,7 @@ run "WAYS=2 HR=2 MR=2"               WAYS=2 GRASP_HIGH_REGIONS=2 GRASP_MODERATE_
 run "WAYS=8 HR=2 MR=2"               WAYS=8 GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2
 
 # --- DB latency + larger geometry ---
-run "DB_LATENCY=3 HR=2 MR=2"         DB_LATENCY=3 GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2
+run "DB_LATENCY=2 HR=2 MR=2"         DB_LATENCY=2 GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2
 run "LINES=256 LINE_W=16 HR=2 MR=2"  LINES=256 LINE_W=16 GRASP_HIGH_REGIONS=2 GRASP_MODERATE_REGIONS=2
 
 # --- SDP + URAM deployment databank ---

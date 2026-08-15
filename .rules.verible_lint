@@ -1,17 +1,4 @@
-# verible-verilog-lint config for TableCache.
-#
-# This fork inherits an upstream style that predates verible. Rather
-# than mass-refactor for stylistic conformance, we enable only the
-# rules that catch genuine bugs (mismatched always block type, missing
-# defaults, defparam, etc.) and disable all purely-stylistic rules.
-#
-# Use:
-#   verible-verilog-lint --rules_config_search src/*.sv
-#
-# Or via the project make wrapper:
-#   make -C tb/cocotb vlint   (added alongside `make lint`)
-
-# ---- bug-catching rules: keep enabled ----
+# Semantic checks
 +always-comb
 +always-comb-blocking
 +always-ff-non-blocking
@@ -22,7 +9,7 @@
 +truncated-numeric-literal
 -unpacked-dimensions-range-ordering
 
-# ---- pure style / naming / formatting: disable (upstream convention) ----
+# Style rules
 -line-length
 -explicit-parameter-storage-type
 -parameter-name-style

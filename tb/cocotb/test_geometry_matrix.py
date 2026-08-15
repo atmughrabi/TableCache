@@ -59,7 +59,7 @@ INVALID_CELLS = [
      "BLOCK_W=2048 must be"),
     ("range-nonpow2",
      ["MODULE=test_smoke", "ADDR_L=0x80000000", "ADDR_H=0x8FFFFFFE"],
-     "span 0x00fffffff is not a power of two"),
+     "span 0xfffffff is not a power of two"),
     ("range-misaligned",
      ["MODULE=test_smoke", "ADDR_L=0x90000000", "ADDR_H=0xAFFFFFFF"],
      "not aligned to span"),

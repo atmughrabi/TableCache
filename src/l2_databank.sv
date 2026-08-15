@@ -38,9 +38,7 @@ module l2_databank
         //CAS_OUT propagation delay and can help close higher frequencies.
         //Range: 1..8 (Vivado URAM288 cap).
         parameter int unsigned CASCADE_DEPTH = 8,
-        //Number of banks (data array). N_BANKS=1 = current single-bank
-        //behavior; N_BANKS>1 enables per-bank request muxing (see
-        //experiment/DESIGN_BANKED_MEMORY.md). Phase 1: plumbing only.
+        // Number of SDP data banks.
         parameter int unsigned N_BANKS = 1
     )
     (
@@ -444,8 +442,7 @@ module l2_databank
             end
         end
 
-        // Steer the served bank's rdata to port 0; port 1 stays 0
-        // (port 1 is masked in SDP mode pending Phase 2b).
+        // Steer the served bank to port 0; port 1 remains inactive in SDP mode.
         assign unpacked_rdata[0] = bank_rdata_arr[bank_pipe[LATENCY]];
         assign unpacked_rdata[1] = '0;
       end
@@ -571,12 +568,7 @@ module l2_databank
     gen_t past_original_last_gen[2];
 
     generate for (i = 0; i < 2; i++) begin : gen_output_fifos
-        // A partial read keeps walking the physical line after its requested
-        // block has already been returned (original_last=1). Suppress those
-        // trailing beats only when they belong to the SAME read generation.
-        // The generation match is load-bearing when a new read starts before
-        // the old pipeline tail drains: clearing the flag on READY->READING
-        // let an old sibling beat escape after rlast (bug #31).
+        // Suppress physical-line tail beats only for the matching read generation.
         wire past_original_last_this_gen = past_original_last[i]
             & (info_pipeline[i][LATENCY].gen == past_original_last_gen[i]);
         assign out_fifo_push[i] = valid_pipeline[i][LATENCY]
@@ -621,11 +613,8 @@ module l2_databank
                 past_original_last_gen[i] <= '0;
             end
             else if (valid_pipeline[i][LATENCY]) begin
-                // Priority is intentional:
-                // 1) physical line tail completes the generation;
-                // 2) requested tail arms suppression for this generation;
-                // 3) a newer generation reaching the output proves any stale
-                //    premature-exit flag can be cleared without dropping it.
+                // Physical tail completion has priority over arming suppression;
+                // a newer generation clears stale suppression state.
                 if (info_pipeline[i][LATENCY].last)
                     past_original_last[i] <= 0;
                 else if (info_pipeline[i][LATENCY].original_last) begin

@@ -16,7 +16,7 @@
 // checker instances. The regression bash loop greps the log for the
 // "AXI_PC_VIOLATION" prefix to count and bucket them per rule.
 //
-// Rules covered (phase 1 — production-critical subset)
+// Checked rules
 //   B1   xVALID must be 0 during rst (all 5 channels)
 //   A1   xVALID, once asserted, must remain asserted until xREADY
 //        (cannot withdraw a request mid-flight)
@@ -39,16 +39,9 @@
 //        the reorder wrapper's engine-facing interface)
 //   D4   New AW with same AWID as an already-in-flight AW
 //
-// Rules NOT covered yet (phase 2 candidates, listed for traceability)
-//   E1/E2  Response ordering across IDs (allowed to interleave in AXI4, so
-//          the cache must obey same-ID order — covered by D1/D2 indirectly
-//          since 1-outstanding-per-ID means same-ID order is trivial).
-//   E3     EXCLUSIVE access protocol (arlock/awlock + EXOKAY). Cache does not
-//          implement EXCLUSIVE; tests do not exercise it.
-//   E4     XPROP — VALID/READY must never be X (Verilator drives 0 on
-//          uninit'd outputs already, so X-prop is rare).
-//   E5     Same-line read/write hazard (not an AXI rule per se; tracked in
-//          our P2.5 same-line hazard sweep).
+// Not checked
+//   Response ordering across IDs, EXCLUSIVE accesses, four-state propagation,
+//   and same-line read/write hazards.
 // -----------------------------------------------------------------------------
 
 `timescale 1ns/1ps
@@ -59,41 +52,14 @@ module axi4_protocol_checker
         parameter int  DATA_W = 32,
         parameter int  ID_W   = 4,
 
-        // Per-instance trust knobs. Each defaults to "fully strict (=1)".
-        // Set =0 when the upstream/downstream side is a known-noisy testbench
-        // fixture rather than the DUT. This lets the same checker run on
-        // every bus without producing false positives for known cocotbext-axi
-        // limitations, while preserving full coverage on every bus the DUT
-        // actually drives.
-        //
-        //   CHECK_C6                  – WLAST/AWLEN timing on the W channel.
-        //                               Set 0 when the master is cocotbext-axi
-        //                               AxiMaster (v0.1.28 issues WLAST=1 on
-        //                               beat 1 of multi-beat narrow-data
-        //                               bursts; the DUT correctly ignores
-        //                               WLAST and counts beats from AWLEN).
-        //
-        //   CHECK_B1_RESPONSE_VALID   – B1 for the slave-driven response
-        //                               channels (RVALID, BVALID). Set 0
-        //                               when the slave is cocotbext-axi
-        //                               AxiRam (does not synchronously gate
-        //                               its r_valid/b_valid on reset; AXI4
-        //                               permits the master to require this,
-        //                               but AxiRam's testbench output is X/0
-        //                               at t=0 and may flip during long
-        //                               resets).
-        //
-        //   CHECK_READ_ID_TRACKING    – C7/D2/D3 per-ID read tracking. The
-        //                               default checker assumes one outstanding
-        //                               read per ID. Disable only on an interface
-        //                               that deliberately accepts multiple reads
-        //                               on one ID and reorders them internally.
-        //
-        // Disabling a rule on the side where its violation originates does
-        // NOT hide DUT bugs: the rule remains active on every other checker
-        // instance and would still catch a real RTL regression upstream.
+        // Per-instance trust knobs for testbench-driven interfaces.
+        // CHECK_C6 disables WLAST timing checks.
+        // CHECK_B1_RESPONSE_VALID disables reset-time RVALID/BVALID checks.
+        // CHECK_RESPONSE_STABILITY disables R/B A1 and A2 checks.
+        // CHECK_READ_ID_TRACKING disables C7/D2/D3 per-ID read tracking.
         parameter bit CHECK_C6                = 1'b1,
         parameter bit CHECK_B1_RESPONSE_VALID = 1'b1,
+        parameter bit CHECK_RESPONSE_STABILITY = 1'b1,
         parameter bit CHECK_READ_ID_TRACKING  = 1'b1
     )
     (
@@ -152,14 +118,15 @@ module axi4_protocol_checker
     localparam int AWFIFO_DEPTH = 64;
     localparam int AWFIFO_AW    = $clog2(AWFIFO_DEPTH);
 
-    // Violation accumulator. Multiple always_ff blocks below increment
-    // `vcount`; this is safe because each cycle at most one increment
-    // is in flight per rule family. Counter is NOT cleared by rst -- a
-    // previous version did, and the rst-clear raced the B1 increment
-    // (B1 fires only when rst=1), silently masking every B1 violation
-    // during reset. See bug #11 in doc/ARCHITECTURE.md §7.5.
+    // Do not clear the counter during reset; reset-active B1 violations must
+    // remain visible.
     integer vcount = 0;
     assign violations = vcount[31:0];
+
+    final begin
+        if (vcount != 0)
+            $error("AXI protocol checker recorded %0d violation(s)", vcount);
+    end
 
     // ------------------------------------------------------------------
     // B1: VALID must be 0 during reset
@@ -257,11 +224,11 @@ module axi4_protocol_checker
                 vcount <= vcount + 1;
                 $display("AXI_PC_VIOLATION A1 [%m @ %0t]: WVALID withdrawn before WREADY", $time);
             end
-            if (rvalid_d & !rready_d & !rvalid) begin
+            if (CHECK_RESPONSE_STABILITY && rvalid_d & !rready_d & !rvalid) begin
                 vcount <= vcount + 1;
                 $display("AXI_PC_VIOLATION A1 [%m @ %0t]: RVALID withdrawn before RREADY", $time);
             end
-            if (bvalid_d & !bready_d & !bvalid) begin
+            if (CHECK_RESPONSE_STABILITY && bvalid_d & !bready_d & !bvalid) begin
                 vcount <= vcount + 1;
                 $display("AXI_PC_VIOLATION A1 [%m @ %0t]: BVALID withdrawn before BREADY", $time);
             end
@@ -286,13 +253,13 @@ module axi4_protocol_checker
                 if (wstrb !== wstrb_d) begin vcount <= vcount + 1; $display("AXI_PC_VIOLATION A2 [%m @ %0t]: WSTRB changed while held", $time); end
                 if (wlast !== wlast_d) begin vcount <= vcount + 1; $display("AXI_PC_VIOLATION A2 [%m @ %0t]: WLAST changed while held", $time); end
             end
-            if (rvalid_d & !rready_d & rvalid) begin
+            if (CHECK_RESPONSE_STABILITY && rvalid_d & !rready_d & rvalid) begin
                 if (rdata !== rdata_d) begin vcount <= vcount + 1; $display("AXI_PC_VIOLATION A2 [%m @ %0t]: RDATA changed while held", $time); end
                 if (rresp !== rresp_d) begin vcount <= vcount + 1; $display("AXI_PC_VIOLATION A2 [%m @ %0t]: RRESP changed while held", $time); end
                 if (rlast !== rlast_d) begin vcount <= vcount + 1; $display("AXI_PC_VIOLATION A2 [%m @ %0t]: RLAST changed while held", $time); end
                 if (rid   !== rid_d  ) begin vcount <= vcount + 1; $display("AXI_PC_VIOLATION A2 [%m @ %0t]: RID changed while held", $time);   end
             end
-            if (bvalid_d & !bready_d & bvalid) begin
+            if (CHECK_RESPONSE_STABILITY && bvalid_d & !bready_d & bvalid) begin
                 if (bresp !== bresp_d) begin vcount <= vcount + 1; $display("AXI_PC_VIOLATION A2 [%m @ %0t]: BRESP changed while held", $time); end
                 if (bid   !== bid_d  ) begin vcount <= vcount + 1; $display("AXI_PC_VIOLATION A2 [%m @ %0t]: BID changed while held", $time);   end
             end
@@ -451,17 +418,14 @@ module axi4_protocol_checker
 
     // ------------------------------------------------------------------
     // C7 + D2 + D3: Per-ID R tracking (1-outstanding-per-ID assumption)
-    // ------------------------------------------------------------------
-    generate if (CHECK_READ_ID_TRACKING) begin : gen_read_id_tracking
+        // ------------------------------------------------------------------
+        generate if (CHECK_READ_ID_TRACKING) begin : gen_read_id_tracking
         logic [7:0] r_remaining [0:NUM_IDS-1];
-        logic       r_active    [0:NUM_IDS-1];
+        logic [NUM_IDS-1:0] r_active;
 
         always_ff @(posedge clk) begin
             if (rst) begin
-                for (int i = 0; i < NUM_IDS; i++) begin
-                    r_remaining[i] <= '0;
-                    r_active   [i] <= 1'b0;
-                end
+                r_active <= '0;
             end else begin
                 // AR accept
                 if (arvalid & arready) begin
@@ -501,11 +465,11 @@ module axi4_protocol_checker
     // ------------------------------------------------------------------
     // D1 + D4: Per-ID B tracking (1-outstanding-per-ID assumption)
     // ------------------------------------------------------------------
-    logic b_outstanding [0:NUM_IDS-1];
+    logic [NUM_IDS-1:0] b_outstanding;
 
     always_ff @(posedge clk) begin
         if (rst) begin
-            for (int i = 0; i < NUM_IDS; i++) b_outstanding[i] <= 1'b0;
+            b_outstanding <= '0;
         end else begin
             if (awvalid & awready) begin
                 if (b_outstanding[awid]) begin

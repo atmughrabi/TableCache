@@ -50,15 +50,24 @@ case "$FILE" in
         )
         ;;
     src/tc_narrow_shim.sv)
-        DEFAULT_TESTS="test_narrow_shim test_shim_cache test_shim_throughput test_shim_prefill_race test_shim_buffer_snapshot"
+        DEFAULT_TESTS="test_narrow_shim test_shim_cache test_shim_throughput test_shim_prefill_race test_shim_buffer_snapshot test_shim_reorder"
         MUTATIONS=(
             "negate_ar_hits_buffer|0,/ar_hits_buffer = lb_valid/{s/ar_hits_buffer = lb_valid/ar_hits_buffer = ~lb_valid/}"
             "drop_buf_drain_term|0,/ar_buf_drain_this_cycle = /{s/ar_buf_drain_this_cycle = .*;/ar_buf_drain_this_cycle = 1'b0;/}"
-            "swap_arvalid_or|0,/s_arvalid & ~ar_hits_buffer/{s/[|] (/\\& (/}"
+            "drop_user_id_gate|/assign user_ar_candidate =/,/;/{s/& ~rid_outstanding_q\\[s_arid\\]//}"
             "negate_s_arready|0,/s_arready = ar_buf_accept/{s/s_arready = ar_buf_accept/s_arready = ~ar_buf_accept/}"
-            "drop_prefill_check|/m_arvalid = prefill_ar_fire/,/;/{s/& ~prefill_active//}"
-            "swap_miss_to_hit_path|0,/ar_miss_accept = ~ar_hits_buffer/{s/~ar_hits_buffer/ar_hits_buffer/}"
-            "drop_m_arready_dep|0,/ar_miss_accept = ~ar_hits_buffer  & m_arready/{s/& m_arready//}"
+            "drop_prefill_check|/assign user_ar_candidate =/,/;/{s/& ~prefill_active//}"
+            "drop_prefill_reserved_busy_gate|/wire aw_start_prefill =/,/;/{s/& ~rid_outstanding_q\\[PREFILL_ID\\]//}"
+            "drop_prefill_accept_race_gate|/wire aw_start_prefill =/,/;/{s/& ~(s_arvalid & s_arready & (s_arid == PREFILL_ID))//}"
+            "swap_miss_to_hit_path|0,/assign user_ar_candidate =/{s/~ar_hits_buffer/ar_hits_buffer/}"
+            "drop_ar_stall_capture|0,/else if (ar_candidate_valid & ~m_arready)/{s/~m_arready/m_arready/}"
+            "drop_rst_gate_m_arvalid|/assign m_arvalid = /,/;/{s/~rst & //}"
+            "drop_rst_gate_e_rvalid|/assign e_rvalid  = /,/;/{s/~rst & //}"
+            "drop_aw_prefill_hold|/wire aw_forward_allowed =/,/;/{s/& ~aw_requires_prefill//}"
+            "drop_aw_stall_hold|/wire aw_forward_allowed =/,/;/{s/aw_stall_q/1'b0/}"
+            "drop_buffer_r_owner|0,/assign buf_r_present = /{s/r_buf_own_q | //}"
+            "drop_buffer_r_backpressure|/assign m_rready = /,/;/{s/& ~r_buf_own_q//}"
+            "drop_fill_merge_tag|/wire w_merge_enable =/,/;/{s/(w_aligned_tag == r_resp_tag)/1'b1/}"
             "break_buf_word_snapshot|s/buf_pend_data_q <= lb_selected_word;/buf_pend_data_q <= '0;/"
         )
         ;;
@@ -68,7 +77,7 @@ case "$FILE" in
             "swap_state_idle|0,/READY\s*:/{s/READY\s*:/IDLE:/}"
             "negate_ready_combine|0,/assign ready/{s/| (port_ready\[1\]/\& (port_ready[1]/}"
             "flip_write_fifo_data|0,/assign write_fifo_data_in = current_state\[0\] != READY/{s/!= READY/== READY/}"
-            "drop_past_gen_match|0,/wire past_original_last_this_gen/{n;s/& (info_pipeline\[i\]\[LATENCY\]\.gen == past_original_last_gen\[i\]);/\& 1'b1;/}"
+            "drop_past_gen_match|/wire past_original_last_this_gen/,/;/{s/& (info_pipeline\[i\]\[LATENCY\]\.gen == past_original_last_gen\[i\])/\& 1'b1/}"
             "zero_past_orig_gen|0,/past_original_last_gen\[i\] <= info_pipeline/{s/info_pipeline\[i\]\[LATENCY\]\.gen/gen_t'(0)/}"
             "negate_out_fifo_push|0,/assign out_fifo_push\[i\] = valid_pipeline/{s/valid_pipeline\[i\]\[LATENCY\]/~valid_pipeline[i][LATENCY]/}"
         )
@@ -129,8 +138,7 @@ case "$FILE" in
         ;;
     src/l2_databank.sv:banked)
         # Banked SDP (DATABANK_SDP=1, N_BANKS=2) mutation set. Covers
-        # the gen_banked_sdp generate block added by Phase 2a of the
-        # banked-memory experiment. Each mutation breaks one part of
+        # the gen_banked_sdp generate block. Each mutation breaks one part of
         # the per-bank routing invariant ("a request to line[0]=B must
         # hit and read exactly bank B").
         FILE=src/l2_databank.sv  # real path for sed
@@ -377,7 +385,7 @@ case "$FILE" in
         )
         ;;
     src/tdp_ram.sv)
-        # True dual-port RAM. The bug #7 fix lives here -- a per-byte
+        # True dual-port RAM. The simulator path uses a masked write; a per-byte
         # NBA loop was bytewise-dropping data at wide BLOCK_W on
         # Verilator. Targets the masked-write expressions on both ports.
         DEFAULT_TESTS="test_smoke test_random test_workload test_strobe"
@@ -436,7 +444,7 @@ case "$FILE" in
         MUTATIONS=(
             "negate_hit|s/assign hit = |hit_one_hot;/assign hit = ~|hit_one_hot;/"
             "drop_invalidate_clear|/if (invalidate)/{N;s|tags_valid & ~hit_one_hot|tags_valid|;}"
-            "swap_write_hit_check|s/tags\[i\] == w_addr.tag;/tags[i] != w_addr.tag;/"
+            "swap_write_hit_check|s/tags\[i\] == w_tag;/tags[i] != w_tag;/"
             "drop_buffer_tag_uncacheable|s/& ~uncacheable_write & ~(cache_ar.arvalid/\\& ~(cache_ar.arvalid/"
         )
         ;;
@@ -478,6 +486,37 @@ total=${#MUTATIONS[@]}
 fail_list=""
 
 echo "=== mutation testing $FILE ($total mutations, tests: $TESTS) ==="
+
+run_module() {
+    local mod=$1
+    local log=$2
+    rm -rf sim_build sim_build_shim
+    if [[ $mod == "test_shim_prefill_race" ]]; then
+        TC_PROMOTE_WMISS=1 ASSERT=1 EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" \
+            timeout 180 make MODULE=$mod > "$log" 2>&1
+    elif [[ $mod == "test_shim_reorder" ]]; then
+        READ_REORDER_DEPTH=8 ASSERT=1 EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" \
+            timeout 300 make MODULE=$mod > "$log" 2>&1
+    elif [[ $mod == "test_random" ]]; then
+        NTXN=$NTXN SEED=1 ASSERT=1 EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" \
+            timeout 180 make MODULE=$mod > "$log" 2>&1
+    else
+        ASSERT=1 EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" \
+            timeout 180 make MODULE=$mod > "$log" 2>&1
+    fi
+    local rc=$?
+    [[ $rc -eq 0 ]] && grep -qE '\*\* TESTS=.*FAIL=0 ' "$log"
+}
+
+cp -f "$backup" "$src"
+for mod in $TESTS; do
+    if ! run_module "$mod" "$LOGDIR/baseline__${mod}.log"; then
+        echo "baseline failed: $mod (see $LOGDIR/baseline__${mod}.log)" >&2
+        cp -f "$backup" "$src"
+        exit 2
+    fi
+done
+
 for entry in "${MUTATIONS[@]}"; do
     label="${entry%%|*}"
     expr="${entry#*|}"
@@ -494,18 +533,7 @@ for entry in "${MUTATIONS[@]}"; do
 
     fail_seen=0
     for mod in $TESTS; do
-        rm -rf sim_build sim_build_shim
-        # test_shim_prefill_race only fires under PROMOTE_WMISS_TO_RW=1;
-        # under the default 0, it is expect_fail and trivially passes.
-        if [[ $mod == "test_shim_prefill_race" ]]; then
-            TC_PROMOTE_WMISS=1 EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
-        elif [[ $mod == "test_random" ]]; then
-            NTXN=$NTXN SEED=1 EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
-        else
-            EXTRA_ARGS="${EXTRA_MAKE_ARGS:-}" timeout 180 make MODULE=$mod > "$LOGDIR/${label}__${mod}.log" 2>&1
-        fi
-        rc=$?
-        if [[ $rc -ne 0 ]] || ! grep -qE '\*\* TESTS=.*FAIL=0 ' "$LOGDIR/${label}__${mod}.log"; then
+        if ! run_module "$mod" "$LOGDIR/${label}__${mod}.log"; then
             fail_seen=1; break
         fi
     done
@@ -530,7 +558,10 @@ echo "  total:    $total"
 echo "  killed:   $killed"
 echo "  survived: $survived  (${fail_list:-none})"
 echo "  broken:   $broken"
-if [[ $((killed + survived)) -gt 0 ]]; then
-    score=$(awk "BEGIN{printf \"%.1f\", 100*$killed/($killed+$survived)}")
+if [[ $total -gt 0 ]]; then
+    score=$(awk "BEGIN{printf \"%.1f\", 100*$killed/$total}")
     echo "  mutation score: $score%"
+fi
+if [[ $survived -ne 0 || $broken -ne 0 ]]; then
+    exit 1
 fi

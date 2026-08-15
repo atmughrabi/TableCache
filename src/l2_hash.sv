@@ -41,7 +41,7 @@ module l2_hash
             padded[IN_WIDTH-1:0] = addr;
         end
 
-        assign sum = {padded[4], padded[2], padded[0]} + {padded[5], padded[3], padded[1]} + 3'b1;
+        assign sum = {padded[4], padded[2], padded[0]} + {padded[5], padded[3], padded[1]} + 3'b001;
         assign hash = sum[OUT_WIDTH-1:0];
     end
     else begin : gen_full_hash

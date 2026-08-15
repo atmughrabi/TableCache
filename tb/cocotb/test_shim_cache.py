@@ -95,9 +95,6 @@ def attach(dut):
     return master, ram
 
 
-# ----------------------------------------------------------------------
-# Test 1 — smoke through full stack
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_smoke(dut):
     await reset_dut(dut)
@@ -115,9 +112,6 @@ async def test_smoke(dut):
     dut._log.info(f"[smoke] {n_ok}/{n} reads OK")
 
 
-# ----------------------------------------------------------------------
-# Test 2 — locality replay: hot lines + write-merge through cache
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_locality(dut):
     await reset_dut(dut)
@@ -140,9 +134,6 @@ async def test_locality(dut):
     dut._log.info(f"[locality] {RATIO} lanes RW round-trip OK")
 
 
-# ----------------------------------------------------------------------
-# Test 3 — random R/W stress through the full stack with golden mirror
-# ----------------------------------------------------------------------
 @cocotb.test()
 async def test_cold_write_miss_preserves_other_lanes(dut):
     """Write FIRST to fresh line lane 5 (no prior read), then read lane 0.
@@ -255,7 +246,7 @@ async def test_random_stack(dut):
         f"(AxiRam seed or cache initial-fill broken)"
     dut._log.info(f"[random_stack] probe@{probe_addr:#x} OK ({got:#x})")
 
-    # NOTE: BLOCK_W=512 Verilator sim is slow (~1 op/sec wall); keep N small
+    # BLOCK_W=512 Verilator simulation is slow; keep N small
     # by default. Bump via TC_NTXN for long-soak campaigns.
     N = int(os.environ.get("TC_NTXN", "100"))
     seed = int(os.environ.get("TC_SEED", "1"))
@@ -314,7 +305,7 @@ async def test_random_stack(dut):
 # Generic critical-word-first line-fill regressions.
 #
 # AxiRam is the WRAP-compliant reference slave. The negative-control test
-# below models the historical downstream-converter mutation explicitly.
+# The negative control models an incorrect downstream converter explicitly.
 # ----------------------------------------------------------------------
 @cocotb.test()
 async def test_wrap_fill_allwords(dut):
@@ -348,7 +339,7 @@ async def test_wrap_fill_allwords(dut):
 
 
 @cocotb.test()
-async def test_aux1_boundary_zero_one(dut):
+async def test_sparse_boundary_zero_one(dut):
     """Cold [0]*k ++ [1]*m line with a mid-line transition stays bit-exact."""
     await reset_dut(dut)
     master, ram = attach(dut)
@@ -372,7 +363,7 @@ async def test_aux1_boundary_zero_one(dut):
         "\n".join(f"  word={word} got={got} exp={exp}"
                   for word, _addr, got, exp in bad))
     dut._log.info(
-        f"[aux1_boundary] RATIO={RATIO} LINE_W={LINE_W} transition="
+        f"[sparse_boundary] RATIO={RATIO} LINE_W={LINE_W} transition="
         f"{transition}/{WORDS_PER_LINE}: every word correct")
 
 

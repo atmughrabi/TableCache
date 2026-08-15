@@ -12,36 +12,31 @@
 # VIP_WAYS / VIP_LINES / VIP_LINE_W / VIP_POLICY / VIP_VICTIM / VIP_ID_W /
 # VIP_DB_LATENCY / VIP_DATABANK_SDP / VIP_SDP_WRITE_INPUT_REG / VIP_N_BANKS /
 # VIP_CASCADE_DEPTH (see run_vip.tcl).
-# To exercise the GraphBlox direct-mapped deployment (cold flush + victim), run:
+# Direct-mapped cold-flush and victim-cache example:
 #   VIP_VICTIM=1 VIP_WAYS=1 VIP_LINE_W=8 VIP_LINES=16 ./tb/vip/run_vip.sh
-# T0 (cold whole-cache flush before any warming) + the X-monitor cover the
-# reported cold-flush-with-victim path.
+# The cold whole-cache flush and X monitor cover reset-state victim-cache paths.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 BUILD="${VIP_BUILD:-$REPO/tb/vip/build}"
 
-# 1. Project + IPs + generated sim scripts.
 vivado -mode batch -nojournal -nolog -source "$HERE/run_vip.tcl" >/dev/null
 
 SIMDIR="$BUILD/vip_l2top.sim/sim_1/behav/xsim"
 [ -d "$SIMDIR" ] || { echo "ERROR: sim scripts not generated at $SIMDIR"; exit 2; }
 
-# 2. Strip the default --relax from elaboration (strict mode).
 sed -i 's/ --relax//g' "$SIMDIR/elaborate.sh"
 if grep -q -- '--relax' "$SIMDIR/elaborate.sh"; then
     echo "ERROR: --relax still present in elaborate.sh"; exit 2
 fi
 echo "Stripped --relax; elaborating strictly."
 
-# 3. Run compile -> elaborate -> simulate.
 cd "$SIMDIR"
 bash compile.sh   > compile.out  2>&1
 bash elaborate.sh > elaborate.out 2>&1
 bash simulate.sh  > simulate.out  2>&1 || true
 
-# 4. Report.
 echo "==== AXI VIP result ===="
 grep -E 'VIP_RESULT|PASS T|FAIL T' simulate.log 2>/dev/null || {
     echo "No result line found; tail of elaborate/simulate:";

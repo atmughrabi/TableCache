@@ -17,7 +17,7 @@ module smoke_tb
     logic rst = 1;
     always #5 clk = ~clk;
 
-    // ---- Req-side signals (agent -> cache) ----
+    // Request-side signals
     ar_t                              req_ar;
     logic [READ_ID_WIDTH-1:0]         req_arid;
     logic                             req_arready;

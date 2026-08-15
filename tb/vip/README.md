@@ -1,51 +1,27 @@
-# AXI VIP simulation (Vivado xsim)
+# Vivado AXI VIP Simulation
 
-A Vivado **AXI Verification IP** testbench for `l2_top` (the AXI4 wrapper),
-run under **xsim**. This is the 4-state companion to the Verilator/cocotb
-suites: it is the only flow that exercises the cache from a genuine **cold
-power-on** in 4-state (`X`) simulation, which is where the reset/init
-behaviour of an FPGA cache must be correct.
+This directory contains strict four-state xsim tests for `l2_top` and the
+RATIO=1 narrow shim. The flow complements the faster two-state
+Verilator/cocotb regression.
 
-## What it checks
+## Scope
 
-`tb_l2top_vip.sv` wires:
+`tb_l2top_vip.sv` connects an AXI VIP master to `l2_top` and an AXI VIP
+memory slave to the cache memory port. It checks:
 
-```
-axi_vip_mst (MASTER VIP)  ->  l2_top.s00 (slave)
-l2_top.m00 (master)       ->  axi_vip_slv (SLAVE memory-model VIP)
-```
+- cold reset and metadata initialization
+- cold read and line fill
+- write and read-back
+- dirty eviction and writeback
+- cold and warm whole-cache flush
+- by-index flush across all ways
+- victim-cache and SDP configurations
+- non-default ID widths and associativity
+- base-zero cacheable ranges
 
-and, from a cold reset, runs self-checking transactions:
-
-- **T1** cold read of a preloaded line → MISS → line fill from the slave
-  memory returns the expected, **defined** data (not `X`).
-- **T2** write then read-back of the same line → write-allocate, the cache
-  returns the written value.
-- **T3** a second line write/read.
-- **T4** write `WAYS+1` dirty lines mapping to the same set → forces a dirty
-  eviction → a **real mem AW** (writeback) to the backend; then reads all
-  back (the evicted one refills from mem). Guards the cold write + eviction +
-  writeback path that a read-only test misses.
-- **T5** whole-cache **flush** (a `tc_flush_controller` `CleanInvalidByIndex`
-  CBOM walk, muxed onto the s00 AR) over the now-dirty cache → `flush_done`
-  must pulse. Guards the cold CBOM / cbom-FIFO path.
-- **T6** by-index flush correctness: fill all `WAYS` of one set at distinct
-  **high** tags (`0x20+`, well beyond the swept tag range), flush, and require
-  every one to be written back and dropped (post-flush read refills). A plain
-  by-address `CleanInvalid` would miss them all — this guards the whole-set
-  flush fix (bug #23).
-
-Throughout, a continuous **`$isunknown` X-monitor** (armed after reset)
-asserts that no s00/m00 valid/ready handshake is `X` and no payload is `X`
-while its VALID is asserted (read `rdata` is skipped — a CBOM returns `'x` by
-design). This is the generic net for the 4-state cold-init X class that
-Verilator (2-state) cannot see.
-
-A cold cache only behaves here if the tag/valid arrays were actually cleared
-to 0 by the LFSR-walk reset routine — which only works in 4-state once the
-reset LFSR has a defined power-on value and the inuse toggle-memories are
-immunised against `X` during reset (see `src/lfsr.sv`,
-`src/toggle_memory_set.sv`, `src/lutram_1w_*.sv`).
+After reset, an `$isunknown` monitor rejects unknown handshake signals and
+valid-qualified payloads. Cache-side read data is excluded because CBOM
+responses carry no data.
 
 ## Running
 
@@ -53,36 +29,44 @@ immunised against `X` during reset (see `src/lfsr.sv`,
 ./tb/vip/run_vip.sh
 ```
 
-Requires Vivado 2025.2 (xsim + the AXI VIP IP) on `PATH`. The script:
+Vivado 2025.2 must be available on `PATH`. The runner generates the VIP
+project, removes xsim's default `--relax`, compiles, elaborates, and reports
+`VIP_RESULT PASS` or `VIP_RESULT FAIL`.
 
-1. builds a throwaway project (`tb/vip/build/`, git-ignored) with a master
-   AXI VIP, a slave memory AXI VIP, and the TableCache RTL;
-2. generates the compile/elaborate/simulate scripts;
-3. **strips the flow's default `--relax`** and elaborates strictly — the RTL
-   compiles under strict xsim ordering rules (no forward references, no
-   `initial`/`always` procedural-driver conflicts) with no relaxation;
-4. runs the simulation and prints `VIP_RESULT PASS`/`FAIL`.
-
-Env overrides: `VIP_BUILD` (build dir), `VIP_PART` (FPGA part, default
-`xcu55c-fsvh2892-2L-e`), and cache config: `VIP_LINES`, `VIP_WAYS`,
-`VIP_LINE_W`, `VIP_POLICY` (e.g. `GRASP`). Defaults to a small fast config;
-the GraphBlox-scale config is verified with:
+Configuration uses environment variables:
 
 ```bash
-VIP_LINES=512 VIP_WAYS=4 VIP_LINE_W=8 VIP_POLICY=GRASP ./tb/vip/run_vip.sh
+VIP_ID_W=3 \
+VIP_LINES=64 \
+VIP_WAYS=3 \
+VIP_LINE_W=8 \
+VIP_POLICY=GRASP \
+VIP_VICTIM=1 \
+VIP_DB_LATENCY=2 \
+VIP_DATABANK_SDP=1 \
+VIP_SDP_WRITE_INPUT_REG=1 \
+VIP_N_BANKS=2 \
+VIP_CASCADE_DEPTH=1 \
+./tb/vip/run_vip.sh
 ```
 
-The reset hold scales automatically from `LINES` (the tag/valid LFSR walk
-needs >= LINES cycles), mirroring the wrapper-side `TC_INIT_CYCLES` contract.
+The reset hold is derived from the larger of the line count and ID occupancy
+table depth, with additional simulation margin.
+
+## RATIO=1 shim check
+
+```bash
+./tb/vip/run_shim_ratio1.sh
+```
+
+This standalone xsim test sweeps equal narrow and block widths. It verifies
+that every access selects lane zero and that odd word addresses neither return
+unknown data nor drop writes.
 
 ## Files
 
-- `tb_l2top_vip.sv` — the AXI VIP testbench.
-- `run_vip.tcl` — builds the project + IPs and emits the sim scripts.
-- `run_vip.sh` — strips `--relax` and runs compile → elaborate → simulate.
-- `tb_shim_ratio1.sv` — standalone self-checking TB for `tc_narrow_shim` at
-  `BLOCK_W == NARROW_W` (`RATIO=1`): odd 4-byte-offset reads must not return X and
-  odd writes must land on the lane (bug #32). **Needs 4-state xsim** — Verilator
-  masks the out-of-range part-select this guards.
-- `run_shim_ratio1.sh` — lightweight `xvlog`/`xelab -R` runner for the above
-  (no Vivado project); prints `run_shim_ratio1: PASS`/`FAIL`.
+- `tb_l2top_vip.sv`: AXI VIP testbench
+- `run_vip.tcl`: project and IP generation
+- `run_vip.sh`: strict compile, elaborate, and simulation runner
+- `tb_shim_ratio1.sv`: standalone RATIO=1 testbench
+- `run_shim_ratio1.sh`: RATIO=1 runner

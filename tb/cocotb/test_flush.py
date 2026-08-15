@@ -1,14 +1,4 @@
-"""tc_flush_controller integration test.
-
-Exercises the flush sequencer on top of l2_cache (via dut_flush.sv).
-Three scenarios:
-  1. test_flush_clean_state -- flush on empty cache; flush_done pulses
-     and no mem writebacks fire.
-  2. test_flush_writes_back_dirty -- write N dirty lines, flush, verify
-     every dirty line was written back to AxiRam.
-  3. test_flush_idempotent -- run two flushes back-to-back; second one
-     must be fast (no dirty data) and produce no extra mem AW.
-"""
+"""Whole-cache flush integration tests."""
 from __future__ import annotations
 
 import os
@@ -16,7 +6,10 @@ import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ReadOnly, Timer, with_timeout
-from tb_common import WritebackMonitor, MemRangeMonitor, BASE
+from tb_common import (
+    WritebackMonitor, MemRangeMonitor, BASE, cacheable_master,
+    reset_cycle_count,
+)
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
 
 CLK_NS      = 10
@@ -41,16 +34,17 @@ async def reset_dut(dut):
                    ("s_arsnoop", 0), ("s_awsnoop", 0)]:
         if hasattr(dut, sig):
             getattr(dut, sig).value = v
-    # Enough cycles to cover LFSR reset in storage banks
-    for _ in range(max(128, LINES * 2)):
+    for _ in range(reset_cycle_count()):
         await RisingEdge(dut.clk)
     dut.rst.value = 0
     await RisingEdge(dut.clk)
 
 
 def attach(dut, mem_size=1 << 21):
-    master = AxiMaster(AxiBus.from_prefix(dut, "s"), dut.clk, dut.rst,
-                       reset_active_level=True)
+    master = cacheable_master(
+        AxiMaster(AxiBus.from_prefix(dut, "s"), dut.clk, dut.rst,
+                  reset_active_level=True)
+    )
     ram = AxiRam(AxiBus.from_prefix(dut, "m"), dut.clk, dut.rst,
                  size=mem_size, reset_active_level=True)
     # Seed with golden at the dut_flush MEM_MASK image of every addr the cache might fetch.
@@ -181,10 +175,7 @@ async def test_flush_idempotent(dut):
 
 @cocotb.test()
 async def test_flush_cold_cache(dut):
-    """Flush an unwarmed (cold) cache. Previously hung because the cache
-    issued a bogus memory fetch on CBOM-miss. After the l2_cache fix
-    gating ar_fifo_push for CBOMs, the flush should complete cleanly
-    with 0 mem ARs and 0 mem AWs."""
+    """Flushing an unwarmed cache completes without memory traffic."""
     await reset_dut(dut)
     master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
@@ -237,14 +228,8 @@ async def test_flush_cold_cache_cleaninvalid(dut):
 @cocotb.test()
 async def test_flush_cold_cache_byindex(dut):
     """Flush an unwarmed (cold) cache with the tc_flush_controller's ACTUAL
-    default mode = CleanInvalidByIndex (4'b1011) -- the whole-set/all-ways sweep
-    the deployment uses. A cold set is all-invalid so there is nothing to write
-    back, but every by-index CBOM must still return its R-beat so the controller
-    advances past WAIT_R and reaches FINISH (flush_done). Regression for the
-    GraphBlox Experimental-BFS wedge: on INCLUDE_VICTIM=1 the CBOM for an invalid
-    line was suspected to route to the victim path whose R never completes ->
-    controller hangs in WAIT_R on line 0. Run at the deployment geometry
-    (WAYS=1 LINES=16 LINE_W=8 VICTIM=1 CBOM=1)."""
+    default mode = CleanInvalidByIndex (4'b1011). Every invalid-line request
+    must still return its completion beat so the controller reaches FINISH."""
     await reset_dut(dut)
     master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
@@ -258,28 +243,18 @@ async def test_flush_cold_cache_byindex(dut):
                 n_ar += 1
     cocotb.start_soon(ar_mon())
 
-    # mode=0 -> controller uses DEFAULT_MODE = 4'b1011 (CleanInvalidByIndex).
-    # request_flush asserts flush_done pulsed within its timeout, else the
-    # controller wedged (WAIT_R) -- exactly the reported hang.
+    # mode=0 selects DEFAULT_MODE = CleanInvalidByIndex.
+    # request_flush requires completion within its timeout.
     await request_flush(dut, mode=0)
     await Timer(200, "ns")
     assert mon.n == 0, f"cold by-index flush produced {mon.n} mem AWs (expected 0)"
     dut._log.info(f"[flush_cold_cache_byindex] PASS: reached FINISH; mem ARs={n_ar}, mem AWs={mon.n}")
 
 
-# ---------------------------------------------------------------------------
-# FIX B regression (E6): whole-cache flush must clean ALL ways of a set,
-# regardless of the resident tag. Prior to the by-index (CleanInvalidByIndex,
-# 4'b1011) flush mode, tc_flush_controller drove a per-line CleanInvalid whose
-# tag came from the swept address, so only lines whose tag == line_idx/num_sets
-# were cleaned; dirty lines with any other tag were never written back or
-# invalidated. Here we dirty every way of a single set at HIGH tags (0x30..)
-# and require the default by-index flush to write them all back + drop them.
-# ---------------------------------------------------------------------------
-WAYS_E6 = int(os.environ.get("TC_WAYS", "4"))
+FLUSH_WAYS = int(os.environ.get("TC_WAYS", "4"))
 
 
-def _e6_addr(set_i: int, tag_i: int, word: int = 4) -> int:
+def _flush_addr(set_i: int, tag_i: int, word: int = 4) -> int:
     # set occupies bits [LOG2(LINE_BYTES) +: LOG2(LINES)]; tag is above that.
     log2_line = LINE_BYTES.bit_length() - 1
     log2_sets = LINES.bit_length() - 1
@@ -288,9 +263,7 @@ def _e6_addr(set_i: int, tag_i: int, word: int = 4) -> int:
 
 @cocotb.test()
 async def test_flush_multitag_all_ways(dut):
-    """E6: dirty every way of one set at distinct HIGH tags, then run the
-    default (by-index) flush. Every canary must reach the backend and the
-    post-flush read-back must return the written value (line cleaned)."""
+    """A by-index flush writes back every dirty way regardless of tag."""
     await reset_dut(dut)
     master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
@@ -299,8 +272,8 @@ async def test_flush_multitag_all_ways(dut):
     SET = 5
     HIGH_TAG = 0x30
     written = {}
-    for w in range(WAYS_E6):
-        addr = _e6_addr(SET, HIGH_TAG + w, word=w % LINE_W)
+    for w in range(FLUSH_WAYS):
+        addr = _flush_addr(SET, HIGH_TAG + w, word=w % LINE_W)
         val  = 0xCA11E000 | w
         await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
                             5_000, "ns")
@@ -316,35 +289,33 @@ async def test_flush_multitag_all_ways(dut):
     await request_flush(dut)                 # mode=0 -> DEFAULT_MODE = by-index
     await Timer(600, "ns")
     aw_during = mon.n - aw_before
-    assert aw_during >= WAYS_E6, \
-        f"by-index flush issued {aw_during} writebacks (expected >= {WAYS_E6} dirty ways)"
+    assert aw_during >= FLUSH_WAYS, \
+        f"by-index flush issued {aw_during} writebacks (expected >= {FLUSH_WAYS} dirty ways)"
 
     miss = 0
     for addr, val in written.items():
         got = int.from_bytes(ram.read(addr & MEM_MASK, BLOCK_BYTES), "little")
         if got != val:
             miss += 1
-            dut._log.error(f"E6 backend @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}")
-    assert miss == 0, f"{miss}/{WAYS_E6} high-tag dirty ways NOT written back by flush"
+            dut._log.error(f"backend @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}")
+    assert miss == 0, f"{miss}/{FLUSH_WAYS} high-tag dirty ways not written back by flush"
 
     # Read-back through the cache must also return the written value.
     for addr, val in written.items():
         op = await with_timeout(master.read(addr, BLOCK_BYTES), 5_000, "ns")
         got = int.from_bytes(op.data, "little")
-        assert got == val, f"E6 read-back @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}"
-    dut._log.info(f"[flush_multitag_all_ways] PASS: {WAYS_E6} high-tag ways flushed, AWs={aw_during}")
+        assert got == val, f"read-back @0x{addr:08x} got=0x{got:08x} exp=0x{val:08x}"
+    dut._log.info(f"[flush_multitag_all_ways] PASS: {FLUSH_WAYS} high-tag ways flushed, AWs={aw_during}")
     rangemon.check()   # every reconstructed writeback AW landed in the cacheable range
 
 
 @cocotb.test()
 async def test_flush_scattered_multitag(dut):
-    """Enrichment: dirty every way of MANY sets at SCATTERED HIGH tags (mixed
-    with a clean warmed line per set), flush, then require:
-      (a) no writeback burst spans two lines (WritebackMonitor),
-      (b) every dirty canary reached the backend AND reads back correct,
-      (c) the cache is fully invalidated -- a 2nd flush issues 0 writebacks.
-    The prior flush suite only ever warmed tag-0 lines, so the tag-coverage
-    hole (dirty lines at higher tags never cleaned) had no assertion."""
+    """Flush dirty high-tag lines across multiple sets and ways.
+
+    Writebacks must remain within one line, reach memory with correct data, and
+    leave the cache fully invalidated.
+    """
     await reset_dut(dut)
     master, ram = attach(dut)
     mon = WritebackMonitor(dut, line_w=LINE_W, mem_mask=MEM_MASK)
@@ -357,11 +328,11 @@ async def test_flush_scattered_multitag(dut):
     written = {}
     for s in range(NSET):
         # one clean warmed line (read) at a low tag -> clean+dirty mix per set
-        await with_timeout(master.read(_e6_addr(s, 0, 0), BLOCK_BYTES), 5_000, "ns")
-        for w in range(WAYS_E6):
-            tag = 0x100 + (s * WAYS_E6 + w) * 3        # distinct, scattered HIGH tags
+        await with_timeout(master.read(_flush_addr(s, 0, 0), BLOCK_BYTES), 5_000, "ns")
+        for w in range(FLUSH_WAYS):
+            tag = 0x100 + (s * FLUSH_WAYS + w) * 3        # distinct, scattered HIGH tags
             blk = rng.randrange(LINE_W)
-            addr = _e6_addr(s, tag, blk)
+            addr = _flush_addr(s, tag, blk)
             val  = 0xD1500000 | (s << 8) | w
             await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
                                5_000, "ns")

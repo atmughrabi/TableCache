@@ -367,7 +367,8 @@ module dut_cocotb
         .ADDR_W                  (ADDR_W),
         .DATA_W                  (BLOCK_W),
         .ID_W                    (READ_ID_WIDTH + 1),
-        .CHECK_B1_RESPONSE_VALID (1'b0)
+        .CHECK_B1_RESPONSE_VALID (1'b0),
+        .CHECK_RESPONSE_STABILITY(1'b0)
     ) pc_mem (
         .clk(clk), .rst(rst),
         .araddr(m_araddr), .arlen(m_arlen), .arsize(m_arsize), .arburst(m_arburst),

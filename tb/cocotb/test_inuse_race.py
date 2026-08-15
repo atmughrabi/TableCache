@@ -1,21 +1,8 @@
-"""Repro for the inuse same-cycle set/clear collision (tablecache_bug_inuse_
-setclear_race.md), the l2_cache internal SVA `inuse_id_no_same_cycle_collide` /
-`inuse_line_no_same_cycle_collide` (l2_cache.sv:1545-1552).
+"""Exercise same-cycle occupancy set/clear protection.
 
-The race: a read-miss that evicts a DIRTY line produces a two-phase (combined
-writeback + fill, and possibly a co-retiring write response) finish entry. When
-phase-1 finish_clear drops inuse for one (id/hash), a freshly accepted request
-whose in_id/in_hash equals a LATER phase's finish_id/finish_hash can be accepted
-(tb_advance) the same cycle that phase fires finish_clear -> both toggle the same
-inuse bit -> stuck SET -> wedge. `~same_target` only suppresses re-clears of the
-SAME already-cleared (id,hash), not an incoming-accept-vs-finish collision.
-
-Deployment config that triggers it (GraphBlox BFS property path): WAYS=1 / LRU /
-INCLUDE_VICTIM, with read-modify-write traffic (read visited[v]; write visited[v])
-to a small set of lines so every same-set access evicts a dirty line.
-
-MUST be built with ASSERT=1 (Verilator --assert) so the internal SVA is a real
-failure; without it the wedge only shows as a liveness hang.
+Dirty same-set evictions create multi-part completions. A new request must not
+set an ID or line occupancy bit in the same cycle that completion clears it.
+Build with ASSERT=1 to enable the internal collision properties.
 
 Run: make MODULE=test_inuse_race LINES=16 WAYS=1 VICTIM=1 ASSERT=1
 """

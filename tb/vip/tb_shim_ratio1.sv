@@ -125,9 +125,7 @@ module tb_shim_ratio1;
         rst <= 1'b0;
         repeat (4) @(posedge clk);
 
-        // READS: consecutive narrow words (NARROW_B apart) alternate the leaked
-        // offset bit ($clog2(NARROW_B)); the "odd" ones pre-fix slice out of range
-        // -> X. Width-independent by construction (word 1,3,.. set the bit).
+        // Consecutive narrow words must all select the sole RATIO=1 lane.
         for (int k = 0; k < 4; k++)
             do_read(32'h8000_1000 + k*NB, genw(32'h8000_1000 + k*NB));
 

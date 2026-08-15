@@ -92,8 +92,7 @@ report_timing_summary     -file $out/timing_summary.rpt
 report_methodology        -file $out/methodology.rpt
 report_drc                -file $out/drc.rpt
 
-# Detailed binding-path report (top-3 worst paths, full topology)
-# for V80-focused timing analysis. See experiment/v80-focus branch.
+# Three worst timing paths with full topology.
 report_timing -delay_type max -nworst 3 -path_type full -input_pins \
     -file $out/timing_detailed.rpt
 

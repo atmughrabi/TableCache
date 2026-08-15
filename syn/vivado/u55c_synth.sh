@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Alveo U55C (Virtex UltraScale+ HBM) OOC synth preset.
-# Mirrors v80_synth.sh with PART=xcu55c-fsvh2892-2L-e (production
-# silicon: 2 SLRs, 1936 URAM blocks, 16 GB HBM2, ~0.035 ns clock
-# uncertainty -- matches the U250 timing baseline far better than V80
-# ES, so 250 MHz typically closes cleanly).
+# UltraScale+ OOC synthesis and place-and-route preset.
 #
 # Knobs: SIZE={256K,512K,1M,2M}, POLICY, PERIOD_NS, DB_LATENCY,
 #        INCLUDE_VICTIM, DATABANK_SDP, DIRECTIVE, PART, PNR (0=synth-only,
@@ -23,16 +19,9 @@ DATABANK_SDP="${DATABANK_SDP:-1}"
 # GRASP region-window counts (default 1 = original single-window GRASP).
 GRASP_HIGH_REGIONS="${GRASP_HIGH_REGIONS:-1}"
 GRASP_MODERATE_REGIONS="${GRASP_MODERATE_REGIONS:-1}"
-# CASCADE_DEPTH=8 (Vivado-default) is best for 512 KB on UltraScale+ HBM
-# (U55C / U250 = URAM288). Override CASCADE_DEPTH=1 for 1 MB or larger
-# caches to gain ~+0.1 ns post-route WNS by replacing the URAM cascade
-# with a parallel LUT mux.
+# Tune cascade depth for the target size and part.
 CASCADE_DEPTH="${CASCADE_DEPTH:-8}"
-# N_BANKS=1 default for UltraScale+ HBM (U55C / U250). N=2 helps
-# U55C 1 MB (+0.093 ns, ~+8 MHz, closes 300 MHz) but regresses
-# U250 1 MB slightly (binding path is in out_fifo, not the data bank,
-# so the bank-mux overhead loses without a balancing gain). For
-# multi-CU U55C deployments at 1 MB, prefer N_BANKS=2 explicitly.
+# Bank count is target- and size-dependent.
 N_BANKS="${N_BANKS:-1}"
 PNR="${PNR:-0}"
 

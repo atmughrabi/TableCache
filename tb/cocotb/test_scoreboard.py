@@ -275,16 +275,12 @@ async def test_scoreboard(dut):
         f"observed: AR={mon.n_ar} AW={mon.n_aw}"
     )
 
-    # NOTE: exact AR/AW prediction requires matching the cache's exact LRU
+    # Exact AR/AW prediction requires matching the cache's exact LRU
     # encoding (any divergence in victim selection propagates as drift in
     # which tags are resident, then in hit/miss decisions). The shadow's
-    # LRU may not match the RTL bit-for-bit, so we use TRAFFIC INVARIANTS:
-    #
-    #   1. mem_AR within +/-10% of model prediction (sanity bound for
-    #      hit-rate; large deviations indicate broken hit/miss path).
-    #   2. mem_AW <= total misses (every miss can evict at most one line).
-    #   3. mem_AR >= number of distinct lines first-touched without
-    #      WriteEvict (cold-miss lower bound, LRU-independent).
+    # LRU may not match the RTL bit-for-bit, so use bounded traffic invariants:
+    # mem_AR stays within 10% of the model, mem_AW does not exceed misses, and
+    # mem_AR covers first touches that cannot bypass allocation.
     total_misses = shadow.n_miss_rd + shadow.n_miss_wr
     drift_pct    = 100.0 * abs(mon.n_ar - exp_mem_ar) / max(1, exp_mem_ar)
     assert drift_pct <= 10.0, (

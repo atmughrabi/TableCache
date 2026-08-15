@@ -47,13 +47,7 @@ module axi_mem_model
         else                      mem_read = mem_init(addr);
     endfunction
 
-    // ---- AR/R channel: queue ARs so multiple outstanding fills are OK ----
-    // Previously mem_arready was hardwired to 1 and ARs accepted while
-    // r_busy were silently dropped, so the cache could only ever see one
-    // mem read response complete per "outstanding read" group. This broke
-    // every multi-outstanding test. Fix: real FIFO of ARs, with arready
-    // tied to "queue not full" (16-deep, more than the cache ever has in
-    // flight at the default config).
+    // Queue memory reads so multiple fills can remain outstanding.
     localparam int AR_Q_DEPTH = 16;
 
     typedef struct packed {

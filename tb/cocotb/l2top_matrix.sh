@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# l2_top integration matrix: POLICY x WAYS sweep through dut_l2top.sv.
-#
-# Closes residual A16 broadening — base test_l2top.py is LRU/WAYS=4 only;
-# this sweeps the parameter casting + GRASP region tie-off across the
-# practical combos.
+# l2_top policy and associativity matrix.
 
-set -eu
+set -euo pipefail
 cd "$(dirname "$0")"
+source .venv/bin/activate
 
 POLICIES=(LRU SRRIP GRASP)
 WAYS_LIST=(1 2 3 4 5 8)

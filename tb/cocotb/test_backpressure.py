@@ -4,7 +4,7 @@ Pauses are driven via cocotbext-axi `set_pause_generator(...)` on the
 relevant channel sink/source. After applying the pause pattern we run a
 small R/W mix and gate on golden-data correctness + `pc_violations_total == 0`.
 
-Found bug #12 (mem-side VALIDs held into reset under m_*ready pause).
+Includes memory-side VALID behavior during reset and backpressure.
 """
 from __future__ import annotations
 

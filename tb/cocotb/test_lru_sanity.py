@@ -64,7 +64,7 @@ async def test_lru_sanity(dut):
         f"cold-miss count wrong: got {warmup_misses}, expected {WAYS}"
     )
     assert extra_misses == 0, (
-        f"LRU BUG: {extra_misses} unexpected misses during stress phase "
+        f"LRU mismatch: {extra_misses} unexpected misses during stress "
         f"({total_accesses} accesses to {WAYS} resident lines in a "
         f"{WAYS}-way set should ALL hit if LRU is strict)"
     )
@@ -106,8 +106,7 @@ async def test_lru_thrash(dut):
     # Strict LRU should miss every access in steady state (after first round).
     # Allow first round to be all-cold misses too -> total miss rate ~ 100%.
     assert miss_rate >= 95.0, (
-        f"LRU THRASH BUG: only {misses}/{total_accesses} ({miss_rate:.1f}%) misses; "
+        f"LRU thrash mismatch: only {misses}/{total_accesses} ({miss_rate:.1f}%) misses; "
         f"strict LRU with N=WAYS+1 cyclic should miss nearly every access. "
         f"Lower miss rate => replacement is NOT strict LRU."
     )
-

@@ -42,9 +42,7 @@ module l2_top
         parameter logic SDP_WRITE_INPUT_REG = 0,
         //Length of the URAM/BRAM cascade in the databank (1..8; default 8).
         parameter int unsigned CASCADE_DEPTH = 8,
-        //Number of banks (data + tag arrays). N_BANKS=1 = current
-        //behavior; N_BANKS>1 enables banked storage (see
-        //experiment/DESIGN_BANKED_MEMORY.md). Phase 1: plumbing only.
+        // Number of SDP data banks.
         parameter int unsigned N_BANKS = 1,
         //GRASP: number of independent address windows per reuse class. Both
         //default to 1 (original single-window high/moderate behaviour). The

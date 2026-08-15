@@ -15,8 +15,7 @@ module tc_narrow_shim_core
         parameter int unsigned ADDR_W             = 32,
         parameter int unsigned MAX_OUTSTANDING_W  = 16,   // = 2^WRITE_ID_WIDTH at cache
         parameter bit          ENABLE_LINE_BUFFER = 1'b1,
-        // Optional prefill workaround; normally leave disabled because it adds
-        // a wide read whenever the line is absent from the shim buffer.
+        // Optional write-miss prefill; adds a wide read when the line is absent.
         parameter bit          PROMOTE_WMISS_TO_RW = 1'b0
     )
     (
@@ -133,6 +132,9 @@ module tc_narrow_shim_core
     if (ADDR_W <= ALIGN_LSB) begin : gen_addr_width_guard
         $fatal(1, "tc_narrow_shim: ADDR_W=%0d must exceed wide-block offset bits ALIGN_LSB=%0d.", ADDR_W, ALIGN_LSB);
     end
+    if (PROMOTE_WMISS_TO_RW && !ENABLE_LINE_BUFFER) begin : gen_prefill_buffer_guard
+        $fatal(1, "tc_narrow_shim: PROMOTE_WMISS_TO_RW requires ENABLE_LINE_BUFFER=1.");
+    end
 
     // ==================================================================
     // READ PATH
@@ -156,6 +158,9 @@ module tc_narrow_shim_core
     logic               buf_pend_valid_q;
     logic [ID_W-1:0]    buf_pend_id_q;
     logic [NARROW_W-1:0] buf_pend_data_q;
+    logic               r_buf_own_q;
+    logic               buf_r_present;
+    logic               buf_r_handshake;
     logic [NARROW_W-1:0] lb_selected_word;
     generate if (RATIO == 1) begin : gen_lb_word_ratio1
         assign lb_selected_word = lb_data[NARROW_W-1:0];
@@ -188,49 +193,38 @@ module tc_narrow_shim_core
     // Declare/define them here so strict elaborators (xsim) see them in order.
     logic prefill_active;
     logic prefill_ar_pending;
-    wire  prefill_ar_fire = prefill_ar_pending;
+    logic ar_hold_valid_q;
+    logic ar_hold_prefill_q;
+    logic [ADDR_W-1:0] ar_hold_addr_q;
+    logic [3:0] ar_hold_snoop_q;
+    logic [ID_W-1:0] ar_hold_id_q;
+    logic user_ar_candidate;
+    logic user_ar_commit;
+    logic ar_select_prefill;
+    logic prefill_ar_handshake;
+    logic aw_stall_q;
 
-    assign ar_buf_drain_this_cycle = buf_pend_valid_q & s_rready & ~m_rvalid;
+    assign ar_buf_drain_this_cycle = buf_r_handshake;
     assign ar_buf_accept  =  ar_hits_buffer  & (~buf_pend_valid_q | ar_buf_drain_this_cycle)
                            & ~rid_outstanding_q[s_arid]
-                           & ~prefill_active;        // hold AR while prefill owns the bus
-    assign ar_miss_accept = ~ar_hits_buffer  & m_arready
-                           & ~rid_outstanding_q[s_arid]
-                           & ~prefill_ar_fire         // prefill wins the wide AR slot
-                           & ~prefill_active;         // and holds the miss AR for the whole prefill
-
+                           & ~prefill_active
+                           & ~ar_hold_valid_q;
     assign s_arready = ar_buf_accept | ar_miss_accept;
 
-    // ----------------------------------------------------------------
-    // Cold-write-miss workaround (PROMOTE_WMISS_TO_RW)
-    // Detect AW to a line that the L0 buffer does NOT hold; issue an
-    // internal wide AR first to populate the cache (and the L0). Then
-    // release the AW so it lands as a hit-write in the cache, which is the
-    // verified path. One in-flight prefill at a time.
-    // Uses the highest ID (NUM_IDS-1) as a reserved prefill id.
-    // ----------------------------------------------------------------
+    // Optional write-miss prefill using the highest ID as a reserved ID.
     localparam logic [ID_W-1:0] PREFILL_ID = '1;
     logic                            prefill_resp_pending; // m_r with this id is mine
     logic [ADDR_W-1:ALIGN_LSB]       prefill_tag_q;
 
     wire aw_line_in_buf = lb_valid & ENABLE_LINE_BUFFER
                         & (s_awaddr[ADDR_W-1:ALIGN_LSB] == lb_tag);
-    wire aw_needs_prefill = PROMOTE_WMISS_TO_RW & s_awvalid
-                          & ~aw_line_in_buf & ~prefill_active
-                          & ~rid_outstanding_q[PREFILL_ID]  // can't reuse PREFILL_ID id slot
-                          // ...nor launch the SAME cycle a read on PREFILL_ID is
-                          // accepted: rid_outstanding_q[PREFILL_ID] is set next edge,
-                          // but this cycle it still reads 0, so without this term a
-                          // prefill would start alongside a buffered/miss PREFILL_ID
-                          // read and the prefill's R would clear that read's
-                          // outstanding slot early (a master must not use PREFILL_ID,
-                          // but guard it so the 1-per-id invariant holds regardless).
+    wire aw_requires_prefill = PROMOTE_WMISS_TO_RW & s_awvalid
+                             & ~aw_line_in_buf;
+    wire aw_start_prefill = aw_requires_prefill & ~prefill_active
+                          & ~aw_stall_q
+                          & ~rid_outstanding_q[PREFILL_ID]
                           & ~(s_arvalid & s_arready & (s_arid == PREFILL_ID));
-    // A prefill R must (a) be tagged with PREFILL_ID AND (b) actually be the
-    // one we issued. Otherwise a master that uses arid==PREFILL_ID would have
-    // its responses silently drained. The shim already gates outgoing prefill
-    // on `~rid_outstanding_q[PREFILL_ID]` (via the s_arid path), so a master
-    // read with arid=PREFILL_ID can never coexist with a prefill in flight.
+    // Only a response for an issued prefill is consumed internally.
     wire prefill_r_done   = m_rvalid & m_rready
                           & prefill_resp_pending
                           & (m_rid == PREFILL_ID);
@@ -242,12 +236,12 @@ module tc_narrow_shim_core
             prefill_resp_pending <= 1'b0;
             prefill_tag_q        <= '0;
         end else begin
-            if (aw_needs_prefill) begin
+            if (aw_start_prefill) begin
                 prefill_active     <= 1'b1;
                 prefill_ar_pending <= 1'b1;
                 prefill_tag_q      <= s_awaddr[ADDR_W-1:ALIGN_LSB];
             end
-            if (prefill_ar_pending & m_arready & prefill_ar_fire) begin
+            if (prefill_ar_handshake) begin
                 prefill_ar_pending   <= 1'b0;
                 prefill_resp_pending <= 1'b1;
             end
@@ -258,30 +252,56 @@ module tc_narrow_shim_core
         end
     end
 
-    // Wide AR mux: prefill takes priority over the narrow miss path.
-    // The narrow-miss term must carry the SAME `~rid_outstanding_q[s_arid]` gate
-    // as `ar_miss_accept`/`s_arready` below: otherwise, while a same-id read is
-    // still in flight, the shim would keep asserting m_arvalid and the cache
-    // (which is 1-outstanding-per-id) could accept a SECOND same-id AR even
-    // though s_arready is held low -- clobbering the cache's per-id slot and
-    // returning the previous line's data ("one line off"). Gating here makes the
-    // wide AR and the narrow accept consistent so same-id reads truly serialize.
-    assign m_arvalid = prefill_ar_fire
-                     | (s_arvalid & ~ar_hits_buffer & ~prefill_active
-                        & ~rid_outstanding_q[s_arid]);
-    assign m_araddr  = prefill_ar_fire
-                     ? {prefill_tag_q, {ALIGN_LSB{1'b0}}}
-                     : {s_araddr[ADDR_W-1:ALIGN_LSB], {ALIGN_LSB{1'b0}}};
+    // Hold the selected AR payload while the downstream interface is stalled.
+    assign user_ar_candidate = s_arvalid & ~ar_hits_buffer & ~prefill_active
+                             & ~rid_outstanding_q[s_arid];
+    assign user_ar_commit = user_ar_candidate
+                          & ~prefill_ar_pending
+                          & ~ar_hold_valid_q;
+    wire prefill_ar_candidate = prefill_ar_pending
+                              & ~rid_outstanding_q[PREFILL_ID];
+    wire ar_candidate_valid = prefill_ar_candidate | user_ar_commit;
+    wire ar_candidate_prefill = prefill_ar_candidate;
+    wire [ADDR_W-1:0] ar_candidate_addr = ar_candidate_prefill
+        ? {prefill_tag_q, {ALIGN_LSB{1'b0}}}
+        : {s_araddr[ADDR_W-1:ALIGN_LSB], {ALIGN_LSB{1'b0}}};
+    wire [3:0] ar_candidate_snoop = ar_candidate_prefill ? 4'd0 : s_arsnoop;
+    wire [ID_W-1:0] ar_candidate_id = ar_candidate_prefill
+        ? PREFILL_ID : s_arid;
+
+    assign ar_select_prefill = ar_hold_valid_q
+        ? ar_hold_prefill_q : ar_candidate_prefill;
+    assign m_arvalid = ~rst & (ar_hold_valid_q | ar_candidate_valid);
+    assign m_araddr  = ar_hold_valid_q ? ar_hold_addr_q : ar_candidate_addr;
     assign m_arlen   = 8'd0;
     assign m_arsize  = 3'($clog2(BLOCK_B));
     assign m_arburst = 2'b01;
-    assign m_arsnoop = prefill_ar_fire ? 4'd0 : s_arsnoop;
-    assign m_arid    = prefill_ar_fire ? PREFILL_ID : s_arid;
+    assign m_arsnoop = ar_hold_valid_q ? ar_hold_snoop_q : ar_candidate_snoop;
+    assign m_arid    = ar_hold_valid_q ? ar_hold_id_q : ar_candidate_id;
+
+    wire m_ar_handshake = m_arvalid & m_arready;
+    assign prefill_ar_handshake = m_ar_handshake & ar_select_prefill;
+    assign ar_miss_accept = user_ar_commit;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            ar_hold_valid_q <= 1'b0;
+        end else if (ar_hold_valid_q) begin
+            if (m_arready)
+                ar_hold_valid_q <= 1'b0;
+        end else if (ar_candidate_valid & ~m_arready) begin
+            ar_hold_valid_q   <= 1'b1;
+            ar_hold_prefill_q <= ar_candidate_prefill;
+            ar_hold_addr_q    <= ar_candidate_addr;
+            ar_hold_snoop_q   <= ar_candidate_snoop;
+            ar_hold_id_q      <= ar_candidate_id;
+        end
+    end
 
     // Latch per-id offset + aligned address on miss-accept and on prefill
     // AR fire (so the response fill knows the line tag).
     always_ff @(posedge clk) begin
-        if (prefill_ar_fire & m_arready) begin
+        if (prefill_ar_handshake) begin
             rid_alignaddr_q[PREFILL_ID] <= {prefill_tag_q, {ALIGN_LSB{1'b0}}};
             rid_offset_q   [PREFILL_ID] <= '0;
         end else if (s_arvalid & ar_miss_accept) begin
@@ -301,12 +321,12 @@ module tc_narrow_shim_core
         end else begin
             if (s_arvalid & (ar_buf_accept | ar_miss_accept))
                 rid_outstanding_q[s_arid] <= 1'b1;
-            if (prefill_ar_fire & m_arready)
+            if (prefill_ar_handshake)
                 rid_outstanding_q[PREFILL_ID] <= 1'b1;
             if (m_rvalid & m_rready & m_rlast)
                 rid_outstanding_q[m_rid] <= 1'b0;
             // Buffer-served R drain also frees the id.
-            if (buf_pend_valid_q & s_rready & ~m_rvalid)
+            if (buf_r_handshake)
                 rid_outstanding_q[buf_pend_id_q] <= 1'b0;
         end
     end
@@ -316,8 +336,7 @@ module tc_narrow_shim_core
         if (rst) begin
             buf_pend_valid_q <= 1'b0;
         end else begin
-            // Drain (master accepts our buffered word; cache R didn't compete)
-            if (buf_pend_valid_q & s_rready & ~m_rvalid)
+            if (buf_r_handshake)
                 buf_pend_valid_q <= 1'b0;
             // Push on buffer-hit AR
             if (s_arvalid & ar_buf_accept) begin
@@ -332,7 +351,7 @@ module tc_narrow_shim_core
         end
     end
 
-    // R output mux: cache R wins; buffered R drains when cache is idle.
+    // A stalled buffered response retains R-channel ownership until accepted.
     // For prefill responses (m_rid == PREFILL_ID) we drain at m_rready=1 but
     // do NOT raise s_rvalid — they're internal to the shim.
     logic [OFF_W-1:0]    cache_r_sel;
@@ -346,27 +365,41 @@ module tc_narrow_shim_core
     assign cache_r_word = m_rdata[cache_r_sel*NARROW_W +: NARROW_W];
     assign buf_r_word   = buf_pend_data_q;
 
-    // The shim issues arlen=0, so exactly ONE data beat completes a read: the
-    // requested block, which the cache marks with rlast=1. Older cache revisions
-    // could emit a trailing sibling-block beat (rlast=0) after paired concurrent
-    // hits (bug #31; fixed at the databank generation boundary). Keep the shim's
-    // defensive drain/drop: it never forwards or latches an unrequested rlast=0
-    // beat and is a no-op for the normal single-beat response.
+    // Only RLAST completes the single-beat narrow request; drain other beats.
     wire cache_r_resp  = m_rvalid & ~m_r_is_prefill & m_rlast;   // real response
     wire cache_r_extra = m_rvalid & ~m_rlast;                    // trailing beat: drain only
+    assign buf_r_present = r_buf_own_q | (buf_pend_valid_q & ~m_rvalid);
+    assign buf_r_handshake = buf_r_present & s_rready;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            r_buf_own_q <= 1'b0;
+        end else if (r_buf_own_q) begin
+            if (s_rready)
+                r_buf_own_q <= 1'b0;
+        end else if (buf_pend_valid_q & ~m_rvalid & ~s_rready) begin
+            r_buf_own_q <= 1'b1;
+        end
+    end
 
     always_comb begin
-        if (cache_r_resp) begin
-            s_rdata  = cache_r_word;
-            s_rresp  = m_rresp;
-            s_rlast  = 1'b1;                       // single-beat
-            s_rid    = m_rid;
-            s_rvalid = 1'b1;
-        end else if (buf_pend_valid_q & ~m_rvalid) begin
+        if (rst) begin
+            s_rdata  = '0;
+            s_rresp  = 2'b00;
+            s_rlast  = 1'b0;
+            s_rid    = '0;
+            s_rvalid = 1'b0;
+        end else if (buf_r_present) begin
             s_rdata  = buf_r_word;
             s_rresp  = 2'b00;
             s_rlast  = 1'b1;
             s_rid    = buf_pend_id_q;
+            s_rvalid = 1'b1;
+        end else if (cache_r_resp) begin
+            s_rdata  = cache_r_word;
+            s_rresp  = m_rresp;
+            s_rlast  = 1'b1;                       // single-beat
+            s_rid    = m_rid;
             s_rvalid = 1'b1;
         end else begin
             s_rdata  = '0;
@@ -379,7 +412,19 @@ module tc_narrow_shim_core
     // Drain wide R always: a real response (rlast=1) is gated by s_rready; prefill
     // R is consumed internally; a trailing extra beat (rlast=0) is drained
     // unconditionally so the cache advances even while the master backpressures.
-    assign m_rready = s_rready | m_r_is_prefill | cache_r_extra;
+    assign m_rready = ~rst & ((s_rready & ~r_buf_own_q)
+                    | m_r_is_prefill | cache_r_extra);
+
+    // Write-side state used by the read-side line-buffer merge.
+    localparam int unsigned TAG_W = ADDR_W - ALIGN_LSB;
+    localparam int unsigned AW_IDX_W = (FIFO_AW == 0) ? 1 : FIFO_AW;
+    logic [OFF_W-1:0] aw_fifo_mem [MAX_OUTSTANDING_W-1:0];
+    logic [TAG_W-1:0] aw_fifo_tag [MAX_OUTSTANDING_W-1:0];
+    logic [FIFO_AW:0] aw_fifo_wptr, aw_fifo_rptr;
+    logic aw_fifo_full, aw_fifo_empty;
+    logic [AW_IDX_W-1:0] aw_wr_idx, aw_rd_idx;
+    logic [NUM_IDS-1:0] cbom_outstanding_q;
+    logic [OFF_W-1:0] w_sel;
 
     // ---- line buffer update ----
     // The buffer is filled from a wide R completion AND from a same-line W
@@ -397,29 +442,30 @@ module tc_narrow_shim_core
         wire [ADDR_W-1:ALIGN_LSB] w_aligned_tag = aw_fifo_tag[aw_rd_idx];
         wire                      w_merge_match = lb_valid
                                                 & (w_aligned_tag == lb_tag);
+        wire lb_fill = m_rvalid & m_rready & m_rlast
+                     & ~cbom_outstanding_q[m_rid];
+        wire w_merge_enable = s_wvalid & s_wready
+                            & ((lb_fill & (w_aligned_tag == r_resp_tag))
+                               | (~lb_fill & w_merge_match));
 
         always_ff @(posedge clk) begin
             if (rst) begin
                 lb_valid <= 1'b0;
             end else begin
-                // 1) Fill on wide R handshake (non-CBOM only). Only the real
-                //    response beat (rlast=1) carries the requested block for
-                //    r_resp_tag; a trailing extra beat (rlast=0) is the sibling
-                //    block and must NOT be latched under the requested tag.
-                if (m_rvalid & m_rready & m_rlast & ~cbom_outstanding_q[m_rid]) begin
+                // Fill only from the requested RLAST beat of a non-CBOM read.
+                if (lb_fill) begin
                     lb_valid <= 1'b1;
                     lb_tag   <= r_resp_tag;
                     lb_data  <= m_rdata;
                 end
-                // 2) Merge on W beat when the FIFO-stored AW tag matches lb.
-                //    Only the bytes enabled by s_wstrb mutate; rest preserved.
-                if (s_wvalid & s_wready & w_merge_match) begin
+                // Merge enabled write bytes when the queued AW tag matches.
+                if (w_merge_enable) begin
                     for (int b = 0; b < NARROW_B; b++) begin
                         if (s_wstrb[b])
                             lb_data[(w_sel*NARROW_W) + b*8 +: 8] <= s_wdata[b*8 +: 8];
                     end
                 end
-                // 3) CBOM read invalidates the buffer (may drop the line at cache).
+                // A matching CBOM read invalidates the buffer.
                 if (lb_valid & s_arvalid & ar_miss_accept & cbom_match)
                     lb_valid <= 1'b0;
             end
@@ -449,14 +495,13 @@ module tc_narrow_shim_core
     end
 
     // ---- track which outstanding rids are CBOM (rdata is 'x, don't cache) ----
-    logic [NUM_IDS-1:0] cbom_outstanding_q;
     always_ff @(posedge clk) begin
         if (rst) begin
             cbom_outstanding_q <= '0;
         end else begin
             if (s_arvalid & ar_miss_accept)
                 cbom_outstanding_q[s_arid] <= (s_arsnoop != 4'd0);
-            if (prefill_ar_fire & m_arready)
+            if (prefill_ar_handshake)
                 cbom_outstanding_q[PREFILL_ID] <= 1'b0;
             if (m_rvalid & m_rready & m_rlast)
                 cbom_outstanding_q[m_rid]  <= 1'b0;
@@ -469,20 +514,12 @@ module tc_narrow_shim_core
     // Ordered FIFO of {offset, aligned_tag} (depth = MAX_OUTSTANDING_W).
     // The aligned_tag travels with the offset so the W beat can decide whether
     // to merge the bytes back into the line buffer.
-    localparam int unsigned TAG_W = ADDR_W - ALIGN_LSB;
-    logic [OFF_W-1:0]      aw_fifo_mem [MAX_OUTSTANDING_W-1:0];
-    logic [TAG_W-1:0]      aw_fifo_tag [MAX_OUTSTANDING_W-1:0];
-    logic [FIFO_AW:0]   aw_fifo_wptr, aw_fifo_rptr;
-    logic               aw_fifo_full, aw_fifo_empty;
-
     // Low FIFO_AW pointer bits index the depth-MAX_OUTSTANDING_W FIFO memory.
     // A degenerate depth-1 FIFO has FIFO_AW=0 and a single entry always at
     // index 0; ptr[FIFO_AW-1:0] would be an ILLEGAL zero-width part-select
     // (it reads X and silently drops the W-beat byte-lane select -> lost write
     // data), so degrade it to a constant 0. The power-of-two guard above
     // accepts MAX_OUTSTANDING_W=1, so depth-1 must actually work.
-    localparam int unsigned AW_IDX_W = (FIFO_AW == 0) ? 1 : FIFO_AW;
-    logic [AW_IDX_W-1:0] aw_wr_idx, aw_rd_idx;
     generate
         if (FIFO_AW == 0) begin : gen_aw_idx_depth1
             assign aw_wr_idx = '0;
@@ -503,16 +540,30 @@ module tc_narrow_shim_core
     assign m_awburst = 2'b01;
     assign m_awsnoop = (s_awsnoop == 3'b101) ? 3'b000 : s_awsnoop;
     assign m_awid    = s_awid;
-    // Hold AW on the cycle that decides a prefill is needed (combinational
-    // ~aw_needs_prefill) as well as while prefill is in flight (~prefill_active).
+    // Hold forwarding eligibility once AWVALID has been presented downstream.
     // Per-awid outstanding cap (~awid_outstanding_q[s_awid]) mirrors the read
     // path's rid_outstanding_q: the cache permits one in-flight request per id,
     // so a 2nd same-awid write is stalled at the shim until the 1st write's B
     // returns. Without this the shim forwards overlapping same-id writes and the
     // cache sees >1 outstanding for that id (an AXI protocol violation that a
     // strict checker treats as fatal).
-    assign m_awvalid = s_awvalid & ~aw_fifo_full & ~prefill_active & ~aw_needs_prefill & ~awid_outstanding_q[s_awid];
-    assign s_awready = m_awready & ~aw_fifo_full & ~prefill_active & ~aw_needs_prefill & ~awid_outstanding_q[s_awid];
+    wire aw_forward_allowed = aw_stall_q
+        | (~aw_fifo_full & ~prefill_active & ~aw_requires_prefill
+           & ~awid_outstanding_q[s_awid]);
+    assign m_awvalid = ~rst & s_awvalid & aw_forward_allowed;
+    assign s_awready = m_awready & s_awvalid & aw_forward_allowed;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            aw_stall_q <= 1'b0;
+        end else if (s_awvalid & s_awready) begin
+            aw_stall_q <= 1'b0;
+        end else if (m_awvalid & ~m_awready) begin
+            aw_stall_q <= 1'b1;
+        end else if (!s_awvalid) begin
+            aw_stall_q <= 1'b0;
+        end
+    end
 
     always_ff @(posedge clk) begin
         if (rst) begin
@@ -532,7 +583,6 @@ module tc_narrow_shim_core
         end
     end
 
-    logic [OFF_W-1:0] w_sel;
     assign w_sel = aw_fifo_mem[aw_rd_idx];
 
     always_comb begin
@@ -542,14 +592,14 @@ module tc_narrow_shim_core
         m_wstrb[w_sel*NARROW_B +: NARROW_B] = s_wstrb;
     end
     assign m_wlast  = 1'b1;
-    assign m_wvalid = s_wvalid & ~aw_fifo_empty;
+    assign m_wvalid  = ~rst & s_wvalid & ~aw_fifo_empty;
     assign s_wready = m_wready & ~aw_fifo_empty;
 
     // B passthrough
     assign s_bresp  = m_bresp;
     assign s_bid    = m_bid;
-    assign s_bvalid = m_bvalid;
-    assign m_bready = s_bready;
+    assign s_bvalid = m_bvalid & ~rst;
+    assign m_bready = s_bready & ~rst;
 
 `ifndef ASSERT_OFF
     // ---------- narrow-side input contract ----------
@@ -574,6 +624,9 @@ module tc_narrow_shim_core
             if (s_wvalid)
                 assert (s_wlast)
                     else $error("tc_narrow_shim: single-beat write expected, wlast=0");
+            if (prefill_ar_pending)
+                assert (!rid_outstanding_q[PREFILL_ID])
+                    else $error("tc_narrow_shim: pending prefill ID is already outstanding");
         end
     end
 `endif
@@ -655,7 +708,7 @@ module tc_read_reorder
     // Accept an engine AR when a slot is free AND the core will take it; issue
     // it to the core tagged with the slot index (a distinct core id).
     assign e_arready = c_arready & ~full;
-    assign c_arvalid = e_arvalid & ~full;
+    assign c_arvalid = ~rst & e_arvalid & ~full;
     assign c_araddr  = e_araddr;
     assign c_arlen   = e_arlen;
     assign c_arsize  = e_arsize;
@@ -670,7 +723,7 @@ module tc_read_reorder
     wire [PW-1:0] cap_slot = PW'(c_rid);
 
     // Present the engine response from the head slot, strictly in issue order.
-    assign e_rvalid  = slot_valid[head] & slot_ready[head];
+    assign e_rvalid  = ~rst & slot_valid[head] & slot_ready[head];
     assign e_rdata   = slot_data [head];
     assign e_rresp   = slot_rresp[head];
     assign e_rid     = slot_eid  [head];
@@ -712,11 +765,8 @@ endmodule
 
 
 // ============================================================================
-// tc_narrow_shim — public shim. Thin wrapper over tc_narrow_shim_core. Default
-// (READ_REORDER_DEPTH=1) instantiates the core straight through (identical to
-// the historical shim). READ_REORDER_DEPTH>1 inserts tc_read_reorder on the
-// read path so a single-id, in-order engine can keep >1 read outstanding while
-// still seeing strict in-order, single-id completion.
+// Public wrapper. READ_REORDER_DEPTH=1 is direct; larger values insert the
+// read reorder buffer.
 // ============================================================================
 module tc_narrow_shim
     #(

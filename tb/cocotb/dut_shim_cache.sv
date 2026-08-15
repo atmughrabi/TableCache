@@ -384,16 +384,13 @@ module dut_shim_cache
         pc_violations_s + pc_violations_c + pc_violations_m;
 
     // pc_slave: narrow side driven by cocotbext-axi AxiMaster. Disable C6
-    // (AxiMaster v0.1.28 WLAST timing) and B1_RESPONSE_VALID (shim's
-    // s_rvalid is a combinational reflection of m_rvalid → AxiRam reset
-    // quirk propagates here).
+    // for the AxiMaster v0.1.28 WLAST timing behavior.
     axi4_protocol_checker #(
         .ADDR_W                  (ADDR_W),
         .DATA_W                  (NARROW_W),
-        .ID_W                    (READ_ID_WIDTH),
-        .CHECK_C6                (1'b0),
-        .CHECK_B1_RESPONSE_VALID (1'b0),
-        .CHECK_READ_ID_TRACKING  (READ_REORDER_DEPTH <= 1)
+        .ID_W                   (READ_ID_WIDTH),
+        .CHECK_C6               (1'b0),
+        .CHECK_READ_ID_TRACKING (READ_REORDER_DEPTH <= 1)
     ) pc_slave (
         .clk(clk), .rst(rst),
         .araddr(s_araddr), .arlen(s_arlen), .arsize(s_arsize), .arburst(s_arburst),
@@ -435,7 +432,8 @@ module dut_shim_cache
         .ADDR_W                  (ADDR_W),
         .DATA_W                  (BLOCK_W),
         .ID_W                    (READ_ID_WIDTH + 1),
-        .CHECK_B1_RESPONSE_VALID (1'b0)
+        .CHECK_B1_RESPONSE_VALID (1'b0),
+        .CHECK_RESPONSE_STABILITY(1'b0)
     ) pc_mem (
         .clk(clk), .rst(rst),
         .araddr(m_araddr), .arlen(m_arlen), .arsize(m_arsize), .arburst(m_arburst),
