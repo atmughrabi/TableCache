@@ -65,6 +65,7 @@ order.
 | Verilator did not fully reset large unpacked checker arrays | Use packed active-ID vectors | wide-ID warm-reset test |
 | Cocotb failures returned a successful make status | Parse JUnit results and fail on protocol counts | result-gate negative checks |
 | Broken or surviving mutations still returned success | Fail the mutation runner on either condition | mutation baseline and exit checks |
+| Protocol checker modeled only one transaction per ID | Use configurable per-ID request queues | same-ID burst and backpressure tests |
 
 Current tests and commands are listed in
 [../VERIFICATION.md](../VERIFICATION.md).

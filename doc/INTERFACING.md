@@ -224,16 +224,20 @@ make MODULE=test_latency POLICY=LRU DB_LATENCY=1
 | Streaming WriteEvict, hits or misses | **1 W beat / cycle** sustained, B fires every `LINE_W` cycles |
 | Mixed RMW writes | Bounded by the RMW path: each write triggers a mem AR (≥ `LINE_W` cycles of mem traffic). Complete-line writes should use WriteEvict. |
 
-The internal FIFOs are sized so a single in-flight burst rarely back-pressures the master. The `READ_ID_WIDTH`/`WRITE_ID_WIDTH` limit the **number of unique IDs** in flight — repeating the same ID serializes naturally.
+The internal FIFOs are sized so a single in-flight burst rarely back-pressures
+the master. ID widths determine the available ID namespace.
 
 ---
 
 ## 9. Pipelining / ordering rules
 
-1. The cache supports **multiple outstanding requests** up to `2^READ_ID_WIDTH` reads and `2^WRITE_ID_WIDTH` writes, each with a unique ID.
-2. **Same-ID requests are serialized** (the cache blocks a new request whose `arid` or `awid` matches one already in flight).
+1. The cache supports multiple outstanding requests across the configured ID
+   namespace.
+2. **Same-ID execution is serialized**, but the slave boundary may have up to
+   four accepted reads or two accepted writes per ID before applying
+   backpressure. Responses remain ordered within each ID.
 3. **Same-line requests are serialized** (the cache blocks any new request that hashes to the same line as one in flight, regardless of ID). This avoids data hazards in the data bank.
-4. Reads return **in any order across IDs**; within a single ID they are in order (single ID = single in-flight request anyway).
+4. Reads may return in any order across IDs and remain ordered within one ID.
 5. Writes return B **in AW-acceptance order** per the AXI ID rule.
 
 ---

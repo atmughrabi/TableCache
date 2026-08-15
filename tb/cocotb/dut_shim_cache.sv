@@ -385,12 +385,13 @@ module dut_shim_cache
 
     // pc_slave: narrow side driven by cocotbext-axi AxiMaster. Disable C6
     // for the AxiMaster v0.1.28 WLAST timing behavior.
+    // The reorder depth is a global limit; using it per ID is conservative.
     axi4_protocol_checker #(
-        .ADDR_W                  (ADDR_W),
-        .DATA_W                  (NARROW_W),
-        .ID_W                   (READ_ID_WIDTH),
-        .CHECK_C6               (1'b0),
-        .CHECK_READ_ID_TRACKING (READ_REORDER_DEPTH <= 1)
+        .ADDR_W        (ADDR_W),
+        .DATA_W        (NARROW_W),
+        .ID_W          (READ_ID_WIDTH),
+        .CHECK_C6      (1'b0),
+        .READ_ID_DEPTH (READ_REORDER_DEPTH)
     ) pc_slave (
         .clk(clk), .rst(rst),
         .araddr(s_araddr), .arlen(s_arlen), .arsize(s_arsize), .arburst(s_arburst),
@@ -405,9 +406,8 @@ module dut_shim_cache
         .violations(pc_violations_s)
     );
 
-    // pc_cache: RTL↔RTL bus between the shim and the cache. Both endpoints
-    // are DUT, so all rules stay enabled — this is the highest-value
-    // checker instance and any violation here is a real bug.
+    // pc_cache: RTL-to-RTL bus between the shim and cache. Keep depth 1 here:
+    // the shim must not reuse a core ID until its prior response completes.
     axi4_protocol_checker #(
         .ADDR_W (ADDR_W),
         .DATA_W (BLOCK_W),

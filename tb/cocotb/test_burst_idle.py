@@ -110,6 +110,85 @@ async def test_burst_idle_liveness(dut):
 
 
 @cocotb.test()
+async def test_same_id_queue_under_response_backpressure(dut):
+    """The request skid and response FIFO may hold four same-ID reads."""
+    await reset_dut(dut)
+    pc_before = int(dut.pc_violations_total.value)
+    attach_mem(dut, size_bytes=1 << 20)
+    if hasattr(dut, "s_arsnoop"):
+        dut.s_arsnoop.value = 0
+
+    queue_depth = 4
+    addrs = _lines(queue_depth + 1, base=0xD000)
+    got = []
+
+    async def r_collector():
+        while True:
+            await RisingEdge(dut.clk)
+            await ReadOnly()
+            if int(dut.s_rvalid) and int(dut.s_rready):
+                got.append(int(dut.s_rdata) & 0xFFFFFFFF)
+
+    cocotb.start_soon(r_collector())
+    dut.s_rready.value = 0
+
+    def setup_ar(addr):
+        dut.s_araddr.value = addr
+        dut.s_arid.value = 0
+        dut.s_arlen.value = 0
+        dut.s_arsize.value = ARSIZE
+        dut.s_arburst.value = 1
+        dut.s_arcache.value = 0xF
+
+    setup_ar(addrs[0])
+    dut.s_arvalid.value = 1
+    accepted = 0
+    for _ in range(20_000):
+        await ReadOnly()
+        handshake = int(dut.s_arvalid) and int(dut.s_arready)
+        await RisingEdge(dut.clk)
+        if handshake:
+            accepted += 1
+            if accepted == queue_depth:
+                break
+            setup_ar(addrs[accepted])
+
+    assert accepted == queue_depth, (
+        f"same-ID queue accepted {accepted}/{queue_depth} reads while R was stalled"
+    )
+
+    setup_ar(addrs[queue_depth])
+    for _ in range(50):
+        await ReadOnly()
+        assert not int(dut.s_arready), (
+            "fifth same-ID AR was accepted before response capacity drained"
+        )
+        await RisingEdge(dut.clk)
+
+    dut.s_rready.value = 1
+    for _ in range(20_000):
+        await ReadOnly()
+        handshake = int(dut.s_arvalid) and int(dut.s_arready)
+        await RisingEdge(dut.clk)
+        if handshake:
+            accepted += 1
+            dut.s_arvalid.value = 0
+            break
+
+    assert accepted == len(addrs), "fifth same-ID AR was not accepted after drain"
+
+    for _ in range(20_000):
+        await RisingEdge(dut.clk)
+        if len(got) == len(addrs):
+            break
+
+    assert got == [golden(addr) for addr in addrs], (
+        f"same-ID responses out of order or incomplete: got={got}"
+    )
+    assert int(dut.pc_violations_total.value) == pc_before
+
+
+@cocotb.test()
 async def test_evict_burst_idle_liveness(dut):
     """Evict dirty lines with a same-ID burst, idle, then verify progress.
 

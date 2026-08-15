@@ -133,7 +133,7 @@ is instantiated on each testbench AXI interface. It increments
 | `A2` | payload stable while stalled |
 | `C1`–`C5` | burst length, size, encoding, WRAP alignment, and 4 KiB boundary |
 | `C6`, `C7` | WLAST and RLAST framing |
-| `D1`–`D4` | response/request matching and one outstanding request per ID |
+| `D1`–`D4` | response/request matching and configured per-ID depth limits |
 
 Cross-ID response ordering, EXCLUSIVE accesses, four-state propagation, and
 same-line read/write semantics are verified outside this checker.

@@ -31,17 +31,16 @@
 //   C6   WLAST timing: WLAST=1 iff this is the (AWLEN+1)-th W beat of the
 //        oldest outstanding AW
 //   C7   RLAST timing per ID: RLAST=1 iff this is the (ARLEN+1)-th R beat
-//        of the in-flight AR for `rid` (1-outstanding-per-ID mode)
+//        of the oldest outstanding AR for `rid`
 //   D1   BVALID with no outstanding AW on `bid` (per ID)
 //   D2   RVALID with no outstanding AR on `rid` (per ID)
-//   D3   New AR with same ARID as an already-in-flight AR (illegal in
-//        1-outstanding-per-ID mode; disable CHECK_READ_ID_TRACKING only on
-//        the reorder wrapper's engine-facing interface)
-//   D4   New AW with same AWID as an already-in-flight AW
+//   D3   Accepted AR exceeds READ_ID_DEPTH for its ID
+//   D4   Accepted AW exceeds WRITE_ID_DEPTH for its ID
 //
 // Not checked
 //   Response ordering across IDs, EXCLUSIVE accesses, four-state propagation,
-//   and same-line read/write hazards.
+//   same-line read/write hazards, and per-ID response ordering when configured
+//   depth exceeds one. Directed data tests cover the ordering contract.
 // -----------------------------------------------------------------------------
 
 `timescale 1ns/1ps
@@ -60,7 +59,9 @@ module axi4_protocol_checker
         parameter bit CHECK_C6                = 1'b1,
         parameter bit CHECK_B1_RESPONSE_VALID = 1'b1,
         parameter bit CHECK_RESPONSE_STABILITY = 1'b1,
-        parameter bit CHECK_READ_ID_TRACKING  = 1'b1
+        parameter bit CHECK_READ_ID_TRACKING  = 1'b1,
+        parameter int unsigned READ_ID_DEPTH  = 1,
+        parameter int unsigned WRITE_ID_DEPTH = 1
     )
     (
         input  logic                clk,
@@ -112,11 +113,22 @@ module axi4_protocol_checker
     localparam int DATA_BYTES = DATA_W / 8;
     localparam int MAX_AxSIZE = $clog2(DATA_BYTES);
     localparam int NUM_IDS    = 1 << ID_W;
+    localparam int READ_ID_DEPTH_SAFE = READ_ID_DEPTH < 1 ? 1 : READ_ID_DEPTH;
+    localparam int WRITE_ID_DEPTH_SAFE = WRITE_ID_DEPTH < 1 ? 1 : WRITE_ID_DEPTH;
     // Outstanding AW depth for WLAST tracking. AXI4 allows arbitrary AW
     // outstanding; the cache/shim cap at MAX_OUTSTANDING_W=16, AxiMaster
     // uses similar bounds. 64 is generous and cheap.
     localparam int AWFIFO_DEPTH = 64;
     localparam int AWFIFO_AW    = $clog2(AWFIFO_DEPTH);
+
+    generate if (READ_ID_DEPTH < 1) begin : gen_read_depth_guard
+        initial
+            $fatal(1, "axi4_protocol_checker: READ_ID_DEPTH must be >= 1");
+    end endgenerate
+    generate if (WRITE_ID_DEPTH < 1) begin : gen_write_depth_guard
+        initial
+            $fatal(1, "axi4_protocol_checker: WRITE_ID_DEPTH must be >= 1");
+    end endgenerate
 
     // Do not clear the counter during reset; reset-active B1 violations must
     // remain visible.
@@ -417,73 +429,129 @@ module axi4_protocol_checker
     end endgenerate
 
     // ------------------------------------------------------------------
-    // C7 + D2 + D3: Per-ID R tracking (1-outstanding-per-ID assumption)
-        // ------------------------------------------------------------------
-        generate if (CHECK_READ_ID_TRACKING) begin : gen_read_id_tracking
-        logic [7:0] r_remaining [0:NUM_IDS-1];
-        logic [NUM_IDS-1:0] r_active;
+    // ------------------------------------------------------------------
+    // C7 + D2 + D3: ordered per-ID read transaction tracking
+    // ------------------------------------------------------------------
+    generate if (CHECK_READ_ID_TRACKING) begin : gen_read_id_tracking
+        localparam int READ_PTR_W = READ_ID_DEPTH_SAFE <= 1
+                                  ? 1 : $clog2(READ_ID_DEPTH_SAFE);
+        localparam int READ_COUNT_W = $clog2(READ_ID_DEPTH_SAFE + 1);
+
+        logic [8:0] r_beats [0:NUM_IDS-1][0:READ_ID_DEPTH_SAFE-1];
+        logic [NUM_IDS-1:0][READ_PTR_W-1:0] r_head, r_tail;
+        logic [NUM_IDS-1:0][READ_COUNT_W-1:0] r_count;
+
+        function automatic logic [READ_PTR_W-1:0] read_ptr_next(
+            input logic [READ_PTR_W-1:0] ptr
+        );
+            if (READ_ID_DEPTH_SAFE <= 1
+                || ptr == READ_PTR_W'(READ_ID_DEPTH_SAFE-1))
+                read_ptr_next = '0;
+            else
+                read_ptr_next = ptr + 1'b1;
+        endfunction
+
+        wire read_ar_hs = arvalid & arready;
+        wire read_r_hs = rvalid & rready;
+        wire read_has_transaction = r_count[rid] != '0;
+        wire [8:0] read_head_beats = r_beats[rid][r_head[rid]];
+        wire read_expected_final = read_has_transaction
+                                 & (read_head_beats == 9'd1);
+        wire read_pop = read_r_hs & read_expected_final;
+        wire read_push_room =
+            (r_count[arid] < READ_COUNT_W'(READ_ID_DEPTH_SAFE))
+            | (read_pop & (rid == arid));
+        wire read_push = read_ar_hs & read_push_room;
 
         always_ff @(posedge clk) begin
             if (rst) begin
-                r_active <= '0;
+                r_head <= '0;
+                r_tail <= '0;
+                r_count <= '0;
             end else begin
-                // AR accept
-                if (arvalid & arready) begin
-                    if (r_active[arid]) begin
-                        vcount <= vcount + 1;
-                        $display("AXI_PC_VIOLATION D3 [%m @ %0t]: AR re-issued for ID %0d while R burst still pending", $time, arid);
-                    end
-                    r_active   [arid] <= 1'b1;
-                    r_remaining[arid] <= arlen + 8'd1;
+                if (read_ar_hs & ~read_push_room) begin
+                    vcount <= vcount + 1;
+                    $display("AXI_PC_VIOLATION D3 [%m @ %0t]: AR ID %0d exceeds configured depth %0d",
+                             $time, arid, READ_ID_DEPTH);
                 end
-                // R beat
-                if (rvalid & rready) begin
-                    if (!r_active[rid]) begin
+
+                if (read_r_hs) begin
+                    if (!read_has_transaction) begin
                         vcount <= vcount + 1;
-                        $display("AXI_PC_VIOLATION D2 [%m @ %0t]: RVALID for ID %0d with no outstanding AR", $time, rid);
-                    end else begin
-                        if (r_remaining[rid] == 8'd1) begin
-                            if (!rlast) begin
-                                vcount <= vcount + 1;
-                                $display("AXI_PC_VIOLATION C7 [%m @ %0t]: RLAST=0 on final R beat for ID %0d", $time, rid);
-                            end
-                            r_active[rid] <= 1'b0;
-                        end else begin
-                            if (rlast) begin
-                                vcount <= vcount + 1;
-                                $display("AXI_PC_VIOLATION C7 [%m @ %0t]: RLAST asserted early for ID %0d (%0d beats remaining)", $time,
-                                       rid, r_remaining[rid]);
-                            end
-                            r_remaining[rid] <= r_remaining[rid] - 8'd1;
+                        $display("AXI_PC_VIOLATION D2 [%m @ %0t]: RVALID for ID %0d with no outstanding AR",
+                                 $time, rid);
+                    end else if (read_expected_final) begin
+                        if (!rlast) begin
+                            vcount <= vcount + 1;
+                            $display("AXI_PC_VIOLATION C7 [%m @ %0t]: RLAST=0 on final R beat for ID %0d",
+                                     $time, rid);
                         end
+                    end else begin
+                        if (rlast) begin
+                            vcount <= vcount + 1;
+                            $display("AXI_PC_VIOLATION C7 [%m @ %0t]: RLAST asserted early for ID %0d (%0d beats remaining)",
+                                     $time, rid, read_head_beats);
+                        end
+                        r_beats[rid][r_head[rid]] <= read_head_beats - 9'd1;
                     end
+                end
+
+                if (read_push) begin
+                    r_beats[arid][r_tail[arid]] <= {1'b0, arlen} + 9'd1;
+                    r_tail[arid] <= read_ptr_next(r_tail[arid]);
+                end
+                if (read_pop)
+                    r_head[rid] <= read_ptr_next(r_head[rid]);
+
+                if (read_push && read_pop && arid == rid) begin
+                    r_count[arid] <= r_count[arid];
+                end else begin
+                    if (read_push)
+                        r_count[arid] <= r_count[arid] + 1'b1;
+                    if (read_pop)
+                        r_count[rid] <= r_count[rid] - 1'b1;
                 end
             end
         end
     end endgenerate
 
     // ------------------------------------------------------------------
-    // D1 + D4: Per-ID B tracking (1-outstanding-per-ID assumption)
+    // D1 + D4: per-ID write response tracking
     // ------------------------------------------------------------------
-    logic [NUM_IDS-1:0] b_outstanding;
+    localparam int WRITE_COUNT_W = $clog2(WRITE_ID_DEPTH_SAFE + 1);
+    logic [NUM_IDS-1:0][WRITE_COUNT_W-1:0] b_count;
+
+    wire write_aw_hs = awvalid & awready;
+    wire write_b_hs = bvalid & bready;
+    wire write_has_transaction = b_count[bid] != '0;
+    wire write_pop = write_b_hs & write_has_transaction;
+    wire write_push_room =
+        (b_count[awid] < WRITE_COUNT_W'(WRITE_ID_DEPTH_SAFE))
+        | (write_pop & (bid == awid));
+    wire write_push = write_aw_hs & write_push_room;
 
     always_ff @(posedge clk) begin
         if (rst) begin
-            b_outstanding <= '0;
+            b_count <= '0;
         end else begin
-            if (awvalid & awready) begin
-                if (b_outstanding[awid]) begin
-                    vcount <= vcount + 1;
-                    $display("AXI_PC_VIOLATION D4 [%m @ %0t]: AW re-issued for ID %0d while B still pending", $time, awid);
-                end
-                b_outstanding[awid] <= 1'b1;
+            if (write_aw_hs & ~write_push_room) begin
+                vcount <= vcount + 1;
+                $display("AXI_PC_VIOLATION D4 [%m @ %0t]: AW ID %0d exceeds configured depth %0d",
+                         $time, awid, WRITE_ID_DEPTH);
             end
-            if (bvalid & bready) begin
-                if (!b_outstanding[bid]) begin
-                    vcount <= vcount + 1;
-                    $display("AXI_PC_VIOLATION D1 [%m @ %0t]: BVALID for ID %0d with no outstanding AW", $time, bid);
-                end
-                b_outstanding[bid] <= 1'b0;
+            if (write_b_hs & ~write_has_transaction) begin
+                vcount <= vcount + 1;
+                $display("AXI_PC_VIOLATION D1 [%m @ %0t]: BVALID for ID %0d with no outstanding AW",
+                         $time, bid);
+            end
+
+            if (write_push && write_pop && awid == bid) begin
+                b_count[awid] <= b_count[awid];
+            end else begin
+                if (write_push)
+                    b_count[awid] <= b_count[awid] + 1'b1;
+                if (write_pop)
+                    b_count[bid] <= b_count[bid] - 1'b1;
             end
         end
     end

@@ -65,7 +65,8 @@ Required transaction properties:
 - full data-bus width
 - unlocked accesses
 - `AxCACHE=4'b1111`
-- one outstanding request per ID
+- VALID and payload must remain stable until handshake; the cache applies
+  backpressure after four accepted reads or two accepted writes per ID
 
 The all-ones read ID is reserved while flush or prefill logic is active.
 

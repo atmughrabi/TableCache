@@ -336,11 +336,15 @@ module dut_cocotb
     //     uses AWLEN to count beats, so functional tests still pass).
     // Disable C6 here so the regression baseline is clean; C6 stays active on
     // pc_mem to catch any cache-driven WLAST regression.
+    // Per ID: one active request, one input skid, and l2_cache's two-slot
+    // output FIFO. Writes have no corresponding output FIFO.
     axi4_protocol_checker #(
-        .ADDR_W   (ADDR_W),
-        .DATA_W   (BLOCK_W),
-        .ID_W     (READ_ID_WIDTH),   // = WRITE_ID_WIDTH on this DUT
-        .CHECK_C6 (1'b0)
+        .ADDR_W        (ADDR_W),
+        .DATA_W        (BLOCK_W),
+        .ID_W          (READ_ID_WIDTH),   // = WRITE_ID_WIDTH on this DUT
+        .CHECK_C6      (1'b0),
+        .READ_ID_DEPTH (4),
+        .WRITE_ID_DEPTH(2)
     ) pc_slave (
         .clk(clk), .rst(rst),
         .araddr(s_araddr), .arlen(s_arlen), .arsize(s_arsize), .arburst(s_arburst),
