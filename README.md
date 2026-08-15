@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="doc/assets/logo.svg" alt="TableCache logo" width="240">
+</p>
+
 # TableCache
 
 [![regression](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml/badge.svg?branch=main)](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml)
