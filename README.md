@@ -1,11 +1,9 @@
+[![regression](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml/badge.svg?branch=main)](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml)
 <p align="center">
   <img src="doc/assets/logo.png" alt="TableCache logo" width="180">
 </p>
 
 # TableCache
-
-[![regression](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml/badge.svg?branch=main)](https://github.com/atmughrabi/TableCache/actions/workflows/regression.yml)
-
 Configurable FPGA L2 cache with cache maintenance, width adaptation,
 deployment flows, and systematic verification.
 
