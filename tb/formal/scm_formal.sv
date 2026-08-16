@@ -27,6 +27,22 @@ module scm_formal #(
 
     // Reference: per-address shadow bit-vector.
     logic [DEPTH-1:0] ref_bits;
+    localparam int unsigned RESET_COUNT_W = $clog2(DEPTH + 1);
+    logic [RESET_COUNT_W-1:0] reset_count = '0;
+    logic initialized = 1'b0;
+
+    always_ff @(posedge clk) begin
+        if (!initialized) begin
+            assume (rst);
+            if (reset_count == RESET_COUNT_W'(DEPTH-1))
+                initialized <= 1'b1;
+            else
+                reset_count <= reset_count + 1'b1;
+        end else begin
+            assume (!rst);
+        end
+    end
+
     always_ff @(posedge clk) begin
         if (rst) ref_bits <= '0;
         else begin
@@ -39,11 +55,16 @@ module scm_formal #(
     always_comb if ($initstate) assume(rst);
 
     always_ff @(posedge clk) begin
-        if (!rst) begin
+        if (initialized && !rst) begin
             // Env: never set and clear the same address in the same cycle.
             if (set && clear) assume (set_addr != clear_addr);
+            // Toggle-backed set/clear ports require edge-triggered ownership:
+            // set only a clear entry and clear only a set entry.
+            if (set) assume (!ref_bits[set_addr]);
+            if (clear) assume (ref_bits[clear_addr]);
             // Property: read returns shadow state for the read_addr.
             assert (in_use == ref_bits[read_addr]);
+            cover (in_use);
         end
     end
 endmodule

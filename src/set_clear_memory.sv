@@ -57,4 +57,24 @@ module set_clear_memory
         .in_use(in_use_arr),
     .*);
 
+    // synthesis translate_off
+`ifndef ASSERT_OFF
+    logic [DEPTH-1:0] ownership_shadow = '0;
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            ownership_shadow <= '0;
+        end else begin
+            if (set && ownership_shadow[set_addr])
+                $error("set_clear_memory: redundant set at address %0d", set_addr);
+            if (clear && !ownership_shadow[clear_addr])
+                $error("set_clear_memory: clear of unset address %0d", clear_addr);
+            if (set)
+                ownership_shadow[set_addr] <= 1'b1;
+            if (clear)
+                ownership_shadow[clear_addr] <= 1'b0;
+        end
+    end
+`endif
+    // synthesis translate_on
+
 endmodule

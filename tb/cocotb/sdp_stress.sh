@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 100-seed test_random stress sweep for DATABANK_SDP=1.
 # Drops summary at /tmp/tc_sdp_stress/summary.md
-set -u
+set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${OUT:-/tmp/tc_sdp_stress}"
 N_SEEDS="${N_SEEDS:-100}"
@@ -29,7 +29,10 @@ for ((seed=1; seed<=N_SEEDS; seed++)); do
         timeout 180 make MODULE=test_random > "$OUT/seed_${seed}.log" 2>&1
     rc=$?
     dt=$(( $(date +%s) - t0 ))
-    if [[ $rc -eq 0 ]] && grep -qE '\*\* TESTS=.*FAIL=0 ' "$OUT/seed_${seed}.log"; then
+    pc=$(grep -c AXI_PC_VIOLATION "$OUT/seed_${seed}.log" 2>/dev/null || true)
+    pc=${pc:-0}
+    if [[ $rc -eq 0 && $pc -eq 0 ]] \
+        && grep -qE '\*\* TESTS=.*FAIL=0 ' "$OUT/seed_${seed}.log"; then
         echo "| $seed | PASS | $dt | - |" >> "$SUMMARY"
         passed=$((passed+1))
     else
@@ -54,3 +57,4 @@ done
 } >> "$SUMMARY"
 
 cat "$SUMMARY"
+(( failed == 0 ))

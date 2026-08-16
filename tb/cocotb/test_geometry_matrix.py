@@ -22,6 +22,12 @@ BANK_CELLS = [
     ("one-line-per-bank", 4, 1, 4),
 ]
 INVALID_CELLS = [
+    ("policy-name",
+     ["MODULE=test_smoke", "POLICY=BOGUS"],
+     "POLICY=BOGUS unsupported"),
+    ("policy-value",
+     ["MODULE=test_l2top", "TC_VERILATOR_ARGS=-GREPLACEMENT_POLICY=6"],
+     "replacement_policy: POLICY=6 unsupported"),
     ("lines1", ["MODULE=test_smoke", "LINES=1"], "LINES=1 unsupported"),
     ("lines3", ["MODULE=test_smoke", "LINES=3"], "LINES=3 unsupported"),
     ("ways0", ["MODULE=test_smoke", "WAYS=0"], None),

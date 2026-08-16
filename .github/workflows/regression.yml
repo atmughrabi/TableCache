@@ -5,20 +5,23 @@ on:
     branches: [main, verification-and-shim]
   pull_request:
     branches: [main, verification-and-shim]
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
 
 jobs:
   lint-and-smoke:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 300 || 45 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Cache the *built* Verilator install dir, not just the apt archive.
       # Building Verilator 5.020 from source on a 2-core GitHub runner takes
       # ~10-15 min and was the main reason the 25-min job timeout was tight.
       - name: Cache built Verilator
         id: cache-verilator
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             /usr/local/bin/verilator
@@ -27,7 +30,7 @@ jobs:
           key: verilator-bin-${{ runner.os }}-5.020
 
       - name: Cache apt packages
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /var/cache/apt/archives
           key: apt-${{ runner.os }}-verilator-5.020
@@ -57,10 +60,10 @@ jobs:
           test -f /usr/local/share/verilator/include/verilated_std.sv
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-cocotb-1.9
+          key: pip-${{ runner.os }}-${{ hashFiles('tb/cocotb/requirements.txt') }}
 
       - name: Python venv + cocotb stack
         working-directory: tb/cocotb
@@ -68,14 +71,14 @@ jobs:
           python3 -m venv .venv
           . .venv/bin/activate
           pip install --upgrade pip wheel
-          pip install 'cocotb>=1.9,<2.0' cocotb-bus cocotbext-axi==0.1.28 \
-                      'cocotb-coverage<2.0' pytest
+          pip install -r requirements.txt
 
       - name: Lint
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
           make lint
+          python3 ../../doc/check_docs.py
 
       - name: Verible semantic lint
         run: |
@@ -92,10 +95,19 @@ jobs:
         run: |
           . .venv/bin/activate
           set -e
-          for mod in test_smoke test_lru_sanity test_flush test_l2top_flush test_cbom; do
+          for mod in test_smoke test_lru_sanity test_flush test_l2top_flush \
+                     test_cbom test_cbom_rmw_race test_latency test_shim_latency; do
             rm -rf sim_build sim_build_shim
             timeout 300 make MODULE=$mod
           done
+          for ways in 3 4 5; do
+            rm -rf sim_build
+            timeout 300 make MODULE=test_second_chance \
+              POLICY=SECOND_CHANCE WAYS=$ways
+          done
+          rm -rf sim_build
+          POLICY=LRU NTXN=2000 TC_POOL_LINES=1024 \
+            timeout 900 make MODULE=test_workload
 
       - name: Read every block of a line incl. odd (matched-width data-correctness)
         working-directory: tb/cocotb
@@ -213,6 +225,9 @@ jobs:
         run: |
           . .venv/bin/activate
           pytest -q test_mem_error_matrix.py
+          pytest -q \
+            'test_geometry_matrix.py::test_invalid_geometry_rejected[policy-name]' \
+            'test_geometry_matrix.py::test_invalid_geometry_rejected[policy-value]'
 
       - name: Read reorder buffer and concurrent-hit response framing
         working-directory: tb/cocotb
@@ -330,17 +345,34 @@ jobs:
               timeout 300 make MODULE=test_grasp_multi
           rm -rf sim_build sim_build_shim
 
+      - name: Scheduled extended behavioral coverage
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          for mod in test_cbom_stress test_graph_patterns test_realism \
+                     test_set_coverage; do
+            rm -rf sim_build*
+            timeout 900 make MODULE="$mod"
+          done
+          rm -rf sim_build*
+          POLICY=GRASP timeout 900 make MODULE=test_grasp_midburst
+          timeout 1800 ./cov_functional.sh
+
   formal:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Install yosys + z3
+      - name: Install yosys + pinned z3
         run: |
           set -eux
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends yosys z3
+          sudo apt-get install -y --no-install-recommends yosys python3-venv
+          python3 -m venv tb/formal/.venv
+          tb/formal/.venv/bin/pip install -r tb/formal/requirements.txt
           # Ubuntu 22.04's apt yosys is ~0.9 -- older than the 0.33 the
           # local formal stack pins but new enough for the smtbmc options
           # tb/formal/Makefile uses (--presat, -s z3, -i, -t N have been
@@ -352,13 +384,15 @@ jobs:
           # complexity for an already-niche job.
           yosys -V
           yosys-smtbmc --help 2>&1 | head -3 || true
-          z3 --version
+          tb/formal/.venv/bin/z3 --version
 
       - name: Install sv2v prebuilt
         run: |
           set -eux
           curl -fsSL -o /tmp/sv2v.zip \
-            "https://github.com/zachjs/sv2v/releases/latest/download/sv2v-Linux.zip"
+            "https://github.com/zachjs/sv2v/releases/download/v0.0.13/sv2v-Linux.zip"
+          echo "552799a1d76cd177b9b4cc63a3e77823a3d2a6eb4ec006569288abeff28e1ff8  /tmp/sv2v.zip" \
+            | sha256sum -c -
           unzip -oq /tmp/sv2v.zip -d /tmp/
           # sv2v release archives use either
           # /tmp/sv2v-Linux/sv2v  or  /tmp/sv2v (bare). Locate the binary
@@ -373,6 +407,6 @@ jobs:
           sudo chmod +x /usr/local/bin/sv2v
           sv2v --version
 
-      - name: Run formal proofs (BMC + k-induction)
+      - name: Run formal proofs and covers
         working-directory: tb/formal
         run: make all

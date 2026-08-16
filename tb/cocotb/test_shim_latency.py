@@ -20,6 +20,11 @@ NARROW_B = NARROW_W // 8
 BLOCK_B  = BLOCK_W  // 8
 RATIO    = BLOCK_W  // NARROW_W
 
+COLD_READ_MAX = 12
+HOT_READ_MAX = 6
+WRITE_MAX = 12
+MERGED_READ_MAX = 6
+
 
 async def setup(dut):
     cocotb.start_soon(Clock(dut.clk, CLK_NS, units="ns").start())
@@ -86,3 +91,14 @@ async def test_latency_microbench(dut):
     _ = await master.read(line_other, NARROW_B)
     t1 = get_sim_time("ns")
     dut._log.info(f"COLD-READ-2(different line)         : {cyc(t0,t1):>3} cycles")
+    cold_2 = cyc(t0, t1)
+
+    assert cold <= COLD_READ_MAX, f"cold read latency regressed: {cold}"
+    assert max(hot_cycles) <= HOT_READ_MAX, (
+        f"hot read latency regressed: max={max(hot_cycles)}"
+    )
+    assert write_lat <= WRITE_MAX, f"write latency regressed: {write_lat}"
+    assert merge_read <= MERGED_READ_MAX, (
+        f"merged read latency regressed: {merge_read}"
+    )
+    assert cold_2 <= COLD_READ_MAX, f"second cold read latency regressed: {cold_2}"

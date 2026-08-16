@@ -8,6 +8,7 @@
 set top       [lindex $argv 0]
 set repo_root [lindex $argv 1]
 set out       [lindex $argv 2]
+source [file join [file dirname [info script]] report_utils.tcl]
 
 set part [expr {[info exists ::env(PART)] ? $::env(PART) : "xcv80-lsva4737-2MHP-e-S"}]
 set period_ns [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : "4.0"}]
@@ -53,7 +54,12 @@ if {[llength $generics] > 0} {
     synth_design -top $top -part $part -mode out_of_context \
         -directive $dir
 }
-create_clock -name clk -period $period_ns [get_ports clk]
+set clock_port [expr {$top eq "l2_top" ? "s00_axi_aclk" : "clk"}]
+set clock_net [get_ports -quiet $clock_port]
+if {[llength $clock_net] != 1} {
+    error "top=$top requires exactly one clock port named $clock_port"
+}
+create_clock -name clk -period $period_ns $clock_net
 # V80 ES silicon defaults clock_uncertainty to 0.300 ns; production
 # UltraScale+ HBM is ~0.035 ns. Allow override via env var to project
 # what production V80 silicon will deliver before AMD ships the
@@ -106,6 +112,7 @@ write_verilog -mode timesim -sdf_anno true -force $out/routed_netlist.v
 write_sdf -force $out/routed_netlist.sdf
 
 puts "==== POST-ROUTE TIMING SUMMARY ===="
-puts [exec grep -E "(WNS|TNS|WHS|THS)" $out/timing_summary.rpt | head -10]
+tc_print_matching_lines $out/timing_summary.rpt {(WNS|TNS|WHS|THS)} 10
+puts "==== place and route complete: $top ===="
 
 exit 0

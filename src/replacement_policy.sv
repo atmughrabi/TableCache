@@ -63,6 +63,11 @@ module replacement_policy
     //These parameters can be customized
     localparam int unsigned GRASP_RRPV_WIDTH = 3;
 
+    if (!(POLICY == LRU || POLICY == FRQ || POLICY == SECOND_CHANCE
+          || POLICY == RANDOM || POLICY == SRRIP || POLICY == GRASP)) begin : gen_policy_guard
+        $fatal(1, "replacement_policy: POLICY=%0d unsupported; valid values are 0..5.", POLICY);
+    end
+
     localparam int unsigned POLICY_W =
         POLICY == RANDOM ? 0 :
         POLICY == LRU ? (WAYS <= 1 ? 0 : (WAYS <= 4 ? 2*(WAYS-1)-1 : WAYS*$clog2(WAYS))) :

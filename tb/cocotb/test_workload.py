@@ -10,8 +10,9 @@ churn. This exercises:
 
 Three concurrent scoreboards run on every transaction:
   1. DATA-CORRECTNESS: golden memory dict; every read beat checked.
-  2. HIT-RATE: shadow tag model predicts hit/miss; observed mem AR count
-     is compared against prediction (±15% drift tolerance).
+  2. MEMORY-READ RATE: an LRU shadow predicts which read and partial-write
+     operations need a memory fill. Full-line WriteEvict operations update the
+     shadow but are excluded because they never issue a memory AR.
   3. LATENCY: per-request wall-clock cycle count, bucketed by predicted
      hit vs miss, reported as p50 / p95 / p99 / mean.
 
@@ -42,8 +43,13 @@ BASE         = 0x80000000
 BLOCK_BYTES  = 4
 LINE_W       = int(os.environ.get("TC_LINE_W", "8"))
 LINE_BYTES   = LINE_W * BLOCK_BYTES
+LINE_SHIFT   = LINE_BYTES.bit_length() - 1
 LINES        = int(os.environ.get("TC_LINES", "64"))
 WAYS         = int(os.environ.get("TC_WAYS", "4"))
+POLICY_NAME  = os.environ.get(
+    "TC_POLICY_NAME", os.environ.get("POLICY", "LRU")
+)
+VICTIM       = int(os.environ.get("TC_VICTIM") or "0")
 
 NTXN          = int(os.environ.get("TC_NTXN",           "5000"))
 SEED          = int(os.environ.get("TC_SEED",           "1"))
@@ -97,9 +103,9 @@ class HitRateModel:
         self.lines = lines
 
     def access(self, addr: int) -> bool:
-        # bits[10:5] = set for the default config; generalize for LINES != 64.
-        line_bits = (addr >> 5) & (self.lines - 1)
-        tag       = addr >> (5 + self.lines.bit_length() - 1)
+        set_bits = self.lines.bit_length() - 1
+        line_bits = (addr >> LINE_SHIFT) & (self.lines - 1)
+        tag = addr >> (LINE_SHIFT + set_bits)
         return self.sets[line_bits].access(tag)
 
 
@@ -137,8 +143,7 @@ async def test_graph_workload(dut):
 
     # POLICY=GRASP: drive the runtime hot region to match the workload's
     # hot pool. No-op for other policies.
-    _policy = os.environ.get("POLICY", os.environ.get("TC_POLICY", ""))
-    if _policy == "GRASP" and hasattr(dut, "grasp_high_addr_l"):
+    if POLICY_NAME == "GRASP" and hasattr(dut, "grasp_high_addr_l"):
         hot_l = hot_pool[0]
         hot_h = hot_pool[-1] + LINE_BYTES - 1
         dut.grasp_high_addr_l.value = hot_l
@@ -146,7 +151,7 @@ async def test_graph_workload(dut):
         dut._log.info(f"[wl] GRASP hot region: [0x{hot_l:08x}, 0x{hot_h:08x}]")
 
     dut._log.info(
-        f"[wl] config: LINES={LINES} WAYS={WAYS} POLICY={os.environ.get('TC_POLICY','?')} "
+        f"[wl] config: LINES={LINES} WAYS={WAYS} POLICY={POLICY_NAME} "
         f"NTXN={NTXN} pool={POOL_LINES} hot={n_hot} ({HOT_PCT}%) "
         f"hot-access={HOT_ACC_PCT}% rd={RD_PCT}% full-wr={FULL_PCT}%"
     )
@@ -159,7 +164,7 @@ async def test_graph_workload(dut):
     # Latency bucketing (per predicted class)
     lat_hit:  list[int] = []   # cycles
     lat_miss: list[int] = []
-    pred_hits = pred_misses = 0
+    pred_hits = pred_misses = full_write_misses = 0
     n_rd = n_wr = n_full_wr = n_beats_checked = 0
 
     def get_word(addr: int) -> int:
@@ -176,12 +181,17 @@ async def test_graph_workload(dut):
         is_read = rng.randrange(100) < RD_PCT
         is_full = rng.randrange(100) < FULL_PCT
 
-        # Predict hit/miss BEFORE issuing.
+        # Update the shadow for every line access. Only reads and partial
+        # writes can issue a memory AR; full-line WriteEvict bypasses fill.
         was_hit = hits.access(base)
-        if was_hit:
-            pred_hits += 1
-        else:
-            pred_misses += 1
+        predicts_mem_read = is_read or not is_full
+        if predicts_mem_read:
+            if was_hit:
+                pred_hits += 1
+            else:
+                pred_misses += 1
+        elif not was_hit:
+            full_write_misses += 1
 
         try:
             if is_read:
@@ -236,7 +246,9 @@ async def test_graph_workload(dut):
             raise AssertionError(f"[wl][{i}] HANG / timeout addr=0x{addr:08x}: {e}")
 
         if i and (i % log_every == 0):
-            so_far_hit_rate = 100.0 * pred_hits / (pred_hits + pred_misses)
+            so_far_hit_rate = 100.0 * pred_hits / max(
+                1, pred_hits + pred_misses
+            )
             dut._log.info(
                 f"[wl] {i}/{NTXN} ops | predicted hit-rate {so_far_hit_rate:.1f}% "
                 f"| observed mem-AR={mon.n_ar} AW={mon.n_aw}"
@@ -290,17 +302,32 @@ async def test_graph_workload(dut):
         )
     dut._log.info("=" * 72)
 
-    # Loose invariants. Tight numbers depend on LRU encoding; we just want
-    # the cache to behave roughly the way the shadow predicts.
-    assert drift_pp <= 20.0, (
-        f"hit-rate drift too large: predicted={pred_hit_rate:.1f}% "
-        f"observed={obs_hit_rate:.1f}% (drift {drift_pp:.1f} pp). "
-        f"Either the cache is malfunctioning or the shadow's LRU diverges too far."
-    )
+    # The shadow is exact only for LRU without a victim cache. Other policies
+    # retain the data scoreboard and traffic sanity checks, while the model is
+    # reported as a workload characterization rather than an oracle.
+    if POLICY_NAME == "LRU" and not VICTIM:
+        assert drift_pp <= 5.0, (
+            f"LRU memory-read-rate drift too large: predicted={pred_hit_rate:.1f}% "
+            f"observed={obs_hit_rate:.1f}% (drift {drift_pp:.1f} pp)"
+        )
+    else:
+        assert drift_pp <= 20.0, (
+            f"{POLICY_NAME} memory-read rate diverged from the locality model: "
+            f"predicted={pred_hit_rate:.1f}% observed={obs_hit_rate:.1f}% "
+            f"(drift {drift_pp:.1f} pp)"
+        )
     assert obs_misses <= total, (
         f"mem AR count > total ops: {obs_misses} > {total} (this should be impossible)"
     )
-    assert obs_writebacks <= obs_misses, (
-        f"mem AW count > mem AR count: {obs_writebacks} > {obs_misses} "
-        f"(every writeback should be triggered by a miss that needed a victim)"
-    )
+    if POLICY_NAME == "LRU" and not VICTIM:
+        assert obs_writebacks <= obs_misses + full_write_misses, (
+            f"mem AW count exceeds LRU replacement opportunities: "
+            f"{obs_writebacks} > {obs_misses} fill misses + "
+            f"{full_write_misses} full-write misses"
+        )
+    else:
+        assert obs_writebacks <= obs_misses + n_full_wr, (
+            f"mem AW count exceeds request-level replacement opportunities: "
+            f"{obs_writebacks} > {obs_misses} fill misses + "
+            f"{n_full_wr} full-line writes"
+        )

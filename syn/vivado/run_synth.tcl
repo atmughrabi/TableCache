@@ -17,6 +17,7 @@
 set top      [lindex $argv 0]
 set repo_root [lindex $argv 1]
 set out      [lindex $argv 2]
+source [file join [file dirname [info script]] report_utils.tcl]
 
 # Alveo U250 part. Speed grade -2L (low power) matches the public board.
 # Override via env: PART=xcu280-fsvh2892-2L-e (or any other UltraScale+/Versal part).
@@ -98,7 +99,12 @@ if {[llength $generics] > 0} {
 # kernel clock). Override via env: PERIOD_NS=3.33 ./run_synth.sh for 300 MHz.
 set period_ns [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : "4.0"}]
 puts "==== clock period = $period_ns ns"
-create_clock -name clk -period $period_ns [get_ports clk]
+set clock_port [expr {$top eq "l2_top" ? "s00_axi_aclk" : "clk"}]
+set clock_net [get_ports -quiet $clock_port]
+if {[llength $clock_net] != 1} {
+    error "top=$top requires exactly one clock port named $clock_port"
+}
+create_clock -name clk -period $period_ns $clock_net
 
 # Run timing / methodology / utilization reports after synth (no PnR).
 report_utilization -file $out/utilization.rpt
@@ -112,10 +118,11 @@ report_timing -delay_type max -nworst 3 -path_type full -input_pins \
 
 # A short stdout summary so the wrapper script can grep it.
 puts "==== UTILIZATION SUMMARY ===="
-puts [exec grep -E "(CLB LUTs|CLB Registers|Block RAM Tile|LUT as Memory|DSPs)" $out/utilization.rpt]
+tc_print_matching_lines $out/utilization.rpt {(CLB LUTs|CLB Registers|Block RAM Tile|LUT as Memory|DSPs)}
 puts "==== TIMING SUMMARY ===="
-puts [exec grep -E "(WNS|WHS|TNS|THS|Total Negative Slack|Worst Negative Slack)" $out/timing_summary.rpt | head -20]
+tc_print_matching_lines $out/timing_summary.rpt {(WNS|WHS|TNS|THS|Total Negative Slack|Worst Negative Slack)} 20
 puts "==== METHODOLOGY VIOLATIONS ===="
-puts [exec grep -cE "^WARNING|^CRITICAL" $out/methodology.rpt]
+puts [tc_count_matching_lines $out/methodology.rpt {^(WARNING|CRITICAL)}]
+puts "==== synthesis complete: $top ===="
 
 exit 0

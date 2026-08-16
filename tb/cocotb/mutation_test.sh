@@ -306,9 +306,11 @@ case "$FILE" in
         )
         ;;
     src/second_chance.sv)
-        DEFAULT_TESTS="test_smoke test_lru_sanity test_workload"
+        DEFAULT_TESTS="test_smoke test_lru_sanity test_second_chance test_workload"
         MUTATIONS=(
             "swap_hit_bit_clear|s/hit_chance\[cache_way_used_int\] = 1;/hit_chance[cache_way_used_int] = 0;/"
+            "hold_clock_hand|s/next_index = increment_way(victim_index);/next_index = victim_index;/"
+            "retain_scanned_reference|s/finish_chance\[scan_index\] = 1'b0;/finish_chance[scan_index] = 1'b1;/"
         )
         ;;
     src/random_replacement.sv)
@@ -478,7 +480,7 @@ case "$FILE" in
     src/FRQ.sv)                export POLICY=FRQ ;;
     src/second_chance.sv)      export POLICY=SECOND_CHANCE ;;
     src/random_replacement.sv) export POLICY=RANDOM ;;
-    src/rrip_tree.sv)          export POLICY=RRIP_TREE ;;
+    src/rrip_tree.sv)          export POLICY=SRRIP ;;
 esac
 
 killed=0; survived=0; broken=0

@@ -10,6 +10,7 @@ BLOCK_BYTES = 4
 LINE_W      = int(os.environ.get("TC_LINE_W", "8"))
 WAYS        = int(os.environ.get("TC_WAYS", "4"))
 LINES       = int(os.environ.get("TC_LINES", "64"))
+VICTIM_LINES = int(os.environ.get("TC_VICTIM_LINES", "8"))
 LINE_BYTES  = LINE_W * BLOCK_BYTES
 NUM_SETS    = LINES
 VICTIM_ON   = os.environ.get("TC_VICTIM", "0") == "1" or \
@@ -221,9 +222,12 @@ async def test_victim_write_hit_preserves_others(dut):
     ram = attach_mem(dut, size_bytes=1 << 20)
     master = attach_master(dut)
 
-    # Choose four target lines in different sets.
-    bases = [line_addr(s=s, t=10 + s) for s in range(4)]
-    dirties = [0xD17710A0 | (i << 4) for i in range(4)]
+    # Keep one victim slot free for the line displaced while re-caching
+    # bases[0]. One unrelated entry is sufficient to expose the mutation.
+    n_targets = min(4, VICTIM_LINES - 1)
+    assert n_targets >= 2
+    bases = [line_addr(s=s, t=10 + s) for s in range(n_targets)]
+    dirties = [0xD17710A0 | (i << 4) for i in range(n_targets)]
 
     # Fill each set, dirty its target, make that target LRU, then evict it.
     for i, (a, d) in enumerate(zip(bases, dirties)):
@@ -242,13 +246,9 @@ async def test_victim_write_hit_preserves_others(dut):
     valid_before = victim_valid_mask(dut)
     assert valid_before.bit_count() >= len(bases)
 
-    # Each address should hit the victim cache with its dirty value.
-    for a, d in zip(bases, dirties):
-        v = await _read_block(master, a)
-        assert v == d, (
-            f"sanity pre-write: {hex(a)} should hit victim with "
-            f"0x{d:08x}, got 0x{v:08x}"
-        )
+    # Re-cache bases[0] and verify its victim data before overwriting it.
+    first = await _read_block(master, bases[0])
+    assert first == dirties[0]
 
     # Re-cache addrs[0] in L1, write a new value,
     #    then force re-eviction to trigger write_hit_one_hot.
@@ -265,16 +265,16 @@ async def test_victim_write_hit_preserves_others(dut):
         f"before=0x{valid_before:x} after=0x{valid_after:x}"
     )
 
-    # Mutate mem for addrs[1..3] so a fresh mem fetch is observable as
+    # Mutate mem for the unrelated entries so a fresh mem fetch is observable as
     # a value distinct from both the dirty and the original mem contents.
-    sentinels = [0xBEEF1100 | (i << 4) for i in range(1, 4)]
+    sentinels = [0xBEEF1100 | (i << 4) for i in range(1, n_targets)]
     for a, s in zip(bases[1:], sentinels):
         ram.write(a & 0x000F_FFFF, s.to_bytes(BLOCK_BYTES, "little"))
 
-    # Evict addrs[1..3] from L1 by reading WAYS+1 distinct tags in their
+    # Evict unrelated targets from L1 by reading WAYS+1 distinct tags in their
     # respective sets. Otherwise the re-reads hit L1 and never reach
     # victim, masking the mutation.
-    for i in range(1, 4):
+    for i in range(1, n_targets):
         for k in range(WAYS + 1):
             await _read_block(master, line_addr(s=i, t=700 + 10*i + k))
     await Timer(40 * CLK_PERIOD_NS, "ns")
@@ -289,4 +289,7 @@ async def test_victim_write_hit_preserves_others(dut):
             f"(swap_write_hit_check mutation footprint -- write_hit_one_hot "
             f"fired on non-matching tags)"
         )
-    dut._log.info("[victim_write_hit_preserves_others] all 3 other entries survived")
+    dut._log.info(
+        f"[victim_write_hit_preserves_others] "
+        f"all {n_targets - 1} unrelated entries survived"
+    )

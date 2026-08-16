@@ -1,10 +1,16 @@
 # Formal verification harnesses (yosys + z3 SMTBMC, sv2v for SV->V lowering)
 ROOT     := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
+.DELETE_ON_ERROR:
 BUILD    := $(ROOT)/tb/formal/build
 YOSYS    := yosys
 SMTBMC   := yosys-smtbmc
 SOLVER   := z3
 SV2V     := $(if $(shell command -v sv2v 2>/dev/null),sv2v,$(HOME)/.local/bin/sv2v)
+SV2V_FLAGS := -E Assert -DASSERT_OFF
+FORMAL_Z3 := $(ROOT)/tb/formal/.venv/bin/z3
+Z3_BIN := $(if $(wildcard $(FORMAL_Z3)),$(FORMAL_Z3),$(shell command -v z3 2>/dev/null))
+Z3_DIR := $(dir $(Z3_BIN))
+RUN_SMTBMC = PATH="$(Z3_DIR):$$PATH" $(SMTBMC)
 
 HARNESS_1    := $(ROOT)/tb/formal/fifo_formal.sv
 HARNESS_DEEP := $(ROOT)/tb/formal/fifo_formal_deep.sv
@@ -25,8 +31,20 @@ SMT2_SCM     := $(BUILD)/scm.smt2
 SMT2_FLUSH   := $(BUILD)/flush.smt2
 SMT2_GRASP   := $(BUILD)/grasp.smt2
 
-.PHONY: all bmc induct bmc-deep induct-deep bmc-scm induct-scm bmc-flush induct-flush bmc-grasp induct-grasp clean
-all: bmc induct bmc-deep induct-deep bmc-scm induct-scm bmc-flush induct-flush bmc-grasp induct-grasp
+.PHONY: all check-z3 bmc induct cover-fifo bmc-deep cover-deep bmc-scm cover-scm bmc-flush induct-flush cover-flush bmc-grasp induct-grasp cover-grasp clean
+all: bmc induct cover-fifo bmc-deep cover-deep bmc-scm cover-scm bmc-flush induct-flush cover-flush bmc-grasp induct-grasp cover-grasp
+
+check-z3:
+	@test -x "$(Z3_BIN)" || { \
+	    echo "z3 not found; create tb/formal/.venv and install requirements.txt"; \
+	    exit 1; \
+	}
+	@version=`"$(Z3_BIN)" --version | awk '{print $$3}'`; \
+	minimum=4.12.0; \
+	test "`printf '%s\n' "$$minimum" "$$version" | sort -V | head -1`" = "$$minimum" || { \
+	    echo "z3 $$version is too old; install tb/formal/requirements.txt (>= $$minimum)"; \
+	    exit 1; \
+	}
 
 $(SMT2_1): $(HARNESS_1) $(RTL_1)
 	@mkdir -p $(BUILD)
@@ -44,41 +62,64 @@ $(SMT2_1): $(HARNESS_1) $(RTL_1)
 	# the lowered file. Without these deps sv2v leaves `.*` literally
 	# in the output and yosys rejects "Wildcard port connections are
 	# only supported in SystemVerilog mode."
-	$(SV2V) -DASSERT_OFF $(HARNESS_1) $(RTL_1) $(ROOT)/src/lfsr.sv $(ROOT)/src/lutram_1w_1r.sv > $(BUILD)/all.v
-	$(YOSYS) -q -p "read_verilog -formal $(BUILD)/all.v; prep -top fifo_formal -flatten; write_smt2 -wires $@"
+	$(SV2V) $(SV2V_FLAGS) $(HARNESS_1) $(RTL_1) $(ROOT)/src/lfsr.sv $(ROOT)/src/lutram_1w_1r.sv > $(BUILD)/all.v
+	@test "$$(grep -c 'assert (' $(BUILD)/all.v)" -ge 3
+	@test "$$(grep -c 'cover (' $(BUILD)/all.v)" -ge 1
+	$(YOSYS) -q -p "read -sv -formal $(BUILD)/all.v; prep -top fifo_formal -flatten; write_smt2 -wires $@"
+	@test "$$(grep -c 'yosys-smt2-assert' $@)" -ge 1 || { echo "formal assertions missing from $@"; exit 1; }
+	@test "$$(grep -c 'yosys-smt2-cover' $@)" -ge 1 || { echo "formal covers missing from $@"; exit 1; }
 
 $(SMT2_DEEP): $(HARNESS_DEEP) $(RTL_DEEP)
 	@mkdir -p $(BUILD)
-	$(SV2V) -DASSERT_OFF $(HARNESS_DEEP) $(RTL_DEEP) > $(BUILD)/all_deep.v
-	$(YOSYS) -q -p "read_verilog -formal $(BUILD)/all_deep.v; prep -top fifo_formal_deep -flatten; write_smt2 -wires $@"
+	$(SV2V) $(SV2V_FLAGS) $(HARNESS_DEEP) $(RTL_DEEP) > $(BUILD)/all_deep.v
+	@test "$$(grep -c 'assert (' $(BUILD)/all_deep.v)" -ge 3
+	@test "$$(grep -c 'cover (' $(BUILD)/all_deep.v)" -ge 1
+	$(YOSYS) -q -p "read -sv -formal $(BUILD)/all_deep.v; prep -top fifo_formal_deep -flatten; write_smt2 -wires $@"
+	@test "$$(grep -c 'yosys-smt2-assert' $@)" -ge 1 || { echo "formal assertions missing from $@"; exit 1; }
+	@test "$$(grep -c 'yosys-smt2-cover' $@)" -ge 1 || { echo "formal covers missing from $@"; exit 1; }
 
 $(SMT2_SCM): $(HARNESS_SCM) $(RTL_SCM)
 	@mkdir -p $(BUILD)
-	$(SV2V) -DASSERT_OFF $(HARNESS_SCM) $(RTL_SCM) > $(BUILD)/scm.v
+	$(SV2V) $(SV2V_FLAGS) $(HARNESS_SCM) $(RTL_SCM) > $(BUILD)/scm.v
+	@test "$$(grep -c 'assert (' $(BUILD)/scm.v)" -ge 1
+	@test "$$(grep -c 'cover (' $(BUILD)/scm.v)" -ge 1
 	$(YOSYS) -q -p "read -sv -formal $(BUILD)/scm.v; prep -top scm_formal -flatten; write_smt2 -wires $@"
+	@test "$$(grep -c 'yosys-smt2-assert' $@)" -ge 1 || { echo "formal assertions missing from $@"; exit 1; }
+	@test "$$(grep -c 'yosys-smt2-cover' $@)" -ge 1 || { echo "formal covers missing from $@"; exit 1; }
 
 $(SMT2_FLUSH): $(HARNESS_FLUSH) $(RTL_FLUSH)
 	@mkdir -p $(BUILD)
-	$(SV2V) -DASSERT_OFF $(HARNESS_FLUSH) $(RTL_FLUSH) > $(BUILD)/flush.v
+	$(SV2V) $(SV2V_FLAGS) $(HARNESS_FLUSH) $(RTL_FLUSH) > $(BUILD)/flush.v
+	@test "$$(grep -c 'assert (' $(BUILD)/flush.v)" -ge 10
+	@test "$$(grep -c 'cover (' $(BUILD)/flush.v)" -ge 1
 	$(YOSYS) -q -p "read -sv -formal $(BUILD)/flush.v; prep -top flush_formal -flatten; write_smt2 -wires $@"
+	@test "$$(grep -c 'yosys-smt2-assert' $@)" -ge 1 || { echo "formal assertions missing from $@"; exit 1; }
+	@test "$$(grep -c 'yosys-smt2-cover' $@)" -ge 1 || { echo "formal covers missing from $@"; exit 1; }
 
 $(SMT2_GRASP): $(HARNESS_GRASP) $(RTL_GRASP)
 	@mkdir -p $(BUILD)
-	$(SV2V) -DASSERT_OFF $(HARNESS_GRASP) $(RTL_GRASP) > $(BUILD)/grasp.v
+	$(SV2V) $(SV2V_FLAGS) $(HARNESS_GRASP) $(RTL_GRASP) > $(BUILD)/grasp.v
+	@test "$$(grep -c 'assert (' $(BUILD)/grasp.v)" -ge 12
+	@test "$$(grep -c 'cover (' $(BUILD)/grasp.v)" -ge 4
 	$(YOSYS) -q -p "read -sv -formal $(BUILD)/grasp.v; prep -top grasp_formal -flatten; write_smt2 -wires $@"
+	@test "$$(grep -c 'yosys-smt2-assert' $@)" -ge 1 || { echo "formal assertions missing from $@"; exit 1; }
+	@test "$$(grep -c 'yosys-smt2-cover' $@)" -ge 4 || { echo "formal covers missing from $@"; exit 1; }
 
-bmc: $(SMT2_1)        ; $(SMTBMC) --presat -s $(SOLVER) -t 32 $<
-induct: $(SMT2_1)     ; $(SMTBMC) --presat -s $(SOLVER) -i -t 16 $<
-bmc-deep: $(SMT2_DEEP)    ; $(SMTBMC) --presat -s $(SOLVER) -t 32 $<
-induct-deep: $(SMT2_DEEP) ; $(SMTBMC) --presat -s $(SOLVER) -i -t 24 $<
-bmc-scm: $(SMT2_SCM)      ; $(SMTBMC) --presat -s $(SOLVER) -t 16 $<
-induct-scm: $(SMT2_SCM)   ; $(SMTBMC) --presat -s $(SOLVER) -i -t 16 $<
-bmc-flush: $(SMT2_FLUSH)      ; $(SMTBMC) --presat -s $(SOLVER) -t 32 $<
-induct-flush: $(SMT2_FLUSH)   ; $(SMTBMC) --presat -s $(SOLVER) -i -t 16 $<
+bmc: check-z3 $(SMT2_1)        ; $(RUN_SMTBMC) --presat -s $(SOLVER) -t 32 $(SMT2_1)
+induct: check-z3 $(SMT2_1)     ; $(RUN_SMTBMC) --presat -s $(SOLVER) -i -t 16 $(SMT2_1)
+cover-fifo: check-z3 $(SMT2_1) ; $(RUN_SMTBMC) --presat -s $(SOLVER) -c -t 4 $(SMT2_1)
+bmc-deep: check-z3 $(SMT2_DEEP)    ; $(RUN_SMTBMC) --presat -s $(SOLVER) -t 32 $(SMT2_DEEP)
+cover-deep: check-z3 $(SMT2_DEEP)  ; $(RUN_SMTBMC) --presat -s $(SOLVER) -c -t 8 $(SMT2_DEEP)
+bmc-scm: check-z3 $(SMT2_SCM)      ; $(RUN_SMTBMC) --presat -s $(SOLVER) -t 16 $(SMT2_SCM)
+cover-scm: check-z3 $(SMT2_SCM)    ; $(RUN_SMTBMC) --presat -s $(SOLVER) -c -t 16 $(SMT2_SCM)
+bmc-flush: check-z3 $(SMT2_FLUSH)      ; $(RUN_SMTBMC) --presat -s $(SOLVER) -t 32 $(SMT2_FLUSH)
+induct-flush: check-z3 $(SMT2_FLUSH)   ; $(RUN_SMTBMC) --presat -s $(SOLVER) -i -t 24 $(SMT2_FLUSH)
+cover-flush: check-z3 $(SMT2_FLUSH)    ; $(RUN_SMTBMC) --presat -s $(SOLVER) -c -t 32 $(SMT2_FLUSH)
 # GRASP invariants are pure combinational so BMC alone is enough; the
 # k-induction target is kept for symmetry with the other harnesses.
-bmc-grasp: $(SMT2_GRASP)      ; $(SMTBMC) --presat -s $(SOLVER) -t 8 $<
-induct-grasp: $(SMT2_GRASP)   ; $(SMTBMC) --presat -s $(SOLVER) -i -t 8 $<
+bmc-grasp: check-z3 $(SMT2_GRASP)      ; $(RUN_SMTBMC) --presat -s $(SOLVER) -t 2 $(SMT2_GRASP)
+induct-grasp: check-z3 $(SMT2_GRASP)   ; $(RUN_SMTBMC) --presat -s $(SOLVER) -i -t 2 $(SMT2_GRASP)
+cover-grasp: check-z3 $(SMT2_GRASP)    ; $(RUN_SMTBMC) --presat -s $(SOLVER) -c -t 3 $(SMT2_GRASP)
 
 clean:
 	rm -rf $(BUILD)

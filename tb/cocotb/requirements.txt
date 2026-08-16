@@ -1,0 +1,5 @@
+cocotb==1.9.2
+cocotb-bus==0.3.0
+cocotbext-axi==0.1.28
+cocotb-coverage==1.2.0
+pytest==9.0.3

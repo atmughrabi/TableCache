@@ -6,7 +6,7 @@ Lightweight wrapper around cocotb-coverage 1.2.x. Tests sample by calling:
     sample_read(addr, nbeat, snoop)
     sample_write(addr, nbeat, snoop, partial)
     ...
-    dump_coverage("test_random")          # writes /tmp/tc_cov_<name>.xml
+    dump_coverage("test_random")
 
 NOTE: cocotb-coverage 1.2.x requires POSITIONAL args (no kwargs).
 """
@@ -49,8 +49,11 @@ def sample_write(addr, nbeat, snoop, partial):
     pass
 
 
-def dump_coverage(test_name: str, outdir: str = "/tmp") -> str:
-    """Write the merged coverage DB to /tmp/tc_cov_<test_name>.xml."""
+def dump_coverage(test_name: str, outdir: str | None = None) -> str:
+    """Write the merged coverage DB to the configured coverage directory."""
+    if outdir is None:
+        outdir = os.environ.get("TC_COVERAGE_DIR", "/tmp")
+    os.makedirs(outdir, exist_ok=True)
     path = os.path.join(outdir, f"tc_cov_{test_name}.xml")
     coverage_db.export_to_xml(filename=path)
     return path

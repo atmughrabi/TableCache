@@ -10,6 +10,23 @@ MODULE     ?= test_smoke
 
 # Knobs forwarded into the SV defines and into the test via environ.
 POLICY     ?= LRU
+VALID_POLICIES := LRU FRQ SECOND_CHANCE RANDOM SRRIP GRASP
+ifeq ($(filter $(POLICY),$(VALID_POLICIES)),)
+$(error POLICY=$(POLICY) unsupported; choose one of $(VALID_POLICIES))
+endif
+ifeq ($(POLICY),LRU)
+TC_POLICY_INT := 0
+else ifeq ($(POLICY),FRQ)
+TC_POLICY_INT := 1
+else ifeq ($(POLICY),SECOND_CHANCE)
+TC_POLICY_INT := 2
+else ifeq ($(POLICY),RANDOM)
+TC_POLICY_INT := 3
+else ifeq ($(POLICY),SRRIP)
+TC_POLICY_INT := 4
+else ifeq ($(POLICY),GRASP)
+TC_POLICY_INT := 5
+endif
 LINES      ?= 64
 LINE_W     ?= 8
 WAYS       ?= 4
@@ -104,24 +121,8 @@ else ifneq (,$(filter $(MODULE),test_l2top test_l2top_ids))
 TOPLEVEL := dut_l2top
 VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
     $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
+    $(TB_DIR)/axi_protocol_checker.sv \
     $(TB_DIR)/dut_l2top.sv
-# Map POLICY name -> integer index for l2_top's REPLACEMENT_POLICY param.
-# (l2_cache uses POLICY enum; l2_top uses the integer index cast.)
-ifeq ($(POLICY),LRU)
-TC_POLICY_INT := 0
-else ifeq ($(POLICY),FRQ)
-TC_POLICY_INT := 1
-else ifeq ($(POLICY),SECOND_CHANCE)
-TC_POLICY_INT := 2
-else ifeq ($(POLICY),RANDOM)
-TC_POLICY_INT := 3
-else ifeq ($(POLICY),SRRIP)
-TC_POLICY_INT := 4
-else ifeq ($(POLICY),GRASP)
-TC_POLICY_INT := 5
-else
-TC_POLICY_INT := 0
-endif
 EXTRA_ARGS += +define+TC_POLICY_INT=$(TC_POLICY_INT)
 else ifeq ($(MODULE),test_l2top_flush)
 # Flush-through-l2_top integration: tc_flush_controller -> l2_top -> AxiRam.
@@ -132,22 +133,8 @@ else ifeq ($(MODULE),test_l2top_flush)
 TOPLEVEL := dut_l2top_flush
 VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
     $(filter-out $(SRC_DIR)/cache_config.sv $(SRC_DIR)/tc_narrow_shim.sv,$(wildcard $(SRC_DIR)/*.sv)) \
+    $(TB_DIR)/axi_protocol_checker.sv \
     $(TB_DIR)/dut_l2top_flush.sv
-ifeq ($(POLICY),LRU)
-TC_POLICY_INT := 0
-else ifeq ($(POLICY),FRQ)
-TC_POLICY_INT := 1
-else ifeq ($(POLICY),SECOND_CHANCE)
-TC_POLICY_INT := 2
-else ifeq ($(POLICY),RANDOM)
-TC_POLICY_INT := 3
-else ifeq ($(POLICY),SRRIP)
-TC_POLICY_INT := 4
-else ifeq ($(POLICY),GRASP)
-TC_POLICY_INT := 5
-else
-TC_POLICY_INT := 0
-endif
 EXTRA_ARGS += +define+TC_POLICY_INT=$(TC_POLICY_INT)
 else
 # All RTL files (cache_config first, l2_cache and friends; exclude l2_top and shim).
@@ -158,6 +145,7 @@ VERILOG_SOURCES := $(SRC_DIR)/cache_config.sv \
 endif
 
 EXTRA_ARGS += --timing
+EXTRA_ARGS += $(TC_VERILATOR_ARGS)
 # Coverage: enable with COV=1. Emits sim_build/logs/coverage.dat which
 # `verilator_coverage` merges + annotates. Slows sim ~2x; off by default.
 # --coverage-user picks up SVA `cover property` hits.
@@ -256,6 +244,8 @@ endif
 # Pass test parameters via env so Python can read them.
 export TC_NTXN     := $(NTXN)
 export TC_SEED     := $(SEED)
+export TC_POLICY_NAME := $(POLICY)
+export TC_VICTIM   := $(VICTIM)
 export TC_RATIO_RD := $(RATIO_RD)
 export TC_RATIO_FULL := $(RATIO_FULL)
 export TC_LINES    := $(LINES)

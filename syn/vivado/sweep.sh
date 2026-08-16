@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Multi-config OOC synth sweep for SDP=0 vs SDP=1.
-# Drops a markdown table summary at $HERE/sweep_results.md.
+# Writes a generated markdown summary under sweep_logs by default.
 #
 # Knobs (env vars consumed by run_synth.tcl):
 #   DIRECTIVE: synth directive (default: default; was AreaOptimized_high)
@@ -13,9 +13,10 @@
 #   DB_LATENCY: cache databank pipeline depth (default 1)
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-OUT="$HERE/sweep_logs"
+OUT="${OUT:-$HERE/sweep_logs}"
 mkdir -p "$OUT"
-SUMMARY="$HERE/sweep_results.md"
+SUMMARY="${SUMMARY:-$OUT/sweep_summary.md}"
+mkdir -p "$(dirname "$SUMMARY")"
 
 POLICY="${POLICY:-4}"          # 4 = SRRIP
 VICTIM="${VICTIM:-1}"

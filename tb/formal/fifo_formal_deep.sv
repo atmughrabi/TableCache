@@ -1,4 +1,4 @@
-// Formal harness for src/fifo.sv (FIFO_DEPTH=2 path).
+// Formal harness for src/fifo.sv (FIFO_DEPTH=4 LUTRAM path).
 `default_nettype none
 module fifo_formal_deep #(
     parameter int unsigned WIDTH = 4,
@@ -37,6 +37,7 @@ module fifo_formal_deep #(
             assert (ref_count <= FIFO_DEPTH);
             assert (valid == (ref_count != 0));
             assert (full  == (ref_count == FIFO_DEPTH));
+            cover (ref_count == FIFO_DEPTH);
         end
     end
 endmodule

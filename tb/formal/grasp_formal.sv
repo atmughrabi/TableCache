@@ -4,9 +4,10 @@
 //   - cache_replacement_way is exactly one-hot
 //   - cache_replacement_way_int is a valid way index (< WAYS)
 //   - the bit set in cache_replacement_way matches cache_replacement_way_int
-//   - mutual exclusion of internal high/moderate region predicates
-//     (the moderate predicate masks out high so they cannot both fire)
-//   - with every window disabled (_h == 0) neither class fires
+//   - high/moderate/default insertion values match the configured windows
+//   - high-reuse hits promote to zero; other hits decrement toward zero
+//   - overlapping high/moderate windows select the high-reuse behavior
+//   - disabled windows produce the SRRIP-FP insertion/hit behavior
 //
 // Sized at HIGH_REGIONS=2 / MODERATE_REGIONS=2 so the proof exercises the
 // multi-window OR-reduction (window i = bits [i*ADDR_W +: ADDR_W]); the
@@ -14,8 +15,8 @@
 // any WAYS / region count (no policy state is touched).
 `default_nettype none
 module grasp_formal #(
-    parameter int unsigned WAYS             = 4,
-    parameter int unsigned ADDR_W           = 32,
+    parameter int unsigned WAYS             = 3,
+    parameter int unsigned ADDR_W           = 8,
     parameter int unsigned HIGH_REGIONS     = 2,
     parameter int unsigned MODERATE_REGIONS = 2
 ) (
@@ -31,7 +32,9 @@ module grasp_formal #(
     input  logic [ADDR_W-1:0]                      cache_addr
 );
     localparam int unsigned POLICY_W = 3*WAYS;
-    genvar r;
+    localparam logic [2:0] MAX_RRPV = 3'b111;
+    localparam logic [2:0] MODERATE_INSERT_RRPV = 3'b001;
+    genvar r, w;
 
     logic [POLICY_W-1:0]   cache_new_status;
     logic [WAYS-1:0]       cache_replacement_way;
@@ -81,6 +84,24 @@ module grasp_formal #(
     endgenerate
     wire ref_high_reuse     = |ref_high_hit;
     wire ref_moderate_reuse = (|ref_mod_hit) && !ref_high_reuse;
+    wire [2:0] ref_original_rrpv [WAYS-1:0];
+    wire [2:0] ref_new_rrpv [WAYS-1:0];
+    logic [2:0] ref_victim_rrpv;
+
+    generate
+        for (w = 0; w < WAYS; w++) begin : gen_ref_rrpv
+            assign ref_original_rrpv[w] = cache_original_status[w*3 +: 3];
+            assign ref_new_rrpv[w] = cache_new_status[w*3 +: 3];
+        end
+    endgenerate
+
+    always_comb begin
+        ref_victim_rrpv = '0;
+        for (int way = 0; way < WAYS; way++) begin
+            if (cache_replacement_way[way])
+                ref_victim_rrpv = ref_original_rrpv[way];
+        end
+    end
 
     // Force first cycle to be reset (matches the other harnesses).
     always_comb if ($initstate) assume (rst);
@@ -88,24 +109,66 @@ module grasp_formal #(
     always_ff @(posedge clk) begin
         if (!rst) begin
             // P1: replacement way is exactly one bit set.
-            assert ($onehot(cache_replacement_way));
+            assert ((cache_replacement_way != '0)
+                && ((cache_replacement_way
+                    & (cache_replacement_way - 1'b1)) == '0));
             // P2: way index is in [0, WAYS).
             assert (cache_replacement_way_int < WAYS);
             // P3: the bit set in cache_replacement_way is at position
             // cache_replacement_way_int.
             assert (cache_replacement_way[cache_replacement_way_int]);
-            // P4: high/moderate region predicates are mutually exclusive
-            // (the policy depends on this for its precedence chain). Holds for
-            // ANY number of windows: moderate masks out the high OR-reduction.
-            assert (!(ref_high_reuse && ref_moderate_reuse));
-            // P5: when EVERY window is disabled (all _h fields == 0) neither
-            // class fires regardless of cache_addr. This is the SRRIP-FP
-            // fallback contract documented in GRASP.sv.
-            if (grasp_high_addr_h == '0 && grasp_moderate_addr_h == '0) begin
-                assert (!ref_high_reuse);
-                assert (!ref_moderate_reuse);
-            end
+            cover (cache_eviction && ref_high_reuse && !(|ref_mod_hit));
+            cover (cache_eviction && ref_moderate_reuse);
+            cover (cache_eviction && (|ref_high_hit) && (|ref_mod_hit));
+            cover (cache_eviction && grasp_high_addr_h == '0
+                && grasp_moderate_addr_h == '0);
         end
     end
+
+    generate
+        for (w = 0; w < WAYS; w++) begin : gen_policy_properties
+            always_ff @(posedge clk) begin
+                if (!rst) begin
+                    if (cache_eviction) begin
+                        assert (ref_victim_rrpv >= ref_original_rrpv[w]);
+                        if (!cache_replacement_way[w]) begin
+                            assert (ref_new_rrpv[w]
+                                == ref_original_rrpv[w]
+                                + (MAX_RRPV - ref_victim_rrpv));
+                        end
+                    end
+
+                    if (cache_eviction && cache_replacement_way[w]) begin
+                        if (ref_high_reuse) begin
+                            assert (ref_new_rrpv[w] == 3'b000);
+                        end else if (ref_moderate_reuse) begin
+                            assert (ref_new_rrpv[w] == MODERATE_INSERT_RRPV);
+                        end else begin
+                            assert (ref_new_rrpv[w] == MAX_RRPV);
+                        end
+
+                        if ((|ref_high_hit) && (|ref_mod_hit)) begin
+                            assert (ref_new_rrpv[w] == 3'b000);
+                        end
+                        if (grasp_high_addr_h == '0 && grasp_moderate_addr_h == '0) begin
+                            assert (ref_new_rrpv[w] == MAX_RRPV);
+                        end
+                    end
+
+                    if (!cache_eviction && cache_way_used_one_hot[w]) begin
+                        if (ref_high_reuse) begin
+                            assert (ref_new_rrpv[w] == 3'b000);
+                        end else if (ref_original_rrpv[w] == 3'b000) begin
+                            assert (ref_new_rrpv[w] == 3'b000);
+                        end else begin
+                            assert (ref_new_rrpv[w] == ref_original_rrpv[w] - 1'b1);
+                        end
+                    end else if (!cache_eviction) begin
+                        assert (ref_new_rrpv[w] == ref_original_rrpv[w]);
+                    end
+                end
+            end
+        end
+    endgenerate
 endmodule
 `default_nettype wire

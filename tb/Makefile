@@ -1,4 +1,6 @@
-# Multi-test Verilator runner for TableCache.
+# Compatibility SystemVerilog runner. The maintained regression and parameter
+# matrices live under tb/cocotb; this file keeps the standalone smoke and
+# directed benches buildable.
 #
 # Usage:
 #   make smoke              # legacy single-file smoke (in this dir)
@@ -8,7 +10,7 @@
 #   make clean
 #
 # Per-test config overrides:
-#   make t02 POLICY=SRRIP VICTIM=1 DB_LATENCY=4
+#   make t02 POLICY=SRRIP VICTIM=1 DB_LATENCY=2
 
 SRC_DIR := ../src
 COMMON  := common

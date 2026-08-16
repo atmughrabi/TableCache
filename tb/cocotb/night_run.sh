@@ -43,6 +43,9 @@ run_cocotb() {
     fi
 }
 
+run_logged "documentation and figures" documentation.log \
+    python3 "$HERE/../../doc/check_docs.py"
+
 log "random seed sweep: 500 seeds, 300 transactions each"
 rm -rf sim_build
 NTXN=300 SEED=1 timeout 600 make MODULE=test_random \
@@ -80,6 +83,25 @@ fi
 rm -rf sim_build
 run_cocotb "long graph workload" workload.log \
     env NTXN=200000 SEED=1 timeout 7200 make MODULE=test_workload
+
+for mod in \
+    test_cbom_rmw_race test_cbom_stress test_graph_patterns test_realism \
+    test_set_coverage test_shim_latency test_latency; do
+    rm -rf sim_build*
+    run_cocotb "$mod" "$mod.log" timeout 900 make MODULE="$mod"
+done
+for ways in 3 4 5; do
+    rm -rf sim_build*
+    run_cocotb "test_second_chance WAYS=$ways" "test_second_chance_w$ways.log" \
+        env POLICY=SECOND_CHANCE WAYS="$ways" timeout 900 \
+        make MODULE=test_second_chance
+done
+rm -rf sim_build*
+run_cocotb "test_grasp_midburst" test_grasp_midburst.log \
+    env POLICY=GRASP timeout 900 make MODULE=test_grasp_midburst
+
+run_logged "functional coverage" functional_coverage.log \
+    env COVERAGE_DIR="$OUT/functional_coverage" timeout 1800 ./cov_functional.sh
 
 for entry in \
     "core matrix|matrix.log|3600|test_matrix.py" \

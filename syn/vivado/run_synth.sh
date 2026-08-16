@@ -4,7 +4,7 @@
 #   ./run_synth.sh                                  # default: l2_cache
 #   TOP=tc_narrow_shim ./run_synth.sh
 #   ALL=1 ./run_synth.sh                            # all 3 user-facing tops
-set -e
+set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 
@@ -23,13 +23,31 @@ fi
 for top in $TOPS; do
     OUT="$HERE/build/$top"
     mkdir -p "$OUT"
+    rm -f "$OUT/utilization.rpt" "$OUT/timing_summary.rpt" "$OUT/methodology.rpt"
     echo "==== synth: $top -> $OUT ===="
     cd "$OUT"
+    set +e
     "$VIVADO" -mode batch -source "$HERE/run_synth.tcl" \
               -tclargs "$top" "$REPO" "$OUT" \
               -log "$OUT/vivado.log" -journal "$OUT/vivado.jou" \
               -notrace 2>&1 | tee "$OUT/synth.log" \
-        | grep -E "^(====|WARNING|CRITICAL|ERROR|UTIL|TIMING|METHOD|Worst|Total)" || true
+        | grep -E "^(====|WARNING|CRITICAL|ERROR|UTIL|TIMING|METHOD|Worst|Total)"
+    vivado_rc=${PIPESTATUS[0]}
+    set -e
+    if (( vivado_rc != 0 )); then
+        echo "Vivado failed for top=$top (rc=$vivado_rc); see $OUT/synth.log." >&2
+        exit "$vivado_rc"
+    fi
+    if ! grep -Fq "==== synthesis complete: $top ====" "$OUT/synth.log"; then
+        echo "Vivado did not complete run_synth.tcl for top=$top." >&2
+        exit 1
+    fi
+    for report in utilization.rpt timing_summary.rpt methodology.rpt; do
+        if [[ ! -s "$OUT/$report" ]]; then
+            echo "Vivado did not produce $OUT/$report for top=$top." >&2
+            exit 1
+        fi
+    done
 
     # Headline numbers for the table.
     echo "---- $top headline ----"

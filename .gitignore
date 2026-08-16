@@ -16,7 +16,7 @@
 *.fst
 *.wlf
 *.shm
-results.xml
+results*.xml
 test.log
 test_output.log
 sim_run.log

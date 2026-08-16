@@ -4,7 +4,7 @@
 # Knobs: SIZE={256K,512K,1M,2M}, POLICY, PERIOD_NS, DB_LATENCY,
 #        INCLUDE_VICTIM, DATABANK_SDP, DIRECTIVE, PART, PNR (0=synth-only,
 #        1=synth+place+route via u55c_synth_pnr.tcl).
-set -u
+set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # Tunables (env overridable)
@@ -36,6 +36,7 @@ esac
 TAG="u55c_${SIZE}_w${WAYS}_p${POLICY}_period${PERIOD_NS}_dbl${DB_LATENCY}_wir${SDP_WRITE_INPUT_REG:-0}_pnr${PNR}"
 OUT="$HERE/build/${TAG}"
 mkdir -p "$OUT"
+rm -f "$OUT/utilization.rpt" "$OUT/timing_summary.rpt" "$OUT/methodology.rpt"
 echo "==== U55C synth: SIZE=$SIZE WAYS=$WAYS LINES=$LINES LINE_W=$LINE_W"
 echo "             POLICY=$POLICY DB_LATENCY=$DB_LATENCY INCLUDE_VICTIM=$INCLUDE_VICTIM"
 echo "             DATABANK_SDP=$DATABANK_SDP DIRECTIVE=$DIRECTIVE PERIOD_NS=$PERIOD_NS"
@@ -69,6 +70,25 @@ env PART="$PART" \
         -log "$OUT/vivado.log" -journal "$OUT/vivado.jou" -notrace \
         > "$OUT/synth.log" 2>&1
 rc=$?
+if [[ $rc -ne 0 ]]; then
+    echo "Vivado failed for $TAG (rc=$rc); see $OUT/synth.log." >&2
+    exit "$rc"
+fi
+if [[ "$PNR" == "1" ]]; then
+    completion="==== place and route complete: l2_cache ===="
+else
+    completion="==== synthesis complete: l2_cache ===="
+fi
+if ! grep -Fq "$completion" "$OUT/synth.log"; then
+    echo "Vivado did not complete $TAG; see $OUT/synth.log." >&2
+    exit 1
+fi
+for report in utilization.rpt timing_summary.rpt methodology.rpt; do
+    if [[ ! -s "$OUT/$report" ]]; then
+        echo "Vivado did not produce $OUT/$report for $TAG." >&2
+        exit 1
+    fi
+done
 
 echo ""
 echo "---- $TAG headline ----"
@@ -85,4 +105,3 @@ if [[ -n "$wns" ]]; then
     echo ""
     echo "    headline: WNS=$wns ns  ~ ${mhz} MHz $phase"
 fi
-exit $rc
