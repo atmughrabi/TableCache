@@ -40,28 +40,49 @@ module second_chance
 
     logic[WAYS-1:0] hit_chance;
     logic[WAYS-1:0] finish_chance;
-    logic[WAY_W-1:0] finish_index;
+    logic[WAY_W-1:0] scan_index;
+    logic[WAY_W-1:0] victim_index;
+    logic[WAY_W-1:0] next_index;
+    logic victim_found;
+
+    function automatic logic[WAY_W-1:0] increment_way(
+        input logic[WAY_W-1:0] index
+    );
+        if (index == WAY_W'(WAYS-1))
+            increment_way = '0;
+        else
+            increment_way = index + 1'b1;
+    endfunction
 
     always_comb begin
         hit_chance = second_chance;
         hit_chance[cache_way_used_int] = 1;
 
-        finish_index = start_index;
         finish_chance = second_chance;
-        //Iterate over second chance array starting at the previous index
-        for (int i = 0; i <= WAYS; i++) begin
-            finish_chance[finish_index] = 0;
-            if (~second_chance[finish_index]) //Return the first entry without a second chance
-                break;
-            if (finish_index == WAY_W'(WAYS-1)) //For non power of 2
-                finish_index = 0;
-            else
-                finish_index = finish_index+1;
+        scan_index = start_index;
+        victim_index = start_index;
+        victim_found = 1'b0;
+        for (int i = 0; i < WAYS; i++) begin
+            if (!victim_found) begin
+                if (!second_chance[scan_index]) begin
+                    victim_index = scan_index;
+                    victim_found = 1'b1;
+                end else begin
+                    finish_chance[scan_index] = 1'b0;
+                    scan_index = increment_way(scan_index);
+                end
+            end
         end
+        if (!victim_found)
+            victim_index = scan_index;
+        finish_chance[victim_index] = 1'b0;
+        next_index = increment_way(victim_index);
     end
 
-    assign cache_new_status = cache_eviction ? {finish_index, finish_chance} : {start_index, hit_chance};
-    assign cache_replacement_way_int = finish_index;
-    assign cache_replacement_way = 1 << finish_index;
+    assign cache_new_status = cache_eviction
+        ? {next_index, finish_chance}
+        : {start_index, hit_chance};
+    assign cache_replacement_way_int = victim_index;
+    assign cache_replacement_way = WAYS'(1 << victim_index);
 
 endmodule
