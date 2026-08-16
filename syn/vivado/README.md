@@ -100,8 +100,11 @@ flow after changing memory code.
 
 ## Reference configurations
 
-See:
+[`sweep_results.md`](sweep_results.md) is the curated historical reference with
+tool, date, and repository provenance. `sweep.sh` never modifies it; fresh
+synthesis-only tables are written to `sweep_logs/sweep_summary.md`.
 
-- [sweep_results.md](sweep_results.md)
+See also:
+
 - [../../doc/deployment/README.md](../../doc/deployment/README.md)
 - [../../doc/wiki/URAM_Mode.md](../../doc/wiki/URAM_Mode.md)

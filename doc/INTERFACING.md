@@ -170,7 +170,7 @@ l2_cache #(
     // request-side master
     .req_ar (m_ar),  .req_arid (m_arid),  .req_arready (m_arready),
     .req_r  (m_r),   .req_rdata(m_rdata), .req_rid (m_rid),
-    .req_rdata(m_rdata), .req_rready(m_rready),
+    .req_rready(m_rready),
     .req_aw (m_aw),  .req_awid (m_awid),  .req_awready (m_awready),
     .req_w  (m_w),   .req_wdata(m_wdata), .req_wstrb(m_wstrb),
     .req_wready(m_wready),
@@ -191,17 +191,21 @@ A flat-signal reference wrapper is available in
 
 ---
 
-## 7. Latency table (measured)
+## 7. Latency characterization
 
-Default config (`LRU LINES=64 WAYS=4 LINE_W=8 BLOCK_W=32 DB_LATENCY=1 INCLUDE_VICTIM=0`). Cycles are counted from the **handshake** on the request channel to the **first beat** of the response. Memory model in the test has effectively 1-cycle read turnaround; real DDR will shift the miss numbers up by its RTT.
+The table records representative observations for the default Verilator
+configuration (`LRU LINES=64 WAYS=4 LINE_W=8 BLOCK_W=32 DB_LATENCY=1
+INCLUDE_VICTIM=0`) and the automated regression bounds. These observations are
+not interface guarantees. Cycles are measured from request handshake to the
+first response beat; real memory RTT increases miss latency.
 
-| Operation | Cycles to first response | Cycles to last response |
-|---|---|---|
-| Read hit (line cached) | **5** | hit returns 1 beat per cycle once started |
-| Read miss (8-beat line fill) | **6** (critical-word-first) | **13** (full line) |
-| Read miss (1-beat single read, cold) | ~6 | ~6 |
-| Full-line WriteEvict, AW→B | **4** | — |
-| Partial / RMW single-beat write, AW→B | **2** (B fires when wdata buffered; fill continues async) | — |
+| Operation | Representative cycles | Regression bound |
+|---|---:|---:|
+| Read hit, AR→first R | 5 | ≤8 |
+| Read miss, AR→first R | 6 | ≤40 |
+| Read miss, AR→last R | 13 | ≤60 |
+| Full-line WriteEvict, AW→B | 4 | ≤25 |
+| Partial/RMW write, AW→B | 2 | ≤50 |
 
 Latency budget adjustments:
 * Each additional `DB_LATENCY` cycle adds **+1** to read hit and read fill.
@@ -427,17 +431,20 @@ removes unused upper bits in narrower configurations.
 | Wide W | Same beat as narrow W. If the FIFO-stored aligned addr matches the current `lb_tag`, merge the bytes into `lb_data` in place. |
 | CBOM AR | Always sent to cache; invalidates the line buffer if the aligned tag matches. |
 
-### 13.5 Latency / throughput (measured against `AxiRam`)
+### 13.5 Latency / throughput characterization
 
-| Operation | Cycles (round-trip, one in-flight) |
-|---|---|
-| Cold narrow read (miss → wide AR → wide R → slice) | **4** |
-| Hot narrow read (buffer hit) | **3** observed; combinational mux + 1 cycle R = **1 beat/cycle when pipelined** |
-| Narrow write (AW + W + B through `AxiRam`) | **5** |
-| Merged read (read after write to same lane in buffer) | **3** (no wide re-fetch) |
+Default shim-only observations against `AxiRam` are bounded by
+`test_shim_latency.py`; they are not downstream-memory guarantees.
 
-Pipelined throughput proof: 16 ARs to one line completed in 18 cycles
-(`tb/cocotb/test_shim_throughput.py`).
+| Operation | Representative cycles | Regression bound |
+|---|---:|---:|
+| Cold narrow read | 4 | ≤12 |
+| Hot narrow read | 3 | ≤6 |
+| Narrow write | 5 | ≤12 |
+| Merged read | 3 | ≤6 |
+
+`test_shim_throughput.py` requires a 16-lane line to complete within 24
+cycles, including the initial cold fill.
 
 Real `l2_cache` + DDR will add the cache hit/miss latency table from
 §7 to the cold path; the hot/merge paths remain shim-local and unchanged.

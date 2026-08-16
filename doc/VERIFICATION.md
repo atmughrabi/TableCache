@@ -16,6 +16,7 @@ strict four-state simulation, and Vivado synthesis.
 | Formal | `make -C tb/formal` | bounded and inductive invariants |
 | Vivado AXI VIP | `tb/vip/run_vip.sh` | strict four-state reset and AXI behavior |
 | Vivado synthesis | `syn/vivado/run_synth.sh` | FPGA inference, timing, and utilization |
+| Documentation | `python3 doc/check_docs.py` | local links, figure source pairs, XML, accessibility, palette, and dark mode |
 
 ## Running the tests
 
@@ -25,6 +26,7 @@ source .venv/bin/activate
 
 make lint
 make vlint
+python3 ../../doc/check_docs.py
 make MODULE=test_smoke
 
 pytest -q test_matrix.py
@@ -46,6 +48,7 @@ The complete unattended flow is:
 It runs random seeds, long workloads, parameter matrices, mutation suites,
 GRASP checks, strict xsim configurations, and generic Vivado synthesis when
 Vivado is available. Any failed section produces a nonzero exit status.
+GitHub Actions runs the open-source subset daily and on manual dispatch.
 
 ## Cocotb suites
 
@@ -84,6 +87,7 @@ Vivado is available. Any failed section produces a nonzero exit status.
 | Module | Invariant |
 |---|---|
 | `test_grasp`, `test_grasp_moderate` | GRASP reuse-class behavior |
+| `test_second_chance` | clock-hand advance and referenced-line protection |
 | `test_grasp_multi` | multiple high and moderate windows |
 | `test_grasp_midburst` | runtime region reconfiguration |
 | `test_grasp_pressure`, `test_grasp_multi_perf` | retention under pressure |
@@ -195,18 +199,29 @@ Equivalent or unreachable mutations are excluded with a local rationale.
 ## Formal verification
 
 ```bash
+python3 -m venv tb/formal/.venv
+tb/formal/.venv/bin/pip install -r tb/formal/requirements.txt
 make -C tb/formal all
 ```
 
-| Harness | Proven properties |
-|---|---|
-| `fifo.sv` | occupancy bounds and VALID/FULL consistency |
-| `set_clear_memory.sv` | state matches a reference occupancy model |
-| `tc_flush_controller.sv` | request framing, response gating, index bounds, and completion |
-| `GRASP.sv` | replacement range, one-hot choice, region precedence, and disabled-region fallback |
+| Harness | Method | Proven properties |
+|---|---|---|
+| `fifo.sv`, depth 1 | BMC + induction + cover | occupancy bounds and VALID/FULL consistency |
+| `fifo.sv`, depth 4 | 32-cycle BMC + cover | occupancy bounds and VALID/FULL consistency |
+| `set_clear_memory.sv` | 16-cycle BMC + cover after a complete startup reset walk | state matches a reference occupancy model under legal set/clear ownership |
+| `tc_flush_controller.sv` | BMC + induction + cover | request framing, ordered traversal, exact request count, response gating, and bounded completion under a zero-wait-state slave with a fixed next-cycle response |
+| `GRASP.sv` | BMC + induction + cover | replacement range, one-hot choice, insertion class, hit promotion, overlap precedence, and disabled-region fallback |
 
 The formal environment constrains protocol violations such as overflow,
 underflow, and simultaneous set/clear of one entry.
+Cover traces establish FIFO-full, set occupancy, flush completion, and each
+GRASP classification branch. Warm-reset recovery is exercised in
+`test_reset_recovery`; the set/clear formal harness models startup reset.
+The formal build fails if sv2v/Yosys produces an SMT model without assertions;
+flush and GRASP models must also contain cover properties.
+
+The standalone `tb/Makefile` remains a compatibility layer for the original
+SystemVerilog benches. The cocotb flow is the maintained verification SSOT.
 
 ## Strict xsim and synthesis
 

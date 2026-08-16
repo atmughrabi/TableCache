@@ -4,11 +4,11 @@ These pages record representative out-of-context results and supported starting
 configurations. They are not substitutes for timing closure in the complete
 design.
 
-| Board | Family | Suggested starting point | Reference result |
-|---|---|---|---|
-| [U250](U250.md) | UltraScale+ | 512 KiB, 8 ways, SDP, 250 MHz | +0.088 ns WNS |
-| [U55C](U55C.md) | UltraScale+ HBM | 512 KiB, 8 ways, SDP, 250 MHz | -0.022 ns WNS |
-| [V80](V80.md) | Versal Premium ES | 512 KiB, 8 ways, SDP, 200 MHz | +0.062 ns WNS |
+| Board | Family | Suggested starting point |
+|---|---|---|
+| [U250](U250.md) | UltraScale+ | 512 KiB, 8 ways, SDP, 250 MHz |
+| [U55C](U55C.md) | UltraScale+ HBM | 512 KiB, 8 ways, SDP, 250 MHz |
+| [V80](V80.md) | Versal Premium ES | 512 KiB, 8 ways, SDP, 200 MHz |
 
 Reference geometry:
 
@@ -26,6 +26,9 @@ INCLUDE_VICTIM=0
 `DB_LATENCY` is supported only at 1 or 2. Tune `CASCADE_DEPTH`,
 `SDP_WRITE_INPUT_REG`, placement directives, and target period with the current
 RTL and tool version.
+
+The sole numerical reference table, including tool/date/commit provenance, is
+[`syn/vivado/sweep_results.md`](../../syn/vivado/sweep_results.md).
 
 ## Reproduction
 

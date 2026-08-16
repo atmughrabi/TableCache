@@ -1,7 +1,9 @@
 # Representative Vivado Results
 
-These measurements are out-of-context reference points. Re-run the current RTL,
-Vivado version, part, and directives before using them for deployment.
+These measurements are historical out-of-context reference points, not current
+release criteria. Re-run the current RTL, part, and directives before using
+them for deployment. `sweep.sh` writes fresh generated output to
+`sweep_logs/sweep_summary.md`; this file is curated and never overwritten.
 
 ## Reference geometry
 
@@ -18,12 +20,17 @@ INCLUDE_VICTIM=0
 
 ## Post-route timing
 
-| Part | Cache | Target | WNS | Notes |
+| Part | Cache | Target | WNS | Measurement record |
 |---|---:|---:|---:|---|
-| U250 `xcu250-figd2104-2L-e` | 512 KiB | 250 MHz | +0.088 ns | baseline supported configuration |
-| U250 `xcu250-figd2104-2L-e` | 1 MiB | 250 MHz | -0.122 ns | requires additional tuning |
-| U55C `xcu55c-fsvh2892-2L-e` | 512 KiB | 250 MHz | -0.022 ns | near closure |
-| V80 ES `xcv80-lsva4737-2MHP-e-S` | 512 KiB | 200 MHz | +0.062 ns | `CASCADE_DEPTH=1` |
+| U250 `xcu250-figd2104-2L-e` | 512 KiB | 250 MHz | +0.088 ns | `f690d27`, 2026-05-30 |
+| U250 `xcu250-figd2104-2L-e` | 1 MiB | 250 MHz | -0.122 ns | `f690d27`, 2026-05-30 |
+| U55C `xcu55c-fsvh2892-2L-e` | 512 KiB | 250 MHz | -0.022 ns | `7209515`, 2026-05-30 |
+| V80 ES `xcv80-lsva4737-2MHP-e-S` | 512 KiB | 200 MHz | +0.062 ns | `7209515`, 2026-05-30 |
+
+All rows used Vivado 2025.2, out-of-context place and route, the scripts'
+default synthesis/place/route directives, and the default tool seed. The
+record commit identifies the repository state that published the measurement;
+subsequent RTL and flow changes invalidate direct comparisons.
 
 ## Resource scale
 

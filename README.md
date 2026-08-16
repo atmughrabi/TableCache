@@ -62,7 +62,7 @@ doc/            architecture, integration, verification, and wiki pages
 cd tb/cocotb
 python3 -m venv .venv
 source .venv/bin/activate
-pip install 'cocotb>=1.9,<2.0' cocotb-bus cocotbext-axi pytest
+pip install -r requirements.txt
 ```
 
 ## Quick start

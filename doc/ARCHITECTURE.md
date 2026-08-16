@@ -157,7 +157,7 @@ The implementation is in
 
 * **Replacement policy** lives in `replacement_policy.sv`; the policy is selected at compile time via the `POLICY` parameter. The interface (`cache_eviction`, `cache_way_used_int`, `cache_original_status`, `cache_new_status`, `cache_addr`) is intentionally narrow so any of {LRU, FRQ, SECOND_CHANCE, RANDOM, SRRIP, **GRASP**} drops in. Initial status comes from `INIT_POLICY` in `replacement_policy.sv`.
 * **GRASP** (`GRASP.sv`) is an address-aware 3-bit RRIP policy. High and moderate reuse classes each accept a configurable number of packed address windows. High reuse takes precedence on overlap; disabling all windows reduces the policy to SRRIP frequency-priority behavior. See [wiki/GRASP_Policy.md](wiki/GRASP_Policy.md).
-* **Victim cache** (`victim_cache.sv`) sits between `l2_cache` and the memory side when `INCLUDE_VICTIM=1`. It holds recently-evicted lines so a quick re-reference avoids the round-trip to DDR. The cache treats it as transparent — `mem_*` ports look identical externally. **Timing note:** on big SDP+URAM configs (≥512 KB), the victim cache's `pending_reads` LFSR drives a ~24-LUT combinational chain into the SDP databank URAM cascade write input that adds ~1.37 ns to WNS. For URAM-rich deployments where the victim cache's hit-rate benefit doesn't justify the timing cost, set `INCLUDE_VICTIM=0`.
+* **Victim cache** (`victim_cache.sv`) sits between `l2_cache` and the memory side when `INCLUDE_VICTIM=1`. It holds recently-evicted lines so a quick re-reference avoids the round-trip to DDR. The cache treats it as transparent — `mem_*` ports look identical externally. On large SDP+URAM configurations, victim-cache control can enter the databank timing path; measure the target geometry before enabling it.
 * **CBOM** ops modify dirty/valid bits in the tagbank and may force a writeback. They go through the same FIFOs as ordinary reads, marked with the `cbom` bit in `ar_request_t`.
 
 ---
@@ -279,9 +279,9 @@ and merges matching bytes into the line buffer. B responses pass through.
 
 | Test | What it proves |
 |---|---|
-| [test_narrow_shim.py](../tb/cocotb/test_narrow_shim.py) | 10 directed (cold/hot, buffer merge, AW FIFO, sub-word) + heavy random (50 000 ops × 5 seeds, byte-granular golden, 0 mismatches) |
-| [test_shim_latency.py](../tb/cocotb/test_shim_latency.py) | per-op latency: cold-R=4, hot-R=3, write=5, merged-R=3 cycles |
-| [test_shim_throughput.py](../tb/cocotb/test_shim_throughput.py) | hand-driven AR pump: 16 buffered reads in 18 cycles, ≈1 narrow R beat/cycle steady state |
+| [test_narrow_shim.py](../tb/cocotb/test_narrow_shim.py) | cold/hot reads, buffer merge and invalidation, AW FIFO ordering, sub-word access, and randomized byte-level checking |
+| [test_shim_latency.py](../tb/cocotb/test_shim_latency.py) | default-configuration latency bounds for cold/hot reads, writes, and merged reads |
+| [test_shim_throughput.py](../tb/cocotb/test_shim_throughput.py) | bounded completion for a pipelined line of buffered reads |
 | [test_shim_multiread.py](../tb/cocotb/test_shim_multiread.py) | distinct-ID overlap, same-ID serialization, concurrent hits, generation wrap, and protocol framing |
 | [test_shim_reorder.py](../tb/cocotb/test_shim_reorder.py) | `READ_REORDER_DEPTH>1`: a single engine id keeps N reads outstanding (engine + cache concurrency proven), delivered strictly in issue order; out-of-order cache completion (head miss + warm hits) reordered correctly |
 | [test_shim_wrap_matrix.py](../tb/cocotb/test_shim_wrap_matrix.py) | critical-word-first fill contract across every legal `LINE_W`, bus widths 32–512, ratios 1–16, TDP/SDP, DB latency 1/2, backpressure/ROB/refill; invalid line lengths rejected |
