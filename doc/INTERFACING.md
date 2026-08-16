@@ -6,15 +6,17 @@ Interface, parameter, timing, and integration requirements for `l2_cache`.
 
 ## 1. Block diagram
 
-```
-                 ┌──────────────────────────────────┐
-   master ─AR/R─▶│      Front-end (req_* port)      │─AR/R─▶ memory
-   master ─AW/W▶│   AXI4 + ACE snoop sidebands     │─AW/W─▶ memory
-   master ◀─B───│           l2_cache                │◀─B──── memory
-                 │     (write-back, write-allocate) │
-                 └──────────────────────────────────┘
-                         clk, rst
-```
+Architecture and interface figures share the `1.x` sequence.
+
+### Figure 1.5 — AXI boundary contract
+
+![A system master connects to the req-side AXI channels and ACE-style snoop
+sidebands; l2_cache connects the mem-side AXI channels to an error-free memory
+backend; both interfaces share one synchronous clock and reset.](fig/wiki/01_architecture/interfacing-f05-axi-boundaries.svg)
+
+**Figure 1.5.** The front end owns cacheability and maintenance attributes,
+while the memory side carries fills and full-line writebacks without snoop
+sidebands. Both sides preserve AXI IDs and handshake stability.
 
 * **Front end (`req_*`)**: standard AXI4 read/write channels, plus ACE
   `arsnoop` (4-bit) and `awsnoop` (3-bit) sidebands. Drives ONE master.
@@ -383,13 +385,8 @@ hand-rolling a width converter.
 
 ### 13.1 Topology
 
-```
- accel (NARROW_W) ─► tc_narrow_shim ─► TableCache (BLOCK_W) ─► DDR/HBM
-                          │
-                          ├─ L0 line buffer (1 wide line, fully associative)
-                          ├─ AW→W ordered FIFO (depth = MAX_OUTSTANDING_W)
-                          └─ per-id outstanding-AR tracker
-```
+The complete width-adaptation topology and read/write paths are shown in
+[Architecture Figure 1.4](ARCHITECTURE.md#figure-14--narrow-port-adaptation).
 
 ### 13.2 Parameters
 

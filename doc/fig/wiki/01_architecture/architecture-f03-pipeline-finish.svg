@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="#3A414A" role="img" aria-labelledby="figTitle figDesc">
+  <title id="figTitle">Pipeline timing and finish serialization</title>
+  <desc id="figDesc">A dirty read miss advances from AR handshake through tag lookup, parallel fill and writeback, critical-word response, and occupancy release. A full-line WriteEvict follows a shorter write pipeline. A combined finish entry retires read and write targets on separate cycles.</desc>
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#1071E5"/></marker>
+    <marker id="arrow-green" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#008A0E"/></marker>
+    <marker id="arrow-purple" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#635DFF"/></marker>
+    <style>
+      :root{color-scheme:light dark}
+      @media (prefers-color-scheme:dark){
+        [stroke="#000000"]{stroke:#E7E2D9}[fill="#3A414A"]{fill:#E7E2D9}[stroke="#3A414A"]{stroke:#E7E2D9}
+        [fill="#979EA8"]{fill:#A8ADB0}[stroke="#979EA8"]{stroke:#A8ADB0}
+        [fill="#F7F4E4"]{fill:#24282B}[stroke="#F7F4E4"]{stroke:#24282B}
+        [fill="#C1E4F7"]{fill:#29363B}[stroke="#C1E4F7"]{stroke:#29363B}
+        [fill="#D7FAF5"]{fill:#28392C}[stroke="#D7FAF5"]{stroke:#28392C}
+        [fill="#A7A6FF"]{fill:#332F39}[stroke="#A7A6FF"]{stroke:#332F39}
+        [fill="#FFDDA6"]{fill:#3D3526}[stroke="#FFDDA6"]{stroke:#3D3526}
+        [fill="#1071E5"]{fill:#9CB8E8}[stroke="#1071E5"]{stroke:#9CB8E8}
+        [fill="#008A0E"]{fill:#92C89A}[stroke="#008A0E"]{stroke:#92C89A}
+        [fill="#635DFF"]{fill:#B5A8C0}[stroke="#635DFF"]{stroke:#B5A8C0}
+        [fill="#CC4E00"]{fill:#D6A071}[stroke="#CC4E00"]{stroke:#D6A071}
+      }
+      .sans{font-family:Inter,Helvetica,Arial,sans-serif}.mono{font-family:"SFMono-Regular",Consolas,monospace}
+      .title{font-size:46px;font-weight:700}.pane{font-size:30px;font-weight:700}.block{font-size:24px;font-weight:700}.body{font-size:21px}.small{font-size:20px}
+    </style>
+  </defs>
+
+  <rect x="20" y="10" width="1560" height="145" rx="8" fill="#F7F4E4"/>
+  <text x="50" y="70" class="sans title">Pipeline timing and finish serialization</text>
+  <text x="50" y="110" class="sans body">Latency changes spacing between stages; completion ownership remains ordered</text>
+  <line x1="50" y1="140" x2="1550" y2="140" stroke="#979EA8" stroke-width="1"/>
+
+  <rect x="40" y="180" width="500" height="665" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="65" y="225" class="sans pane" fill="#008A0E">Dirty read miss</text>
+  <line x1="100" y1="280" x2="100" y2="760" stroke="#979EA8" stroke-width="2" stroke-dasharray="3 9"/>
+  <g class="sans">
+    <circle cx="100" cy="290" r="22" fill="#C1E4F7" stroke="#1071E5" stroke-width="3"/><text x="100" y="298" text-anchor="middle" class="block" fill="#1071E5">1</text>
+    <text x="145" y="282" class="mono small">t0</text><text x="205" y="282" class="block">AR handshake</text>        <text x="145" y="312" class="body">allocate ID + line hash</text>
+    <circle cx="100" cy="390" r="22" fill="#A7A6FF" stroke="#635DFF" stroke-width="3"/><text x="100" y="398" text-anchor="middle" class="block" fill="#635DFF">2</text>
+    <text x="145" y="382" class="mono small">t1–t3</text><text x="235" y="382" class="block">tag stages</text>        <text x="145" y="412" class="body">miss + dirty victim</text>
+    <circle cx="100" cy="495" r="22" fill="#D7FAF5" stroke="#008A0E" stroke-width="3"/><text x="100" y="503" text-anchor="middle" class="block" fill="#008A0E">3</text>
+    <text x="145" y="487" class="mono small">t4…</text><text x="220" y="487" class="block">parallel memory work</text>        <text x="145" y="517" class="body">fill AR/R + dirty AW/W/B</text>
+    <circle cx="100" cy="610" r="22" fill="#C1E4F7" stroke="#1071E5" stroke-width="3"/><text x="100" y="618" text-anchor="middle" class="block" fill="#1071E5">4</text>
+    <text x="145" y="602" class="mono small">tN</text><text x="205" y="602" class="block">critical response</text>        <text x="145" y="632" class="body">requested block may lead line tail</text>
+    <circle cx="100" cy="725" r="22" fill="#D7FAF5" stroke="#008A0E" stroke-width="3"/><text x="100" y="733" text-anchor="middle" class="block" fill="#008A0E">5</text>
+    <text x="145" y="717" class="mono small">done</text><text x="220" y="717" class="block">finish clear</text>        <text x="145" y="747" class="body">release ID + hash</text>
+  </g>
+
+  <rect x="570" y="180" width="390" height="665" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="595" y="225" class="sans pane" fill="#1071E5">Full-line WriteEvict</text>
+  <line x1="630" y1="290" x2="630" y2="700" stroke="#979EA8" stroke-width="2" stroke-dasharray="3 9"/>
+  <g class="sans">
+    <circle cx="630" cy="305" r="22" fill="#C1E4F7" stroke="#1071E5" stroke-width="3"/><text x="630" y="313" text-anchor="middle" class="block" fill="#1071E5">1</text>
+    <text x="675" y="297" class="mono small">t0</text><text x="735" y="297" class="block">AW + W beats</text>    <text x="675" y="327" class="body">one beat each cycle</text>
+    <circle cx="630" cy="420" r="22" fill="#A7A6FF" stroke="#635DFF" stroke-width="3"/><text x="630" y="428" text-anchor="middle" class="block" fill="#635DFF">2</text>
+    <text x="675" y="412" class="mono small">t1–t3</text><text x="765" y="412" class="block">tag classify</text>    <text x="675" y="442" class="body">full_write skips fill AR</text>
+    <circle cx="630" cy="535" r="22" fill="#C1E4F7" stroke="#1071E5" stroke-width="3"/><text x="630" y="543" text-anchor="middle" class="block" fill="#1071E5">3</text>
+    <text x="675" y="527" class="mono small">t4…</text><text x="750" y="527" class="block">databank write</text>    <text x="675" y="557" class="body">install blocks + byte mask</text>
+    <circle cx="630" cy="650" r="22" fill="#D7FAF5" stroke="#008A0E" stroke-width="3"/><text x="630" y="658" text-anchor="middle" class="block" fill="#008A0E">4</text>
+    <text x="675" y="642" class="mono small">done</text><text x="750" y="642" class="block">B + finish</text>    <text x="675" y="672" class="body">dirty prior line writes back</text>
+  </g>
+
+  <rect x="990" y="180" width="570" height="665" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="1015" y="225" class="sans pane" fill="#635DFF">Combined finish entry</text>
+  <rect x="1030" y="270" width="490" height="90" rx="8" fill="#FFDDA6" stroke="#000000" stroke-width="2"/>
+  <text x="1275" y="306" text-anchor="middle" class="sans block">finish FIFO head</text>
+  <text x="1275" y="336" text-anchor="middle" class="mono small">rvalid=1 rid=A · wvalid=1 wid=B</text>
+  <rect x="1030" y="420" width="490" height="130" rx="8" fill="#A7A6FF" stroke="#000000" stroke-width="2"/>
+  <text x="1060" y="458" class="mono small">cycle 0</text>
+  <text x="1180" y="458" class="sans block">R phase</text>
+  <text x="1060" y="492" class="sans body">clear A + hash(A); remember target</text>
+  <text x="1060" y="522" class="sans body">keep head while W remains</text>
+  <rect x="1030" y="610" width="490" height="130" rx="8" fill="#A7A6FF" stroke="#000000" stroke-width="2"/>
+  <text x="1060" y="648" class="mono small">cycle 1</text>
+  <text x="1180" y="648" class="sans block">W phase</text>
+  <text x="1060" y="682" class="sans body">clear B + hash(B) unless same target</text>
+  <text x="1060" y="712" class="sans body">pop after all phases retire</text>
+  <g fill="none" stroke="#635DFF" stroke-width="3" marker-end="url(#arrow-purple)">
+    <path d="M1275 364 V416"/><path d="M1275 554 V606"/>
+  </g>
+</svg>

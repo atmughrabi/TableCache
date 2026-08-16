@@ -16,7 +16,7 @@ Academic references are linked from the repository
 
 ## 2. Top-level block diagram
 
-Architecture figures use the `1.x` sequence.
+Architecture and interface figures share the `1.x` sequence.
 
 ### Figure 1.1 — Request and memory paths
 
@@ -49,92 +49,42 @@ Key modules (each is its own `.sv`):
 
 ## 3. Per-request flow
 
+### Figure 1.2 — Request flows
+
+![Read hits use tag and databank state without memory traffic; read misses
+create fill context and may write back a dirty victim; writes choose a direct
+or read-modify-write path; cache-maintenance requests classify by tag or
+physical way before acknowledging completion.](fig/wiki/01_architecture/architecture-f02-request-flows.svg)
+
+**Figure 1.2.** Each accepted request owns one completion context until
+`finish_clear` releases its read/write ID domain and line hash. Miss fills and
+dirty writebacks may overlap, but their response and completion phases remain
+ordered. Read, write, and maintenance requests arbitrate for one tagbank
+pipeline; `prefer_read` alternates read/write priority.
+
 ### 3.1 Read flow (steady state)
 
-```
- master AR ─► input arbiter ─► tagbank stage1/stage2 ─► hit?
-                                                          │
-                              ┌───────────yes─────────────┘
-                              ▼
-                       way_table writes lookup
-                       set inuse_id / inuse_line
-                       push req_fifo (rnw=1, evict=0)
-                              │
-                              ▼
-                       databank READ (LATENCY cycles)
-                              │
-                              ▼
-                       db_out → output_data mux → out_fifo → req_R beats
-                              │
-                              ▼
-                       finish_fifo entry (rvalid=1) → finish_clear → release inuse
-```
-
-```
- (miss path branches in tagbank)
-                                                          │
-                              ┌───────────no──────────────┘
-                              ▼
-                       evict_set, needs_evict_set, push ar_fifo
-                              │
-                              ▼
-                       victim_ar → mem_AR    │ (parallel) if dirty victim:
-                       mem_R → fill          │  drain db evict port → victim_aw → mem_AW
-                              │
-                              ▼
-                       fill_info_table lookup by victim_rid
-                       db_fill (writes new line into the way)
-                              │
-                              ▼
-                       fill_rvalid stream → req_R beats (critical-word-first)
-                              │
-                              ▼
-                       finish_fifo entry → finish_clear → release inuse
-```
+A hit records the selected way, reads the databank, streams R beats through the
+output FIFO, and releases occupancy through the finish FIFO. A miss records
+fill context, issues the memory read, installs returned blocks in the selected
+way, and forwards the requested blocks critical-word-first. A dirty victim uses
+the writeback path in parallel.
 
 ### 3.2 Write flow
 
-```
- master AW + W ─► input arbiter (prefer_read toggles) ─► tagbank
-                                                            │
-              ┌──────── hit OR full-line WriteEvict ────────┤
-              ▼                                              ▼
-        write hit: merge into existing way            full-line miss:
-        write miss with snoop=101: install new way   issue mem AR (fill),
-        (no fill needed, in_full_write=1)            evict if dirty,
-                                                     RMW merge new bytes
-              │
-              ▼
-        databank WRITE (per-block, wbe from wstrb)
-        req_b.bvalid fires once wdata FIFO drains and
-        finish_fifo has room → master sees BVALID
-              │
-              ▼
-        finish_fifo entry (wvalid=1) → finish_clear → release inuse
-```
+Write hits and full-line WriteEvict transactions proceed directly to databank
+merge or installation. On a partial miss, enabled WSTRB bytes retire through
+the write path while the fill supplies untouched bytes asynchronously. BVALID
+is issued when the W-data FIFO and finish path can retire the write context.
 
 ### 3.3 CBOM flow (when `INCLUDE_CBOM=1`)
 
-```
- master AR with arsnoop ∈ {CleanShared, CleanInvalid, MakeInvalid, CleanInvalidByIndex}
-        │
-        ▼
- tagbank classifies: tb_out_clean (flush dirty), tb_out_inval (drop line)
-   by-tag  (CleanShared/CleanInvalid/MakeInvalid): hit = tag compare in the set
-   by-index (CleanInvalidByIndex, 4'b1011): hit = the WAY named by the tag
-            field's low bits, ANY resident tag (writeback uses the stored tag).
-            Lets tc_flush_controller clean every physical way of a set.
-        │
-        ▼
- If clean → flush dirty data via evict path (writeback to mem)
- If inval → drop line (no fill on subsequent miss until re-fetched)
-        │
-        ▼
- cbom_fifo holds the rid; output muxes a single R beat (rdata='x, rlast=1)
-        │
-        ▼
- finish_fifo entry → finish_clear → release inuse
-```
+The tagbank classifies CleanShared, CleanInvalid, MakeInvalid, and
+CleanInvalidByIndex. By-tag operations compare the resident tag; by-index
+operations select the physical way encoded in the request. Dirty clean
+operations use writeback, invalidating operations drop the line, and every
+maintenance request returns one no-data R acknowledgement before occupancy is
+released.
 
 ---
 
@@ -164,69 +114,39 @@ a clear of the same entry.
 
 ---
 
-## 5. ASCII pipeline / data-path
+## 5. Pipeline and completion
 
-### 5.1 Read miss with dirty eviction (cycle-level sketch)
+### Figure 1.3 — Pipeline timing and finish serialization
 
-```
- t  | front-end (req_*)           | tagbank   | databank      | mem (mem_*)
- ───┼─────────────────────────────┼───────────┼───────────────┼────────────────────
- 0  | AR fires (handshake)        |           |               |
- 1  |                              | s1: read  |               |
- 2  |                              | s2: hit?  |               |
- 3  |                              | tb_valid  |               |
-    |                              | miss+drty | req_fifo push |
- 4  |                              |           | evict drain   | mem_AR (fill)
- 5..|                              |           | victim_w[]    | mem_AW + W beats (writeback)
-    |                              |           |               | mem_R beat 0  ─┐
- N  | req_R beat 0 (critical wd) ◄─────────────────────────────│ mem_R beat 1   │
-    | req_R beat 1                                              │  ...           │
-    | req_R beat 7 (rlast)                                      │ mem_R rlast    │
-    |                              |           | finish_clear  | mem_B          │
-    | inuse_id, inuse_line cleared                                              │
-```
+![A dirty read miss advances from AR handshake through tag lookup, parallel
+fill and writeback, critical-word response, and occupancy release; a full-line
+WriteEvict follows a shorter write pipeline; combined finish entries retire R
+and W phases on separate cycles.](fig/wiki/01_architecture/architecture-f03-pipeline-finish.svg)
+
+**Figure 1.3.** Databank and memory latency change the distance between stages,
+not their ownership order. A combined completion clears each distinct
+read/write target before the finish head advances.
+
+### 5.1 Read miss with dirty eviction
+
+The tagbank identifies the miss after its two-stage lookup. Fill AR traffic and
+dirty writeback traffic then proceed independently. The requested block may
+reach the front end before the line tail and memory B response complete.
 
 (In the bundled fast mem model, `mem_R beat 0` arrives ~5 cycles after
 `mem_AR`; on real DDR, scale that up by the DDR RTT.)
 
 ### 5.2 Write-evict (full-line) hot path
 
-```
- t  | front-end                    | tagbank   | databank      | mem
- ───┼─────────────────────────────┼───────────┼───────────────┼────
- 0  | AW fires                    |           |               |
-    | W beat 0..7 fires (1/cycle) |           |               |
- 1  |                              | s1        |               |
- 2  |                              | s2: hit?  |               |
- 3  |                              | tb_valid  | wdata FIFO    |
-    |                              | full_write|               |
- 4  |                              |           | db_write * 8  |
-    | BVALID (B handshake)        |           |               |
-```
-
-No `mem_AR` issued (full-line shortcut). If the prior occupant of the
-selected way is dirty, a `mem_AW + W*8 + B` runs in parallel on the mem
-side.
+A full-line WriteEvict bypasses `mem_AR` and writes every block directly. If
+the prior occupant is dirty, a `mem_AW + W*LINE_W + B` writeback runs in
+parallel.
 
 ### 5.3 Finish-FIFO state-machine for a combined R + W entry
 
-```
-  finish-fifo head holds: {bvalid=0, rvalid=1, rid=A, wvalid=1, wid=B}
-
-  cycle 0  bvalid_invalid=1 rvalid_invalid=0 → R-phase
-                 clrid = rid (A), fhash = hash(A)
-                 finish_clear = raw & ~same_target          (cdh=0)
-                 clears inuse_id[A], inuse_line[hash(A)]
-                 latches cleared_id=A, cleared_hash=hash(A), cdh=1
-                 pop = 0  (still has W)
-  cycle 1  bvalid_invalid=1 rvalid_invalid=1 → W-phase
-                 clrid = wid (B), fhash = hash(B)
-                 same_target = cdh & (A==B) & (hash(A)==hash(B))
-                                  → 0  for different A,B
-                 finish_clear = raw & ~0 = 1
-                 clears inuse_id[B], inuse_line[hash(B)]
-                 pop = 1  → cdh resets, next entry advances
-```
+For a combined read/write entry, the R target clears first and records the
+cleared ID/hash. The W target clears on the next cycle unless it is the same
+target. The entry pops only after every valid phase has retired.
 
 The implementation is in
 [src/l2_cache.sv](../src/l2_cache.sv).
@@ -304,57 +224,32 @@ Companion module that sits between a narrow-bus accelerator and a wide
 TableCache instance. Lives outside `l2_cache` and is independently
 parameterised; the cache RTL is unchanged.
 
-### 8.1 Block diagram
+### Figure 1.4 — Narrow-port adaptation
 
-```
- narrow AR ─► ┌──────────────────────────────────────────────┐ ─► wide AR
-              │  per-id outstanding tracker (rid_outstanding) │
-              │  per-id offset table (rid_offset_q)           │
-              │  per-id aligned-addr table (rid_alignaddr_q)  │
-              │  ┌──────────────────────────────────────────┐ │
-              │  │  L0 line buffer                          │ │
- narrow R ◄── │  │  {lb_valid, lb_tag, lb_data[BLOCK_W-1:0]}│ │ ◄─ wide R
-              │  └──────────────────────────────────────────┘ │
-              │                                                │
- narrow AW ─► │  AW→W FIFO  [{offset, aligned_tag}; depth=N]   │ ─► wide AW
- narrow W  ─► │     │                                          │ ─► wide W
-              │     └─► lane mux into m_wdata + wstrb          │
-              │     └─► write-merge into lb_data on tag match  │
-              │                                                │
- narrow B  ◄─ │  passthrough                                   │ ◄─ wide B
-              └──────────────────────────────────────────────┘
-```
+![Narrow reads use optional reorder and per-ID offset state, then either hit a
+one-line buffer or issue an aligned wide read; narrow writes use an ordered AW
+FIFO, lane placement, byte enables, and same-line buffer merge before reaching
+the wide cache interface.](fig/wiki/01_architecture/architecture-f04-narrow-shim-flow.svg)
 
-### 8.2 Read path (cycle level)
+**Figure 1.4.** The shim changes width without changing AXI ownership: each
+accepted read keeps its ID-specific slice state, and each W beat consumes the
+oldest accepted AW context. A buffered response owns the narrow R channel until
+handshake.
 
-```
- narrow_ar = miss?  ─► wide_ar fires (single-beat, aligned)
-              ▼
-        cache returns wide_r (after cache hit/miss + DDR RTT)
-              ▼
-        slice narrow word using rid_offset_q[m_rid]
-              ▼
-        register full wide line into {lb_valid, lb_tag, lb_data}
+### 8.1 Read path
 
- narrow_ar = hit ─► ar_buf_accept (combinational), lane mux drives s_rdata
-                    next cycle. Cache untouched.
-```
+On a miss, the shim issues an aligned single-beat wide AR and records the lane
+offset in its per-ID table. The returning beat is sliced with that offset and
+refreshes the line buffer. A buffer hit snapshots the selected word and returns
+without cache traffic.
 
-### 8.3 Write path
+### 8.2 Write path
 
-```
- narrow_aw fires ──► push {offset, aligned_tag} into AW FIFO
-                     issue wide_aw to cache (awsnoop forced ≠ 3'b101)
- narrow_w fires  ──► pop FIFO head
-                     place s_wdata in lane, s_wstrb in mask
-                     drive wide_w
-                     if (lb_valid && aligned_tag == lb_tag):
-                         for each wstrb byte: lb_data[lane.byte] <= s_wdata
-                     ── this is the WRITE-MERGE — no wide re-fetch needed
- wide_b ◄── pass through to narrow_b
-```
+Each accepted AW pushes `{offset, aligned_tag}` into the ordered FIFO. The W
+beat consumes that context, places data and byte enables in the selected lane,
+and merges matching bytes into the line buffer. B responses pass through.
 
-### 8.4 Invariants
+### 8.3 Invariants
 
 | Invariant | How enforced |
 |---|---|
@@ -369,7 +264,7 @@ parameterised; the cache RTL is unchanged.
 | Write back-pressure can never lose a W beat | `s_wready` gated by `~aw_fifo_empty` AND `m_wready`; `s_awready` gated by `~aw_fifo_full` |
 | Exactly one narrow response per read | The shim forwards only the completing `rlast=1` beat and drains any other cache beat. |
 
-### 8.5 What is NOT in the shim
+### 8.4 What is NOT in the shim
 
 * **One outstanding read per ID**: distinct IDs may overlap on the wide port,
   while same-ID reads serialize. The line buffer and narrow R output remain
@@ -380,7 +275,7 @@ parameterised; the cache RTL is unchanged.
 * **No WriteEvict bypass**: a narrow port cannot claim full-line coverage.
   Full-line producers require a separate wide path.
 
-### 8.6 Verification
+### 8.5 Verification
 
 | Test | What it proves |
 |---|---|
@@ -395,7 +290,7 @@ parameterised; the cache RTL is unchanged.
 `test_narrow_shim`/latency/throughput run shim-only. The multiread, reorder,
 shim-cache, and WRAP suites run the shim in front of `l2_cache` end-to-end.
 
-### 8.7 Optional read reorder buffer (`READ_REORDER_DEPTH`)
+### 8.6 Optional read reorder buffer (`READ_REORDER_DEPTH`)
 
 `tc_narrow_shim` is a thin wrapper. At the default `READ_REORDER_DEPTH=1` it
 instantiates `tc_narrow_shim_core` directly, with one read outstanding per ID.

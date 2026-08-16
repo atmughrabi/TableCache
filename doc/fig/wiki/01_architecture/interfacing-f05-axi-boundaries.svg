@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="650" viewBox="0 0 1600 650" fill="#3A414A" role="img" aria-labelledby="figTitle figDesc">
+  <title id="figTitle">AXI boundary contract</title>
+  <desc id="figDesc">A system master connects to the request-side AXI channels and ACE-style snoop sidebands. The cache connects its memory-side AXI channels to an error-free backend. Both interfaces share one synchronous clock and reset.</desc>
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#1071E5"/></marker>
+    <marker id="arrow-green" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#008A0E"/></marker>
+    <marker id="arrow-orange" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#CC4E00"/></marker>
+    <style>
+      :root{color-scheme:light dark}
+      @media (prefers-color-scheme:dark){
+        [stroke="#000000"]{stroke:#E7E2D9}[fill="#3A414A"]{fill:#E7E2D9}[stroke="#3A414A"]{stroke:#E7E2D9}
+        [fill="#979EA8"]{fill:#A8ADB0}[stroke="#979EA8"]{stroke:#A8ADB0}
+        [fill="#F7F4E4"]{fill:#24282B}[stroke="#F7F4E4"]{stroke:#24282B}
+        [fill="#C1E4F7"]{fill:#29363B}[stroke="#C1E4F7"]{stroke:#29363B}
+        [fill="#D7FAF5"]{fill:#28392C}[stroke="#D7FAF5"]{stroke:#28392C}
+        [fill="#A7A6FF"]{fill:#332F39}[stroke="#A7A6FF"]{stroke:#332F39}
+        [fill="#FFDDA6"]{fill:#3D3526}[stroke="#FFDDA6"]{stroke:#3D3526}
+        [fill="#1071E5"]{fill:#9CB8E8}[stroke="#1071E5"]{stroke:#9CB8E8}
+        [fill="#008A0E"]{fill:#92C89A}[stroke="#008A0E"]{stroke:#92C89A}
+        [fill="#635DFF"]{fill:#B5A8C0}[stroke="#635DFF"]{stroke:#B5A8C0}
+        [fill="#CC4E00"]{fill:#D6A071}[stroke="#CC4E00"]{stroke:#D6A071}
+      }
+      .sans{font-family:Inter,Helvetica,Arial,sans-serif}.mono{font-family:"SFMono-Regular",Consolas,monospace}
+      .title{font-size:46px;font-weight:700}.pane{font-size:30px;font-weight:700}.block{font-size:24px;font-weight:700}.body{font-size:21px}.small{font-size:20px}
+    </style>
+  </defs>
+
+  <rect x="20" y="10" width="1560" height="145" rx="8" fill="#F7F4E4"/>
+  <text x="50" y="70" class="sans title">AXI boundary contract</text>
+  <text x="50" y="110" class="sans body">The request side owns cacheability and maintenance; the memory side owns fills and writebacks</text>
+  <line x1="50" y1="140" x2="1550" y2="140" stroke="#979EA8" stroke-width="1"/>
+
+  <rect x="60" y="250" width="220" height="150" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="170" y="310" text-anchor="middle" class="sans block">system master</text>
+  <text x="170" y="344" text-anchor="middle" class="mono small">AXI4 + snoop</text>
+  <rect x="370" y="250" width="220" height="150" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="480" y="304" text-anchor="middle" class="sans block">front-end port</text>
+  <text x="480" y="338" text-anchor="middle" class="mono small">req_* channels</text>
+  <text x="480" y="368" text-anchor="middle" class="mono small">arsnoop / awsnoop</text>
+  <rect x="680" y="230" width="240" height="190" rx="8" fill="#A7A6FF" stroke="#000000" stroke-width="4"/>
+  <text x="800" y="302" text-anchor="middle" class="sans pane">l2_cache</text>
+  <text x="800" y="342" text-anchor="middle" class="sans body">write-back</text>
+  <text x="800" y="372" text-anchor="middle" class="sans body">write-allocate</text>
+  <rect x="1010" y="250" width="220" height="150" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="1120" y="304" text-anchor="middle" class="sans block">memory port</text>
+  <text x="1120" y="338" text-anchor="middle" class="mono small">mem_* channels</text>
+  <text x="1120" y="368" text-anchor="middle" class="sans small">no snoop sideband</text>
+  <rect x="1320" y="250" width="220" height="150" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="1430" y="304" text-anchor="middle" class="sans block">memory backend</text>
+  <text x="1430" y="338" text-anchor="middle" class="mono small">DDR / HBM / RAM</text>
+  <text x="1430" y="368" text-anchor="middle" class="mono small">R/B = OKAY</text>
+
+  <g fill="none" stroke="#1071E5" stroke-width="3" marker-end="url(#arrow-blue)">
+    <path d="M284 290 H366"/><path d="M594 290 H676"/><path d="M924 290 H1006"/><path d="M1234 290 H1316"/>
+  </g>
+  <g fill="none" stroke="#1071E5" stroke-width="3" marker-end="url(#arrow-blue)">
+    <path d="M366 365 H284"/><path d="M676 365 H594"/>
+  </g>
+  <g fill="none" stroke="#008A0E" stroke-width="3" marker-end="url(#arrow-green)">
+    <path d="M1006 365 H924"/><path d="M1316 365 H1234"/>
+  </g>
+  <g fill="none" stroke="#CC4E00" stroke-width="3" marker-end="url(#arrow-orange)">
+    <path d="M170 246 V205 H480 V246"/>
+  </g>
+  <rect x="265" y="177" width="130" height="26" rx="5" fill="#F7F4E4"/>
+  <text x="330" y="199" text-anchor="middle" class="sans small" fill="#CC4E00" font-weight="700">ACE snoop</text>
+  <text x="325" y="236" text-anchor="middle" class="sans small" fill="#1071E5" font-weight="700">AR·AW·W</text>
+  <text x="325" y="398" text-anchor="middle" class="sans small" fill="#1071E5" font-weight="700">R/B</text>
+  <text x="635" y="272" text-anchor="middle" class="sans small" fill="#1071E5" font-weight="700">req</text>
+  <text x="635" y="398" text-anchor="middle" class="sans small" fill="#1071E5" font-weight="700">rsp</text>
+  <text x="965" y="272" text-anchor="middle" class="sans small" fill="#1071E5" font-weight="700">fill/WB</text>
+  <text x="965" y="398" text-anchor="middle" class="sans small" fill="#008A0E" font-weight="700">R/B</text>
+
+  <line x1="800" y1="424" x2="800" y2="472" stroke="#979EA8" stroke-width="2"/>
+  <rect x="650" y="470" width="300" height="70" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="800" y="500" text-anchor="middle" class="sans block">single clock domain</text>
+  <text x="800" y="528" text-anchor="middle" class="mono small">clk · synchronous rst</text>
+
+  <rect x="60" y="565" width="1480" height="60" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="90" y="602" class="sans body"><tspan font-weight="700" fill="#635DFF">Invariant:</tspan> every VALID and payload remains stable until handshake, and the backend preserves IDs and WRAP burst semantics.</text>
+</svg>

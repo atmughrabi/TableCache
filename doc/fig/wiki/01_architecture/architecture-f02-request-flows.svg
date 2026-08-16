@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="#3A414A" role="img" aria-labelledby="figTitle figDesc">
+  <title id="figTitle">TableCache request flows</title>
+  <desc id="figDesc">Read hits use tag and databank state without memory traffic. Read misses create fill context and may write back a dirty victim. Writes choose a direct or read-modify-write path. Cache-maintenance requests classify by tag or physical way before acknowledging completion.</desc>
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#1071E5"/></marker>
+    <marker id="arrow-green" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#008A0E"/></marker>
+    <marker id="arrow-purple" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#635DFF"/></marker>
+    <marker id="arrow-red" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L13 5.5 L0 11 Z" fill="#C92D39"/></marker>
+    <style>
+      :root{color-scheme:light dark}
+      @media (prefers-color-scheme:dark){
+        [stroke="#000000"]{stroke:#E7E2D9}
+        [fill="#3A414A"]{fill:#E7E2D9}[stroke="#3A414A"]{stroke:#E7E2D9}
+        [fill="#979EA8"]{fill:#A8ADB0}[stroke="#979EA8"]{stroke:#A8ADB0}
+        [fill="#F7F4E4"]{fill:#24282B}[stroke="#F7F4E4"]{stroke:#24282B}
+        [fill="#C1E4F7"]{fill:#29363B}[stroke="#C1E4F7"]{stroke:#29363B}
+        [fill="#D7FAF5"]{fill:#28392C}[stroke="#D7FAF5"]{stroke:#28392C}
+        [fill="#A7A6FF"]{fill:#332F39}[stroke="#A7A6FF"]{stroke:#332F39}
+        [fill="#FFDDA6"]{fill:#3D3526}[stroke="#FFDDA6"]{stroke:#3D3526}
+        [fill="#FFBBB1"]{fill:#402B2D}[stroke="#FFBBB1"]{stroke:#402B2D}
+        [fill="#1071E5"]{fill:#9CB8E8}[stroke="#1071E5"]{stroke:#9CB8E8}
+        [fill="#008A0E"]{fill:#92C89A}[stroke="#008A0E"]{stroke:#92C89A}
+        [fill="#635DFF"]{fill:#B5A8C0}[stroke="#635DFF"]{stroke:#B5A8C0}
+        [fill="#CC4E00"]{fill:#D6A071}[stroke="#CC4E00"]{stroke:#D6A071}
+        [fill="#C92D39"]{fill:#E39AA0}[stroke="#C92D39"]{stroke:#E39AA0}
+      }
+      .sans{font-family:Inter,Helvetica,Arial,sans-serif}.mono{font-family:"SFMono-Regular",Consolas,monospace}
+      .title{font-size:46px;font-weight:700}.pane{font-size:30px;font-weight:700}.block{font-size:24px;font-weight:700}.body{font-size:21px}.small{font-size:20px}
+    </style>
+  </defs>
+
+  <rect x="20" y="10" width="1560" height="145" rx="8" fill="#F7F4E4"/>
+  <text x="50" y="70" class="sans title">TableCache request flows</text>
+  <text x="50" y="110" class="sans body">Each request keeps one completion context while hit, fill, writeback, and maintenance work proceed</text>
+  <line x1="50" y1="140" x2="1550" y2="140" stroke="#979EA8" stroke-width="1"/>
+
+  <rect x="40" y="175" width="1520" height="330" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="65" y="216" class="sans pane" fill="#1071E5">Read</text>
+  <rect x="60" y="276" width="170" height="86" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="145" y="314" text-anchor="middle" class="sans block">AR accept</text>
+  <text x="145" y="342" text-anchor="middle" class="mono small">ID + hash</text>
+  <rect x="280" y="276" width="180" height="86" rx="8" fill="#A7A6FF" stroke="#000000" stroke-width="2"/>
+  <text x="370" y="314" text-anchor="middle" class="sans block">tag lookup</text>
+  <text x="370" y="342" text-anchor="middle" class="mono small">hit / miss</text>
+
+  <rect x="520" y="210" width="180" height="82" rx="8" fill="#FFDDA6" stroke="#000000" stroke-width="2"/>
+  <text x="610" y="246" text-anchor="middle" class="sans block">way context</text>
+  <text x="610" y="274" text-anchor="middle" class="mono small">way_table</text>
+  <rect x="760" y="210" width="180" height="82" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="850" y="246" text-anchor="middle" class="sans block">databank read</text>
+  <text x="850" y="274" text-anchor="middle" class="mono small">LATENCY cycles</text>
+  <rect x="1000" y="210" width="180" height="82" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="1090" y="246" text-anchor="middle" class="sans block">R beats</text>
+  <text x="1090" y="274" text-anchor="middle" class="mono small">out_fifo</text>
+  <rect x="1240" y="210" width="210" height="82" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="1345" y="246" text-anchor="middle" class="sans block">finish clear</text>
+  <text x="1345" y="274" text-anchor="middle" class="mono small">release ID/hash</text>
+
+  <rect x="520" y="382" width="180" height="82" rx="8" fill="#FFDDA6" stroke="#000000" stroke-width="2"/>
+  <text x="610" y="418" text-anchor="middle" class="sans block">miss context</text>
+  <text x="610" y="446" text-anchor="middle" class="mono small">AR + fill ctx</text>
+  <rect x="760" y="382" width="180" height="82" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="850" y="412" text-anchor="middle" class="sans block">memory path</text>
+  <text x="850" y="440" text-anchor="middle" class="mono small">fill + WB</text>
+  <rect x="1000" y="382" width="180" height="82" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="1090" y="418" text-anchor="middle" class="sans block">fill fanout</text>
+  <text x="1090" y="446" text-anchor="middle" class="mono small">DB + R fanout</text>
+  <rect x="1240" y="344" width="210" height="60" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="1345" y="370" text-anchor="middle" class="sans block">DB install</text>
+  <text x="1345" y="394" text-anchor="middle" class="mono small">db_fill</text>
+  <rect x="1240" y="422" width="210" height="60" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="1345" y="448" text-anchor="middle" class="sans block">critical R beats</text>
+  <text x="1345" y="472" text-anchor="middle" class="mono small">requested first</text>
+
+  <g fill="none" stroke="#1071E5" stroke-width="3" marker-end="url(#arrow-blue)">
+    <path d="M234 319 H276"/><path d="M464 305 H488 V251 H516"/><path d="M704 251 H756"/><path d="M944 251 H996"/><path d="M1184 251 H1236"/>
+  </g>
+  <g fill="none" stroke="#008A0E" stroke-width="3" marker-end="url(#arrow-green)">
+    <path d="M464 333 H488 V423 H516"/><path d="M704 423 H756"/><path d="M944 423 H996"/>
+    <path d="M1184 423 H1210 V374 H1236"/><path d="M1184 423 H1210 V452 H1236"/>
+    <path d="M1300 340 V296"/><path d="M1400 418 H1475 V320 H1400 V296"/>
+  </g>
+  <text x="478" y="240" text-anchor="end" class="sans small" fill="#1071E5" font-weight="700">hit</text>
+  <text x="478" y="386" text-anchor="end" class="sans small" fill="#008A0E" font-weight="700">miss</text>
+
+  <rect x="40" y="530" width="1520" height="190" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="65" y="571" class="sans pane" fill="#1071E5">Write</text>
+  <rect x="60" y="604" width="180" height="82" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="150" y="640" text-anchor="middle" class="sans block">AW/W context</text>
+  <text x="150" y="668" text-anchor="middle" class="mono small">saved + FIFO</text>
+  <rect x="300" y="604" width="180" height="82" rx="8" fill="#A7A6FF" stroke="#000000" stroke-width="2"/>
+  <text x="390" y="640" text-anchor="middle" class="sans block">classify</text>
+  <text x="390" y="668" text-anchor="middle" class="mono small">hit/full/RMW</text>
+  <rect x="540" y="556" width="190" height="68" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="635" y="586" text-anchor="middle" class="sans block">direct path</text>
+  <text x="635" y="612" text-anchor="middle" class="mono small">hit / full</text>
+  <rect x="540" y="636" width="190" height="68" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="635" y="666" text-anchor="middle" class="sans block">partial miss</text>
+  <text x="635" y="692" text-anchor="middle" class="mono small">W bytes + fill</text>
+  <rect x="800" y="604" width="190" height="82" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="895" y="640" text-anchor="middle" class="sans block">DB merge</text>
+  <text x="895" y="668" text-anchor="middle" class="mono small">WSTRB bytes</text>
+  <rect x="1060" y="604" width="190" height="82" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="1155" y="640" text-anchor="middle" class="sans block">B response</text>
+  <text x="1155" y="668" text-anchor="middle" class="mono small">wdata drained</text>
+  <rect x="1320" y="604" width="190" height="82" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="1415" y="640" text-anchor="middle" class="sans block">finish clear</text>
+  <text x="1415" y="668" text-anchor="middle" class="mono small">write domain</text>
+  <g fill="none" stroke="#1071E5" stroke-width="3" marker-end="url(#arrow-blue)">
+    <path d="M244 645 H296"/><path d="M484 625 H512 V590 H536"/><path d="M734 590 H770 V630 H796"/><path d="M994 645 H1056"/><path d="M1254 645 H1316"/>
+  </g>
+  <g fill="none" stroke="#008A0E" stroke-width="3" marker-end="url(#arrow-green)">
+    <path d="M484 670 H536"/><path d="M734 670 H796"/>
+  </g>
+
+  <rect x="40" y="745" width="1520" height="210" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="65" y="786" class="sans pane" fill="#635DFF">Cache maintenance</text>
+  <rect x="60" y="828" width="190" height="82" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="155" y="864" text-anchor="middle" class="sans block">AR + snoop</text>
+  <text x="155" y="892" text-anchor="middle" class="mono small">CBOM opcode</text>
+  <rect x="310" y="828" width="210" height="82" rx="8" fill="#A7A6FF" stroke="#000000" stroke-width="2"/>
+  <text x="415" y="858" text-anchor="middle" class="sans block">classify target</text>
+  <text x="415" y="886" text-anchor="middle" class="mono small">tag / index</text>
+  <rect x="580" y="782" width="200" height="68" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="680" y="812" text-anchor="middle" class="sans block">clean dirty</text>
+  <text x="680" y="838" text-anchor="middle" class="mono small">writeback</text>
+  <rect x="580" y="866" width="200" height="68" rx="8" fill="#FFBBB1" stroke="#000000" stroke-width="2"/>
+  <text x="680" y="896" text-anchor="middle" class="sans block">invalidate</text>
+  <text x="680" y="922" text-anchor="middle" class="mono small">drop line</text>
+  <rect x="850" y="828" width="190" height="82" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+  <text x="945" y="858" text-anchor="middle" class="sans block">single R ack</text>
+  <text x="945" y="886" text-anchor="middle" class="mono small">no data · RLAST</text>
+  <rect x="1110" y="828" width="210" height="82" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+  <text x="1215" y="858" text-anchor="middle" class="sans block">finish clear</text>
+  <text x="1215" y="886" text-anchor="middle" class="mono small">release ID/hash</text>
+  <g fill="none" stroke="#635DFF" stroke-width="3" marker-end="url(#arrow-purple)">
+    <path d="M254 869 H306"/>
+  </g>
+  <g fill="none" stroke="#008A0E" stroke-width="3" marker-end="url(#arrow-green)">
+    <path d="M524 850 H550 V816 H576"/><path d="M784 816 H820 V850 H846"/><path d="M1044 869 H1106"/>
+  </g>
+  <g fill="none" stroke="#C92D39" stroke-width="3" marker-end="url(#arrow-red)">
+    <path d="M524 888 H550 V900 H576"/><path d="M784 900 H820 V888 H846"/>
+  </g>
+</svg>
