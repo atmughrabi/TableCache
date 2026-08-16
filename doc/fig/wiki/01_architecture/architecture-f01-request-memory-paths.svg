@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="#3A414A" role="img" aria-labelledby="figTitle figDesc">
+  <title id="figTitle">TableCache request and memory paths</title>
+  <desc id="figDesc">AXI read and write addresses pass through input queues and tag lookup, while W data bypasses tag lookup and enters the databank from its FIFO. Hit data comes from the databank, while returned fill data feeds both the databank and ordered response logic through an optional victim cache. An invariant panel summarizes ID, ordering, and writeback rules.</desc>
+  <defs>
+    <marker id="arrow-data" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L13 5.5 L0 11 Z" fill="#1071E5"/>
+    </marker>
+    <marker id="arrow-memory" viewBox="0 0 13 11" markerWidth="13" markerHeight="11" refX="13" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L13 5.5 L0 11 Z" fill="#008A0E"/>
+    </marker>
+    <style>
+      :root { color-scheme: light dark; }
+      @media (prefers-color-scheme: dark) {
+        [stroke="#000000"]{stroke:#E7E2D9}
+        [fill="#3A414A"]{fill:#E7E2D9}[stroke="#3A414A"]{stroke:#E7E2D9}
+        [fill="#979EA8"]{fill:#A8ADB0}[stroke="#979EA8"]{stroke:#A8ADB0}
+        [fill="#F7F4E4"]{fill:#24282B}[stroke="#F7F4E4"]{stroke:#24282B}
+        [fill="#C1E4F7"]{fill:#29363B}[stroke="#C1E4F7"]{stroke:#29363B}
+        [fill="#D7FAF5"]{fill:#28392C}[stroke="#D7FAF5"]{stroke:#28392C}
+        [fill="#A7A6FF"]{fill:#332F39}[stroke="#A7A6FF"]{stroke:#332F39}
+        [fill="#FFDDA6"]{fill:#3D3526}[stroke="#FFDDA6"]{stroke:#3D3526}
+        [fill="#1071E5"]{fill:#9CB8E8}[stroke="#1071E5"]{stroke:#9CB8E8}
+        [fill="#008A0E"]{fill:#92C89A}[stroke="#008A0E"]{stroke:#92C89A}
+        [fill="#635DFF"]{fill:#B5A8C0}[stroke="#635DFF"]{stroke:#B5A8C0}
+        [fill="#CC4E00"]{fill:#D6A071}[stroke="#CC4E00"]{stroke:#D6A071}
+      }
+      .sans{font-family:Inter,Helvetica,Arial,sans-serif}
+      .mono{font-family:"SFMono-Regular",Consolas,monospace}
+      .title{font-size:46px;font-weight:700}
+      .pane{font-size:32px;font-weight:700}
+      .block{font-size:26px;font-weight:700}
+      .body{font-size:22px}
+      .small{font-size:20px}
+    </style>
+  </defs>
+
+  <rect x="20" y="10" width="1560" height="145" rx="8" fill="#F7F4E4"/>
+  <text x="50" y="70" class="sans title">TableCache request and memory paths</text>
+  <text x="50" y="110" class="sans body">l2_cache: tag and replacement state select the data path; misses and dirty evictions share the memory path</text>
+  <line x1="50" y1="140" x2="1550" y2="140" stroke="#979EA8" stroke-width="1"/>
+
+  <g>
+    <rect x="50" y="190" width="210" height="120" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+    <text x="155" y="242" text-anchor="middle" class="sans block">AXI request</text>
+    <text x="155" y="276" text-anchor="middle" class="mono small">AR · AW · W</text>
+
+    <rect x="300" y="190" width="210" height="120" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+    <text x="405" y="236" text-anchor="middle" class="sans block">input queues</text>
+    <text x="405" y="270" text-anchor="middle" class="mono small">saved AR / AW</text>
+    <text x="405" y="296" text-anchor="middle" class="mono small">W / AWID FIFO</text>
+
+    <rect x="550" y="190" width="210" height="120" rx="8" fill="#A7A6FF" stroke="#000000" stroke-width="2"/>
+    <text x="655" y="236" text-anchor="middle" class="sans block">tag + policy</text>
+    <text x="655" y="270" text-anchor="middle" class="mono small">l2_tagbank</text>
+    <text x="655" y="296" text-anchor="middle" class="mono small">hit/dirty/way</text>
+
+    <rect x="800" y="190" width="210" height="120" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+    <text x="905" y="242" text-anchor="middle" class="sans block">databank</text>
+    <text x="905" y="270" text-anchor="middle" class="mono small">l2_databank</text>
+    <text x="905" y="296" text-anchor="middle" class="mono small">TDP/SDP banks</text>
+
+    <rect x="1050" y="190" width="210" height="120" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+    <text x="1155" y="236" text-anchor="middle" class="sans block">finish + output</text>
+    <text x="1155" y="270" text-anchor="middle" class="mono small">finish_fifo</text>
+    <text x="1155" y="296" text-anchor="middle" class="mono small">out_fifo</text>
+
+    <rect x="1300" y="190" width="210" height="120" rx="8" fill="#C1E4F7" stroke="#000000" stroke-width="2"/>
+    <text x="1405" y="242" text-anchor="middle" class="sans block">AXI response</text>
+    <text x="1405" y="276" text-anchor="middle" class="mono small">R · B</text>
+  </g>
+
+  <g fill="none" stroke="#1071E5" stroke-width="3" marker-end="url(#arrow-data)">
+    <path d="M264 250 H296"/>
+    <path d="M514 250 H546"/>
+    <path d="M764 250 H796"/>
+    <path d="M1014 250 H1046"/>
+    <path d="M1264 250 H1296"/>
+    <path d="M405 186 V165 H905 V186"/>
+  </g>
+  <rect x="614" y="142" width="82" height="20" rx="5" fill="#F7F4E4"/>
+  <text x="655" y="160" text-anchor="middle" class="sans small" fill="#1071E5" font-weight="700">W data</text>
+
+  <rect x="50" y="470" width="440" height="330" rx="8" fill="#F7F4E4" stroke="#000000" stroke-width="2"/>
+  <text x="75" y="515" class="sans pane" fill="#635DFF">Ordering invariants</text>
+  <line x1="75" y1="535" x2="465" y2="535" stroke="#979EA8" stroke-width="1"/>
+  <circle cx="88" cy="570" r="7" fill="#635DFF"/>
+  <text x="112" y="578" class="sans body">read/write IDs use separate domains</text>
+  <circle cx="88" cy="616" r="7" fill="#635DFF"/>
+  <text x="112" y="624" class="sans body">line hashes serialize conflicts</text>
+  <circle cx="88" cy="662" r="7" fill="#1071E5"/>
+  <text x="112" y="670" class="sans body">queues absorb bounded overlap</text>
+  <circle cx="88" cy="708" r="7" fill="#1071E5"/>
+  <text x="112" y="716" class="sans body">responses ordered per AXI ID</text>
+  <circle cx="88" cy="754" r="7" fill="#008A0E"/>
+  <text x="112" y="762" class="sans body">dirty writeback moves one full line</text>
+
+  <g>
+    <rect x="800" y="500" width="210" height="140" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+    <text x="905" y="544" text-anchor="middle" class="sans block">memory path</text>
+    <text x="905" y="580" text-anchor="middle" class="mono small">fill · evict</text>
+    <text x="905" y="608" text-anchor="middle" class="mono small">writeback</text>
+
+    <rect x="1050" y="500" width="210" height="140" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+    <text x="1155" y="554" text-anchor="middle" class="sans block">victim cache</text>
+    <text x="1155" y="592" text-anchor="middle" class="sans small">optional</text>
+
+    <rect x="1300" y="500" width="210" height="140" rx="8" fill="#D7FAF5" stroke="#000000" stroke-width="2"/>
+    <text x="1405" y="554" text-anchor="middle" class="sans block">main memory</text>
+    <text x="1405" y="592" text-anchor="middle" class="mono small">AXI4 backend</text>
+  </g>
+
+  <g fill="none" stroke="#008A0E" stroke-width="3" marker-end="url(#arrow-memory)">
+    <path d="M655 314 V570 H796"/>
+    <path d="M870 314 V496"/>
+    <path d="M920 496 V314"/>
+    <path d="M990 496 V440 H1040 V350 H1155 V314"/>
+    <path d="M1014 540 H1046"/>
+    <path d="M1264 540 H1296"/>
+    <path d="M1296 600 H1264"/>
+    <path d="M1046 600 H1014"/>
+  </g>
+
+  <rect x="764" y="386" width="102" height="30" rx="5" fill="#F7F4E4"/>
+  <text x="858" y="410" text-anchor="end" class="sans small" fill="#008A0E" font-weight="700">writeback</text>
+  <rect x="924" y="386" width="112" height="30" rx="5" fill="#F7F4E4"/>
+  <text x="932" y="410" class="sans small" fill="#008A0E" font-weight="700">fill to data</text>
+  <rect x="1050" y="354" width="180" height="30" rx="5" fill="#F7F4E4"/>
+  <text x="1061" y="378" class="sans small" fill="#008A0E" font-weight="700">fill to response</text>
+  <rect x="660" y="420" width="188" height="30" rx="5" fill="#F7F4E4"/>
+  <text x="668" y="444" class="sans small" fill="#008A0E" font-weight="700">miss/fill request</text>
+
+  <rect x="20" y="825" width="1560" height="60" rx="8" fill="#F7F4E4"/>
+  <line x1="50" y1="835" x2="1550" y2="835" stroke="#979EA8" stroke-width="1"/>
+  <text x="50" y="870" class="sans small">Blue: address/control, W data, responses</text>
+  <text x="620" y="870" class="sans small">Green: fill, forwarding, writeback</text>
+  <text x="1110" y="870" class="sans small">Purple: tag and policy state</text>
+</svg>

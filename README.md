@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="doc/assets/logo.png" alt="TableCache logo" width="240">
+  <img src="doc/assets/logo.png" alt="TableCache logo" width="180">
 </p>
 
 # TableCache
@@ -37,6 +37,7 @@ and the [FPT 2024 paper](https://doi.org/10.1109/ICFPT64416.2024.11113454).
 | Verification methods and test inventory | [doc/VERIFICATION.md](doc/VERIFICATION.md) |
 | GRASP policy | [doc/wiki/GRASP_Policy.md](doc/wiki/GRASP_Policy.md) |
 | UltraRAM mode | [doc/wiki/URAM_Mode.md](doc/wiki/URAM_Mode.md) |
+| Figure authoring standard | [doc/fig/README.md](doc/fig/README.md) |
 | Board-specific results | [doc/deployment/README.md](doc/deployment/README.md) |
 
 ## Repository layout

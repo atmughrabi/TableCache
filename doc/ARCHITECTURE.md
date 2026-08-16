@@ -16,52 +16,22 @@ Academic references are linked from the repository
 
 ## 2. Top-level block diagram
 
-```
- ┌─────────────────────────── l2_cache.sv (request → response) ───────────────────────────┐
- │                                                                                         │
- │     ┌────────────┐   tb_advance   ┌─────────────┐    tb_valid    ┌────────────────┐    │
- │ req─►│  Input    ├───────────────►│   Tagbank   ├──hit/dirty/────►│  Way / Lookup  │    │
- │ AR/AW│  arbiter   │ (saved_ar(W)) │ (2-stage    │   way / tag     │  Tables        │    │
- │      │ prefer_read│                │  pipeline)  │                 │ (way_table,   │    │
- │      └─────┬──────┘                └─────┬───────┘                 │ fill_info,    │    │
- │            │ chosen_*                    │                         │ premature_*)  │    │
- │            │                             │                         └──────┬─────────┘   │
- │            │                             │                                │             │
- │            │                             ▼                                ▼             │
- │            │                       ┌─────────────┐               ┌───────────────┐      │
- │            │                       │ Inuse / State│              │  Databank      │     │
- │            │                       │ trackers:   │               │  (l2_databank) │     │
- │            │                       │  inuse_id   │               │  2 ports, BRAM │     │
- │            │                       │  inuse_line │  db_req       │  parameterised │     │
- │            │                       │  rdata/wdata│ ──────────────►│  LATENCY pipe  │     │
- │            │                       │  evict      │               │                │     │
- │            │                       │  needs_evict│   db_out_*    │  Two output    │     │
- │            │                       └──────┬──────┘ ◄─────────────┤  FIFOs (port0, │     │
- │            │                              │                       │   port1)       │     │
- │            ▼                              │                       └──┬──────┬──────┘     │
- │      ┌───────────┐                        ▼                          │      │            │
- │      │  W FIFO   │            ┌────────────────────────┐              │ Hit  │ Evict     │
- │ req──►│ (wdata_*) │            │   finish_fifo (4-deep)  │             │ data │ data      │
- │  W   │           │            │ B+R+W phase serializer │             ▼      ▼            │
- │      └─────┬─────┘            └──────────┬─────────────┘     ┌────────────────┐         │
- │            │                              │ finish_clear     │  out_fifo      │ ►req_R   │
- │            │ wdata to DB                  │ (id, hash)       │  + req_R mux   │  rdata   │
- │            └──────────────────────────────┴──────────────────►│                ├─►req_B   │
- │                                                               └────────────────┘  bvalid │
- │                                                                                          │
- │ ─── Memory side ─────────────────────────────────────────────────────────────────────    │
- │       ┌───────────────┐  victim_ar  ┌──────────────┐                                     │
- │       │  ar_fifo      ├────────────►│ victim_cache │──► mem_AR (fill request)            │
- │       │ (miss-AR queue)│             │ (optional)   │◄── mem_R  (fill returning)         │
- │       └───────────────┘             │              │                                     │
- │                                     │  ──────────► │──► mem_AW + W (writeback)           │
- │       ┌───────────────┐  victim_aw  │              │◄── mem_B                            │
- │       │ Evict logic   ├────────────►│              │                                     │
- │       │ (start_evict, │             │  if disabled │ ── direct passthrough ─────────────►│
- │       │  evict_port)  │             └──────────────┘    mem_* ports                      │
- │       └───────────────┘                                                                  │
- └──────────────────────────────────────────────────────────────────────────────────────────┘
-```
+Architecture figures use the `1.x` sequence.
+
+### Figure 1.1 — Request and memory paths
+
+![AXI read and write addresses pass through input queues and tag lookup, while
+W data bypasses tag lookup and enters the databank from its FIFO. Hit data comes
+from the databank, while returned fill data feeds both the databank and ordered
+response logic through an optional victim cache. The invariant panel states
+that read/write IDs use separate domains, line hashes serialize conflicts,
+queues absorb bounded overlap, responses remain ordered per ID, and dirty
+writeback moves one full line.](fig/wiki/01_architecture/architecture-f01-request-memory-paths.svg)
+
+**Figure 1.1.** Address context selects the tag and replacement path; W data
+uses its ordered FIFO to reach the databank directly. Read and write ID domains
+serialize independently, and the optional victim cache remains transparent to
+the cache-side request and response contracts.
 
 Key modules (each is its own `.sv`):
 

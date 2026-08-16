@@ -12,6 +12,7 @@ In-tree documents remain the source of truth.
 | Internal architecture | [../ARCHITECTURE.md](../ARCHITECTURE.md) |
 | Verification and test inventory | [../VERIFICATION.md](../VERIFICATION.md) |
 | Vivado AXI VIP | [../AXI_VIP.md](../AXI_VIP.md) |
+| Figure authoring standard | [../fig/README.md](../fig/README.md) |
 | Board selection and timing | [../deployment/README.md](../deployment/README.md) |
 | GRASP policy | [GRASP_Policy.md](GRASP_Policy.md) |
 | UltraRAM databank | [URAM_Mode.md](URAM_Mode.md) |
