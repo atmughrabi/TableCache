@@ -303,4 +303,48 @@ module dut_l2top
         .m00_axi_bid      (m_bid),
         .m00_axi_bready   (m_bready)
     );
+
+    logic [31:0] pc_violations_s, pc_violations_m;
+    wire [31:0] pc_violations_total = pc_violations_s + pc_violations_m;
+
+    axi4_protocol_checker #(
+        .ADDR_W        (ADDR_W),
+        .DATA_W        (BLOCK_W),
+        .ID_W          (READ_ID_WIDTH),
+        .CHECK_C6      (1'b0),
+        .READ_ID_DEPTH (4),
+        .WRITE_ID_DEPTH(2)
+    ) pc_slave (
+        .clk(clk), .rst(rst),
+        .araddr(s_araddr), .arlen(s_arlen), .arsize(s_arsize), .arburst(s_arburst),
+        .arid(s_arid), .arvalid(s_arvalid), .arready(s_arready),
+        .rdata(s_rdata), .rresp(s_rresp), .rlast(s_rlast), .rid(s_rid),
+        .rvalid(s_rvalid), .rready(s_rready),
+        .awaddr(s_awaddr), .awlen(s_awlen), .awsize(s_awsize), .awburst(s_awburst),
+        .awid(s_awid), .awvalid(s_awvalid), .awready(s_awready),
+        .wdata(s_wdata), .wstrb(s_wstrb), .wlast(s_wlast),
+        .wvalid(s_wvalid), .wready(s_wready),
+        .bresp(s_bresp), .bid(s_bid), .bvalid(s_bvalid), .bready(s_bready),
+        .violations(pc_violations_s)
+    );
+
+    axi4_protocol_checker #(
+        .ADDR_W                  (ADDR_W),
+        .DATA_W                  (BLOCK_W),
+        .ID_W                    (M_ID_WIDTH),
+        .CHECK_B1_RESPONSE_VALID (1'b0),
+        .CHECK_RESPONSE_STABILITY(1'b0)
+    ) pc_mem (
+        .clk(clk), .rst(rst),
+        .araddr(m_araddr), .arlen(m_arlen), .arsize(m_arsize), .arburst(m_arburst),
+        .arid(m_arid), .arvalid(m_arvalid), .arready(m_arready),
+        .rdata(m_rdata), .rresp(m_rresp), .rlast(m_rlast), .rid(m_rid),
+        .rvalid(m_rvalid), .rready(m_rready),
+        .awaddr(m_awaddr), .awlen(m_awlen), .awsize(m_awsize), .awburst(m_awburst),
+        .awid(m_awid), .awvalid(m_awvalid), .awready(m_awready),
+        .wdata(m_wdata), .wstrb(m_wstrb), .wlast(m_wlast),
+        .wvalid(m_wvalid), .wready(m_wready),
+        .bresp(m_bresp), .bid(m_bid), .bvalid(m_bvalid), .bready(m_bready),
+        .violations(pc_violations_m)
+    );
 endmodule

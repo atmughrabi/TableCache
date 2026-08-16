@@ -211,8 +211,15 @@ module dut_l2top_flush
         .m_r(flush_r), .m_rdata(c_rdata), .m_rid(c_rid), .m_rready(flush_rready)
     );
 
-    // -- 2:1 priority AR mux (flat into l2_top S00). While flush_active the
-    //    flush controller owns AR; the accelerator AR is gated. --
+    always_ff @(posedge clk) begin
+        if (!rst && (flush_req || flush_active)
+            && (s_arvalid || s_awvalid || s_wvalid))
+            $fatal(1, "dut_l2top_flush: flush requested while an accelerator request is active");
+    end
+
+    // -- 2:1 priority AR mux (flat into l2_top S00). Tests request a flush
+    //    only after accelerator traffic is quiescent, so ownership never
+    //    changes while an AR is stalled. --
     logic [READ_ID_WIDTH-1:0] c_arid;
     logic [ADDR_W-1:0]        c_araddr;
     logic [7:0]               c_arlen;
@@ -280,6 +287,8 @@ module dut_l2top_flush
     logic c_bvalid;
     logic [1:0] c_bresp;
     logic [WRITE_ID_WIDTH-1:0] c_bid;
+    wire c_awvalid = s_awvalid & ~flush_active;
+    wire c_wvalid = s_wvalid & ~flush_active;
     assign s_awready = c_awready & ~flush_active;
     assign s_wready  = c_wready  & ~flush_active;
     assign s_bvalid  = c_bvalid;
@@ -350,13 +359,13 @@ module dut_l2top_flush
         .s00_axi_awqos    (s_awqos),
         .s00_axi_awregion (s_awregion),
         .s00_axi_awsnoop  (s_awsnoop),
-        .s00_axi_awvalid  (s_awvalid & ~flush_active),
+        .s00_axi_awvalid  (c_awvalid),
         .s00_axi_awready  (c_awready),
         // W
         .s00_axi_wlast    (s_wlast),
         .s00_axi_wdata    (s_wdata),
         .s00_axi_wstrb    (s_wstrb),
-        .s00_axi_wvalid   (s_wvalid & ~flush_active),
+        .s00_axi_wvalid   (c_wvalid),
         .s00_axi_wready   (c_wready),
         // B
         .s00_axi_bresp    (c_bresp),
@@ -402,6 +411,50 @@ module dut_l2top_flush
         .m00_axi_bresp    (m_bresp),
         .m00_axi_bid      (m_bid),
         .m00_axi_bready   (m_bready)
+    );
+
+    logic [31:0] pc_violations_s, pc_violations_m;
+    wire [31:0] pc_violations_total = pc_violations_s + pc_violations_m;
+
+    axi4_protocol_checker #(
+        .ADDR_W        (ADDR_W),
+        .DATA_W        (BLOCK_W),
+        .ID_W          (READ_ID_WIDTH),
+        .CHECK_C6      (1'b0),
+        .READ_ID_DEPTH (4),
+        .WRITE_ID_DEPTH(2)
+    ) pc_slave (
+        .clk(clk), .rst(rst),
+        .araddr(c_araddr), .arlen(c_arlen), .arsize(c_arsize), .arburst(c_arburst),
+        .arid(c_arid), .arvalid(c_arvalid), .arready(c_arready),
+        .rdata(c_rdata), .rresp(c_rresp), .rlast(c_rlast), .rid(c_rid),
+        .rvalid(c_rvalid), .rready(c_rready),
+        .awaddr(s_awaddr), .awlen(s_awlen), .awsize(s_awsize), .awburst(s_awburst),
+        .awid(s_awid), .awvalid(c_awvalid), .awready(c_awready),
+        .wdata(s_wdata), .wstrb(s_wstrb), .wlast(s_wlast),
+        .wvalid(c_wvalid), .wready(c_wready),
+        .bresp(c_bresp), .bid(c_bid), .bvalid(c_bvalid), .bready(s_bready),
+        .violations(pc_violations_s)
+    );
+
+    axi4_protocol_checker #(
+        .ADDR_W                  (ADDR_W),
+        .DATA_W                  (BLOCK_W),
+        .ID_W                    (READ_ID_WIDTH + 1),
+        .CHECK_B1_RESPONSE_VALID (1'b0),
+        .CHECK_RESPONSE_STABILITY(1'b0)
+    ) pc_mem (
+        .clk(clk), .rst(rst),
+        .araddr(m_araddr_raw), .arlen(m_arlen), .arsize(m_arsize), .arburst(m_arburst),
+        .arid(m_arid), .arvalid(m_arvalid), .arready(m_arready),
+        .rdata(m_rdata), .rresp(m_rresp), .rlast(m_rlast), .rid(m_rid),
+        .rvalid(m_rvalid), .rready(m_rready),
+        .awaddr(m_awaddr_raw), .awlen(m_awlen), .awsize(m_awsize), .awburst(m_awburst),
+        .awid(m_awid), .awvalid(m_awvalid), .awready(m_awready),
+        .wdata(m_wdata), .wstrb(m_wstrb), .wlast(m_wlast),
+        .wvalid(m_wvalid), .wready(m_wready),
+        .bresp(m_bresp), .bid(m_bid), .bvalid(m_bvalid), .bready(m_bready),
+        .violations(pc_violations_m)
     );
 
 endmodule

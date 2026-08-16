@@ -201,6 +201,12 @@ module dut_flush
         .m_r(flush_r), .m_rdata(cache_rdata), .m_rid(cache_rid), .m_rready(flush_rready)
     );
 
+    always_ff @(posedge clk) begin
+        if (!rst && (flush_req || flush_active)
+            && (s_arvalid || s_awvalid || s_wvalid))
+            $fatal(1, "dut_flush: flush requested while an accelerator request is active");
+    end
+
     // -- Repack accelerator-side flat signals into struct types --
     ar_t s_ar;  aw_t s_aw;  w_t s_w;  r_t s_r;  b_t s_b;
     assign s_ar = '{
@@ -230,7 +236,8 @@ module dut_flush
     logic[READ_ID_WIDTH-1:0]   cache_rid;
     logic                      cache_rready;
 
-    // AR mux. Gate accelerator's s_arvalid while flushing.
+    // Tests request a flush only after accelerator traffic is quiescent.
+    // The mux therefore never changes owner while an AR is stalled.
     always_comb begin
         if (flush_active) begin
             cache_ar           = flush_ar;
@@ -343,6 +350,54 @@ module dut_flush
         .mem_aw(m_aw_struct), .mem_awid(m_awid), .mem_awready(m_awready),
         .mem_w(m_w_struct),   .mem_wdata(m_wdata), .mem_wstrb(m_wstrb), .mem_wready(m_wready),
         .mem_b(m_b_struct),   .mem_bid(m_bid), .mem_bready(m_bready)
+    );
+
+    logic [31:0] pc_violations_s, pc_violations_m;
+    wire [31:0] pc_violations_total = pc_violations_s + pc_violations_m;
+
+    axi4_protocol_checker #(
+        .ADDR_W        (ADDR_W),
+        .DATA_W        (BLOCK_W),
+        .ID_W          (READ_ID_WIDTH),
+        .CHECK_C6      (1'b0),
+        .READ_ID_DEPTH (4),
+        .WRITE_ID_DEPTH(2)
+    ) pc_slave (
+        .clk(clk), .rst(rst),
+        .araddr(cache_ar.araddr[ADDR_W-1:0]), .arlen(cache_ar.arlen),
+        .arsize(cache_ar.arsize), .arburst(cache_ar.arburst),
+        .arid(cache_arid), .arvalid(cache_ar.arvalid), .arready(cache_arready),
+        .rdata(cache_rdata), .rresp(cache_r.rresp[1:0]), .rlast(cache_r.rlast),
+        .rid(cache_rid), .rvalid(cache_r.rvalid), .rready(cache_rready),
+        .awaddr(cache_aw.awaddr[ADDR_W-1:0]), .awlen(cache_aw.awlen),
+        .awsize(cache_aw.awsize), .awburst(cache_aw.awburst),
+        .awid(cache_awid), .awvalid(cache_aw.awvalid), .awready(cache_awready),
+        .wdata(s_wdata), .wstrb(s_wstrb), .wlast(cache_w.wlast),
+        .wvalid(cache_w.wvalid), .wready(cache_wready),
+        .bresp(cache_b.bresp), .bid(cache_bid), .bvalid(cache_b.bvalid),
+        .bready(cache_bready), .violations(pc_violations_s)
+    );
+
+    axi4_protocol_checker #(
+        .ADDR_W                  (ADDR_W),
+        .DATA_W                  (BLOCK_W),
+        .ID_W                    (READ_ID_WIDTH + 1),
+        .CHECK_B1_RESPONSE_VALID (1'b0),
+        .CHECK_RESPONSE_STABILITY(1'b0)
+    ) pc_mem (
+        .clk(clk), .rst(rst),
+        .araddr(m_ar_struct.araddr[ADDR_W-1:0]), .arlen(m_arlen),
+        .arsize(m_arsize), .arburst(m_arburst),
+        .arid(m_arid), .arvalid(m_arvalid), .arready(m_arready),
+        .rdata(m_rdata), .rresp(m_rresp), .rlast(m_rlast), .rid(m_rid),
+        .rvalid(m_rvalid), .rready(m_rready),
+        .awaddr(m_aw_struct.awaddr[ADDR_W-1:0]), .awlen(m_awlen),
+        .awsize(m_awsize), .awburst(m_awburst),
+        .awid(m_awid), .awvalid(m_awvalid), .awready(m_awready),
+        .wdata(m_wdata), .wstrb(m_wstrb), .wlast(m_wlast),
+        .wvalid(m_wvalid), .wready(m_wready),
+        .bresp(m_bresp), .bid(m_bid), .bvalid(m_bvalid), .bready(m_bready),
+        .violations(pc_violations_m)
     );
 
 endmodule

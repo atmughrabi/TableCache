@@ -13,8 +13,9 @@
 // We use $display (not $error) because Verilator's $error implicitly calls
 // $stop, which would abort the sim on the first violation. With $display
 // the sim continues and a single run surfaces ALL violations from ALL
-// checker instances. The regression bash loop greps the log for the
-// "AXI_PC_VIOLATION" prefix to count and bucket them per rule.
+// checker instances. The final block then terminates the simulation if the
+// aggregate count is nonzero; log greps provide an additional runner-level
+// diagnostic.
 //
 // Checked rules
 //   B1   xVALID must be 0 during rst (all 5 channels)
@@ -137,7 +138,7 @@ module axi4_protocol_checker
 
     final begin
         if (vcount != 0)
-            $error("AXI protocol checker recorded %0d violation(s)", vcount);
+            $fatal(1, "AXI protocol checker recorded %0d violation(s)", vcount);
     end
 
     // ------------------------------------------------------------------
