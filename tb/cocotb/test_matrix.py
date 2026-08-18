@@ -60,7 +60,7 @@ def _make(env_overrides: dict, target: str, ntxn: int = None, seed: int = 1,
     # Knobs flow into both the verilator EXTRA_ARGS (via Makefile) and the
     # python tests (via env-exported TC_*).
     for k in ("POLICY", "LINES", "LINE_W", "WAYS", "BLOCK_W",
-              "DB_LATENCY", "VICTIM", "CBOM", "ADDR_L", "ADDR_H"):
+              "DB_LATENCY", "VICTIM", "CBOM", "ADDR_W", "ADDR_L", "ADDR_H"):
         if k in env_overrides:
             cmd.append(f"{k}={env_overrides[k]}")
     return subprocess.run(cmd, cwd=HERE, env=env, capture_output=True,
@@ -197,6 +197,8 @@ RANGE_MATRIX = [
     (32, "0",           "0xFFFFFFFF",         0),   # full 32-bit range
     (32, "0xC0000000",  "0xFFFFFFFF",         2),   # 1 GiB high
     (32, "0xE0000000",  "0xFFFFFFFF",         3),   # 512 MiB high
+    (33, "0",           "0x1FFFFFFFF",        0),   # full U280-HBM width
+    (34, "0",           "0x3FFFFFFFF",        0),   # full U55C/U280-DDR width
     (64, "0x100000000", "0x1FFFFFFFF",       32),   # 4 GiB above 4 GiB
     (64, "0",           "0xFFFFFFFFFFFFFFFF", 0),   # full 64-bit range
 ]
@@ -216,6 +218,21 @@ def test_full_64bit_range_upper_address_reconstruction():
         f"---stdout tail---\n{r.stdout[-3000:]}\n"
         f"---stderr tail---\n{r.stderr[-1000:]}")
     assert _cocotb_fail_count(r.stdout) == 0, r.stdout[-3000:]
+
+
+def test_non_napot_range_is_rejected():
+    env = {
+        "ADDR_W": "33",
+        "ADDR_L": "0x1000",
+        "ADDR_H": "0x1FFFFFFFF",
+    }
+    r = _make(env, "test_smoke", timeout_s=180)
+    output = r.stdout + r.stderr
+    assert r.returncode != 0, "misaligned non-NAPOT range unexpectedly passed"
+    assert (
+        "not a power of two" in output or
+        "not aligned" in output
+    ), output[-3000:]
 
 
 @pytest.mark.parametrize("addr_w,addr_l,addr_h,omitted_w", RANGE_MATRIX,

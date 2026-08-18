@@ -24,11 +24,16 @@ from __future__ import annotations
 import os
 import cocotb
 from cocotb.triggers import RisingEdge
-from tb_common import reset_dut, attach_mem, CLK_PERIOD_NS, BASE
+from tb_common import reset_dut, attach_mem, CLK_PERIOD_NS, BASE, ADDR_W
 
 BLOCK_BYTES = 4
 LINE_W      = 8
 LINE_BYTES  = LINE_W * BLOCK_BYTES   # 32B default
+TEST_BASE = (
+    1 << (ADDR_W - 1)
+    if BASE == 0 and ADDR_W > 32
+    else BASE
+)
 
 
 def _set_grasp(dut, hot_l=0, hot_h=0, mod_l=0, mod_h=0):
@@ -121,8 +126,8 @@ async def test_grasp_hot_retained(dut):
     # Pick disjoint hot/cold pools.
     # WAYS=4 default, LINES=64 default -> 256 lines capacity.
     # Hot pool small (8 lines), cold pool large (200 lines) to force eviction.
-    hot_addrs  = [BASE + (i * LINE_BYTES) for i in range(8)]
-    cold_addrs = [BASE + 0x00100000 + (i * LINE_BYTES) for i in range(200)]
+    hot_addrs  = [TEST_BASE + (i * LINE_BYTES) for i in range(8)]
+    cold_addrs = [TEST_BASE + 0x00100000 + (i * LINE_BYTES) for i in range(200)]
 
     hot_l = min(hot_addrs)
     hot_h = max(hot_addrs) + LINE_BYTES - 1
@@ -150,8 +155,8 @@ async def test_grasp_srrip_fallback(dut):
     attach_mem(dut, size_bytes=1 << 22)
     _set_grasp(dut)  # all zero -> SRRIP fallback
 
-    hot_addrs  = [BASE + (i * LINE_BYTES) for i in range(8)]
-    cold_addrs = [BASE + 0x00100000 + (i * LINE_BYTES) for i in range(200)]
+    hot_addrs  = [TEST_BASE + (i * LINE_BYTES) for i in range(8)]
+    cold_addrs = [TEST_BASE + 0x00100000 + (i * LINE_BYTES) for i in range(200)]
 
     hits = await _hot_cold_workload(dut, hot_addrs, cold_addrs)
     rate = hits / len(hot_addrs)
@@ -173,13 +178,13 @@ async def test_grasp_invalid_region(dut):
     attach_mem(dut, size_bytes=1 << 22)
 
     # Invalid hot range (_h < _l, _h != 0), valid moderate range covering hot addrs.
-    hot_addrs = [BASE + (i * LINE_BYTES) for i in range(8)]
-    dut.grasp_high_addr_l.value     = 0x80001000  # > _h
-    dut.grasp_high_addr_h.value     = 0x80000FFF  # < _l, non-zero
+    hot_addrs = [TEST_BASE + (i * LINE_BYTES) for i in range(8)]
+    dut.grasp_high_addr_l.value     = TEST_BASE + 0x1000  # > _h
+    dut.grasp_high_addr_h.value     = TEST_BASE + 0x0FFF  # < _l, non-zero
     dut.grasp_moderate_addr_l.value = hot_addrs[0]
     dut.grasp_moderate_addr_h.value = hot_addrs[-1] + LINE_BYTES - 1
 
-    cold_addrs = [BASE + 0x00200000 + (i * LINE_BYTES) for i in range(64)]
+    cold_addrs = [TEST_BASE + 0x00200000 + (i * LINE_BYTES) for i in range(64)]
     hits = await _hot_cold_workload(dut, hot_addrs, cold_addrs)
     dut._log.info(f"invalid-hot + valid-warm: hits {hits}/{len(hot_addrs)}")
     # Must not crash; moderate region active so hot lines should mostly survive.
@@ -200,9 +205,9 @@ async def test_grasp_runtime_reconfig(dut):
     attach_mem(dut, size_bytes=1 << 22)
 
     # Pin set A as hot and thrash with set B.
-    set_a = [BASE + (i * LINE_BYTES) for i in range(8)]
-    set_b = [BASE + 0x00040000 + (i * LINE_BYTES) for i in range(8)]
-    cold  = [BASE + 0x00100000 + (i * LINE_BYTES) for i in range(64)]
+    set_a = [TEST_BASE + (i * LINE_BYTES) for i in range(8)]
+    set_b = [TEST_BASE + 0x00040000 + (i * LINE_BYTES) for i in range(8)]
+    cold  = [TEST_BASE + 0x00100000 + (i * LINE_BYTES) for i in range(64)]
 
     _set_grasp(dut, hot_l=set_a[0], hot_h=set_a[-1] + LINE_BYTES - 1)
     hits_a1 = await _hot_cold_workload(dut, set_a, cold)
@@ -229,14 +234,17 @@ async def test_grasp_overlap_priority(dut):
 
     # Identical hot/moderate range; HOT_HIT_RRPV=0 retains; moderate
     # alone (insert at RRPV=1) would age the lines out fast.
-    hot_addrs = [BASE + (i * LINE_BYTES) for i in range(8)]
+    hot_addrs = [TEST_BASE + (i * LINE_BYTES) for i in range(8)]
     lo = hot_addrs[0]; hi = hot_addrs[-1] + LINE_BYTES - 1
     dut.grasp_high_addr_l.value     = lo
     dut.grasp_high_addr_h.value     = hi
     dut.grasp_moderate_addr_l.value = lo
     dut.grasp_moderate_addr_h.value = hi
 
-    cold_addrs = [BASE + 0x00100000 + (i * LINE_BYTES) for i in range(200)]
+    cold_addrs = [
+        TEST_BASE + 0x00100000 + (i * LINE_BYTES)
+        for i in range(200)
+    ]
     hits = await _hot_cold_workload(dut, hot_addrs, cold_addrs)
     assert hits >= len(hot_addrs) - 1, (
         f"hot precedence broken in overlap: {hits}/{len(hot_addrs)}"

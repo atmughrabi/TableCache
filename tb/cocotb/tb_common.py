@@ -133,6 +133,7 @@ class WritebackMonitor:
         self.beats = 0
         self.errors: list[str] = []
         self.written: dict[int, int] = {}   # byte-addr -> word (last write wins)
+        self.full_awaddrs: list[int] = []
 
     async def run(self):
         aw_q: list[tuple[int, int, int, int]] = []  # (addr, len, size, burst)
@@ -141,6 +142,9 @@ class WritebackMonitor:
             await RisingEdge(self.dut.clk)
             await ReadOnly()
             if int(self.dut.m_awvalid) and int(self.dut.m_awready):
+                if hasattr(self.dut, "dbg_m_awaddr_full"):
+                    self.full_awaddrs.append(
+                        int(self.dut.dbg_m_awaddr_full))
                 aw_q.append((int(self.dut.m_awaddr) & self.mem_mask,
                              int(self.dut.m_awlen), int(self.dut.m_awsize),
                              int(self.dut.m_awburst)))

@@ -20,7 +20,7 @@ import random
 import cocotb
 from cocotb.triggers import RisingEdge, with_timeout
 from tb_common import (reset_dut, attach_master, attach_mem, golden,
-                       WritebackMonitor, MemRangeMonitor, BASE)
+                       WritebackMonitor, MemRangeMonitor, BASE, ADDR_W)
 
 BLOCK_BYTES = 4
 LINE_W      = int(os.environ.get("TC_LINE_W", "8"))
@@ -37,10 +37,15 @@ NSET = min(LINES, 16)
 NTAG = WAYS * 3                    # 3x over-subscribe every set
 NTXN = int(os.environ.get("TC_EVICT_NTXN", str(NSET * NTAG)))
 SEED = int(os.environ.get("TC_SEED", "1"))
+TEST_BASE = (
+    1 << (ADDR_W - 1)
+    if BASE == 0 and ADDR_W > 32
+    else BASE
+)
 
 
 def _addr(set_i: int, tag_i: int, block: int) -> int:
-    return (BASE | (tag_i << (LOG2_LINE + LOG2_SETS))
+    return (TEST_BASE | (tag_i << (LOG2_LINE + LOG2_SETS))
                  | (set_i << LOG2_LINE) | (block * BLOCK_BYTES))
 
 
@@ -77,6 +82,15 @@ async def _run(dut, aligned: bool):
 
     mon.check()          # every writeback burst covered exactly one line
     rangemon.check()     # every mem AR/AW landed in the cacheable range
+    expected_prefix = TEST_BASE & ~MEM_MASK
+    assert mon.full_awaddrs, "no full-width writeback address was observed"
+    assert all(
+        (addr & ~MEM_MASK) == expected_prefix
+        for addr in mon.full_awaddrs
+    ), (
+        "writeback changed address bits above the backing-RAM mask: "
+        f"expected prefix 0x{expected_prefix:x}, "
+        f"got {[hex(addr) for addr in mon.full_awaddrs[:8]]}")
     dut._log.info(f"[evict {'aligned' if aligned else 'nonaligned'}] "
                   f"txns={NTXN} uniq={len(ref)} writeback_bursts={mon.bursts} "
                   f"beats={mon.beats} miss={miss} "

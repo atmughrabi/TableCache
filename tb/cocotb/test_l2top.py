@@ -1,9 +1,10 @@
 """Functional tests for the flat AXI l2_top wrapper."""
 from __future__ import annotations
+import os
 import cocotb
 from cocotb.triggers import RisingEdge, Timer
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
-from tb_common import CLK_PERIOD_NS, BASE, cacheable_master
+from tb_common import CLK_PERIOD_NS, BASE, ADDR_W, RANGE_H, cacheable_master
 from cocotb.clock import Clock
 
 BLOCK_BYTES = 4
@@ -76,8 +77,28 @@ async def test_l2top_two_addresses(dut):
     ram = _attach_mem(dut, size_bytes=1 << 22)
     master = _attach_master(dut)
 
-    pairs = [(BASE | 0x2000, b"\x11\x22\x33\x44"),
-             (BASE | 0x3000, b"\xAA\xBB\xCC\xDD")]
+    ways = int(os.environ.get("TC_WAYS", "4"))
+    wide_alias = (
+        ADDR_W > 32 and
+        BASE == 0 and
+        RANGE_H >= ((1 << 32) | 0x2000) and
+        ways >= 2
+    )
+    if os.environ.get("TC_REQUIRE_HIGH_ALIAS") == "1":
+        assert wide_alias, (
+            "required l2_top high-bit alias coverage is not active: "
+            f"ADDR_W={ADDR_W} BASE=0x{BASE:x} RANGE_H=0x{RANGE_H:x} "
+            f"WAYS={ways}")
+    if wide_alias:
+        pairs = [
+            (0x2000, b"\x11\x22\x33\x44"),
+            ((1 << 32) | 0x2000, b"\xAA\xBB\xCC\xDD"),
+        ]
+    else:
+        pairs = [
+            (BASE | 0x2000, b"\x11\x22\x33\x44"),
+            (BASE | 0x3000, b"\xAA\xBB\xCC\xDD"),
+        ]
 
     for a, d in pairs:
         await master.write(a, d)

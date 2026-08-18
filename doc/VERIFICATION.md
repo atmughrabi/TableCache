@@ -28,6 +28,7 @@ make lint
 make vlint
 python3 ../../doc/check_docs.py
 make MODULE=test_smoke
+tclsh ../../syn/vivado/test_generic_literals.tcl
 
 pytest -q test_matrix.py
 pytest -q test_shim_wrap_matrix.py
@@ -37,6 +38,16 @@ pytest -q test_mem_error_matrix.py
 
 ./l2top_matrix.sh
 ./grasp_multi_matrix.sh
+```
+
+Address-width regressions use the same-low-32-bit alias pair and full
+memory-side address taps at 33, 34, and 64 bits:
+
+```bash
+TC_REQUIRE_HIGH_ALIAS=1 make MODULE=test_l2top \
+  ADDR_W=33 ADDR_L=0 ADDR_H=0x1FFFFFFFF
+TC_REQUIRE_HIGH_ALIAS=1 make MODULE=test_shim_cache \
+  ADDR_W=34 ADDR_L=0 ADDR_H=0x3FFFFFFFF
 ```
 
 The complete unattended flow is:
@@ -112,7 +123,7 @@ GitHub Actions runs the open-source subset daily and on manual dispatch.
 
 | Matrix | Coverage |
 |---|---|
-| `test_matrix.py` | policies, associativity, databank latency, victim cache, CBOM, eviction, flush, and address ranges |
+| `test_matrix.py` | policies, associativity, databank latency, victim cache, CBOM, eviction, flush, and 32/33/34/64-bit address ranges |
 | `test_shim_wrap_matrix.py` | legal line lengths, block/narrow widths, ratios, TDP/SDP, latency, ways, reorder depth, and invalid line lengths |
 | `test_id_depth_matrix.py` | ID widths, reorder depths, write FIFO depths, reserved IDs, and top-level ID mapping |
 | `test_geometry_matrix.py` | line counts, odd and direct-mapped ways, policies, victim capacities, SDP banks, cascade depth, and invalid geometry |
