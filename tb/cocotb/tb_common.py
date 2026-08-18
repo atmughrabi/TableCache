@@ -26,6 +26,17 @@ BASE = int(os.environ.get("TC_ADDR_L") or "0x80000000", 0)
 RANGE_H = int(os.environ.get("TC_ADDR_H") or "0xFFFFFFFF", 0)
 
 
+def high_address_test_base() -> int:
+    if BASE != 0 or ADDR_W <= 32:
+        return BASE
+    candidate = 1 << (ADDR_W - 1)
+    if candidate > RANGE_H:
+        raise ValueError(
+            "wide-address test range is inconsistent: "
+            f"ADDR_W={ADDR_W} BASE=0x{BASE:x} RANGE_H=0x{RANGE_H:x}")
+    return candidate
+
+
 def golden(addr: int) -> int:
     return ((addr & 0xFFFF) << 16) | 0xCAFE
 
@@ -133,6 +144,7 @@ class WritebackMonitor:
         self.beats = 0
         self.errors: list[str] = []
         self.written: dict[int, int] = {}   # byte-addr -> word (last write wins)
+        self.full_awaddrs: list[int] = []
 
     async def run(self):
         aw_q: list[tuple[int, int, int, int]] = []  # (addr, len, size, burst)
@@ -141,6 +153,9 @@ class WritebackMonitor:
             await RisingEdge(self.dut.clk)
             await ReadOnly()
             if int(self.dut.m_awvalid) and int(self.dut.m_awready):
+                if hasattr(self.dut, "dbg_m_awaddr_full"):
+                    self.full_awaddrs.append(
+                        int(self.dut.dbg_m_awaddr_full))
                 aw_q.append((int(self.dut.m_awaddr) & self.mem_mask,
                              int(self.dut.m_awlen), int(self.dut.m_awsize),
                              int(self.dut.m_awburst)))

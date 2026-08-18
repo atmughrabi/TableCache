@@ -18,6 +18,7 @@ for _n in ("cocotb.dut_shim_cache.s", "cocotb.dut_shim_cache.m"):
 CLK_NS    = 10
 ADDR_W    = int(os.environ.get("TC_ADDR_W", "32"))
 BASE      = int(os.environ.get("TC_ADDR_L") or "0x80000000", 0)
+RANGE_H   = int(os.environ.get("TC_ADDR_H") or "0xFFFFFFFF", 0)
 NARROW_W  = int(os.environ.get("TC_NARROW_W", "32"))
 BLOCK_W   = int(os.environ.get("TC_BLOCK_W",  "512"))
 NARROW_B  = NARROW_W // 8
@@ -93,6 +94,33 @@ def attach(dut):
         seed[off:off + NARROW_B] = golden(BASE | off).to_bytes(NARROW_B, "little")
     ram.write(0, bytes(seed))
     return master, ram
+
+
+@cocotb.test()
+async def test_same_low32_different_high_bits_do_not_alias(dut):
+    high_addr = (1 << 32) | 0x0000_4000
+    if ADDR_W <= 32 or BASE != 0 or RANGE_H < high_addr or WAYS < 2:
+        assert os.environ.get("TC_REQUIRE_HIGH_ALIAS") != "1", (
+            "required high-bit shim alias coverage is not active: "
+            f"ADDR_W={ADDR_W} BASE=0x{BASE:x} RANGE_H=0x{RANGE_H:x} "
+            f"WAYS={WAYS}")
+        dut._log.info(
+            "high-bit shim alias test requires a base-0 range wider than "
+            "32 bits and at least two ways")
+        return
+
+    await reset_dut(dut)
+    master, _ = attach(dut)
+    low_addr = 0x0000_4000
+    high_addr = (1 << 32) | low_addr
+    low_data = 0x1357_9BDF & MASK
+    high_data = 0x2468_ACE0 & MASK
+    await master.write(low_addr, low_data.to_bytes(NARROW_B, "little"))
+    await master.write(high_addr, high_data.to_bytes(NARROW_B, "little"))
+    low_read = await master.read(low_addr, NARROW_B)
+    high_read = await master.read(high_addr, NARROW_B)
+    assert int.from_bytes(low_read.data, "little") == low_data
+    assert int.from_bytes(high_read.data, "little") == high_data
 
 
 @cocotb.test()

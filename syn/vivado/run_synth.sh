@@ -31,7 +31,7 @@ for top in $TOPS; do
               -tclargs "$top" "$REPO" "$OUT" \
               -log "$OUT/vivado.log" -journal "$OUT/vivado.jou" \
               -notrace 2>&1 | tee "$OUT/synth.log" \
-        | grep -E "^(====|WARNING|CRITICAL|ERROR|UTIL|TIMING|METHOD|Worst|Total)"
+        | grep -E "^(====|WARNING|CRITICAL|ERROR|UTIL|TIMING|METHOD|Worst|Total|generic (value|width|literal)|top ')"
     vivado_rc=${PIPESTATUS[0]}
     set -e
     if (( vivado_rc != 0 )); then

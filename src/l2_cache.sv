@@ -300,7 +300,7 @@ module l2_cache
 
     //Buffer and serialize finishes, otherwise multiple requests can finish on the same cycle, which would require too many LUTRAM ports
     //The alternative is blocking finishes so that only one can occur in a single cycle, though this degrades performance
-    //Finish priority order (all with respect to requests): bvalid > rvalid > wvalid 
+    //Finish priority order (all with respect to requests): bvalid > rvalid > wvalid
 
     always_ff @(posedge clk) begin
         if (rst) begin

@@ -18,6 +18,7 @@ set top      [lindex $argv 0]
 set repo_root [lindex $argv 1]
 set out      [lindex $argv 2]
 source [file join [file dirname [info script]] report_utils.tcl]
+source [file join [file dirname [info script]] generic_literals.tcl]
 
 # Alveo U250 part. Speed grade -2L (low power) matches the public board.
 # Override via env: PART=xcu280-fsvh2892-2L-e (or any other UltraScale+/Versal part).
@@ -55,11 +56,15 @@ set_property top $top [current_fileset]
 # default 0, only meaningful with DATABANK_SDP=1) and DB_LATENCY.
 set generics [list]
 set generic_names [list]
+set address_width 32
 if {$top eq "l2_cache"} {
     set generic_names {WAYS LINES LINE_W BLOCK_W POLICY INCLUDE_VICTIM VICTIM_LINES \
                        DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG CASCADE_DEPTH N_BANKS \
                        READ_ID_WIDTH WRITE_ID_WIDTH ADDR_W ADDR_RANGE_L ADDR_RANGE_H \
                        GRASP_HIGH_REGIONS GRASP_MODERATE_REGIONS}
+    if {[info exists ::env(ADDR_W)]} {
+        set address_width $::env(ADDR_W)
+    }
 } elseif {$top eq "l2_top"} {
     set generic_names {WAYS LINES LINE_W REPLACEMENT_POLICY INCLUDE_VICTIM VICTIM_LINES \
                        DATABANK_SDP DB_LATENCY SDP_WRITE_INPUT_REG CASCADE_DEPTH N_BANKS \
@@ -67,17 +72,27 @@ if {$top eq "l2_cache"} {
                        C_S00_AXI_DATA_WIDTH C_M00_AXI_DATA_WIDTH \
                        C_S00_AXI_ADDR_WIDTH C_M00_AXI_ADDR_WIDTH ADDR_L ADDR_H \
                        GRASP_HIGH_REGIONS GRASP_MODERATE_REGIONS}
+    if {[info exists ::env(C_S00_AXI_ADDR_WIDTH)]} {
+        set address_width $::env(C_S00_AXI_ADDR_WIDTH)
+    }
 } elseif {$top eq "tc_narrow_shim"} {
     set generic_names {NARROW_W BLOCK_W ID_W ADDR_W MAX_OUTSTANDING_W \
                        ENABLE_LINE_BUFFER PROMOTE_WMISS_TO_RW READ_REORDER_DEPTH}
 } elseif {$top eq "tc_flush_controller"} {
     set generic_names {LINES WAYS LINE_W BLOCK_W ID_W ADDR_BASE DEFAULT_MODE \
                        ADDR_W ADDR_RANGE_H}
+    if {[info exists ::env(ADDR_W)]} {
+        set address_width $::env(ADDR_W)
+    }
 }
 foreach v $generic_names {
     if {[info exists ::env($v)]} {
-        lappend generics "$v=$::env($v)"
-        puts "==== override $v=$::env($v)"
+        set value $::env($v)
+        if {$v in {ADDR_RANGE_L ADDR_RANGE_H ADDR_L ADDR_H ADDR_BASE}} {
+            set value [tablecache::sized_hex_literal $address_width $value]
+        }
+        lappend generics "$v=$value"
+        puts "==== override $v=$value"
     }
 }
 # Synthesis directive: AreaOptimized_high prioritises LUT count over WNS

@@ -43,7 +43,7 @@ jobs:
             git make autoconf g++ flex bison ccache \
             libunwind-dev libgoogle-perftools-dev numactl perl-doc \
             libfl2 libfl-dev zlib1g zlib1g-dev \
-            help2man python3 python3-pip python3-venv
+            help2man python3 python3-pip python3-venv tcl
           # Build Verilator 5.020 if cache restore is incomplete.
           # A stale/partial cache can leave the binary present but miss
           # built-in include files (verilated_std.sv), which breaks lint.
@@ -79,6 +79,9 @@ jobs:
           . .venv/bin/activate
           make lint
           python3 ../../doc/check_docs.py
+
+      - name: Vivado generic literal unit
+        run: tclsh syn/vivado/test_generic_literals.tcl
 
       - name: Verible semantic lint
         run: |
@@ -359,6 +362,98 @@ jobs:
           rm -rf sim_build*
           POLICY=GRASP timeout 900 make MODULE=test_grasp_midburst
           timeout 1800 ./cov_functional.sh
+
+  address-widths:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - width: 33
+            high: "0x1FFFFFFFF"
+          - width: 34
+            high: "0x3FFFFFFFF"
+          - width: 64
+            high: "0xFFFFFFFFFFFFFFFF"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache built Verilator
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/verilator
+            /usr/local/bin/verilator_*
+            /usr/local/share/verilator
+          key: verilator-bin-${{ runner.os }}-5.020
+
+      - name: Install Verilator 5.020 + Python deps
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git make autoconf g++ flex bison ccache \
+            libunwind-dev libgoogle-perftools-dev numactl perl-doc \
+            libfl2 libfl-dev zlib1g zlib1g-dev \
+            help2man python3 python3-pip python3-venv
+          if ! command -v verilator >/dev/null || \
+             ! verilator --version | grep -q '5\.020' || \
+             [ ! -f /usr/local/share/verilator/include/verilated_std.sv ]; then
+            git clone --depth 1 --branch v5.020 \
+              https://github.com/verilator/verilator.git /tmp/verilator
+            cd /tmp/verilator
+            autoconf && ./configure --prefix=/usr/local
+            make -j"$(nproc)"
+            sudo make install
+          fi
+          verilator --version
+
+      - name: Python venv + cocotb stack
+        working-directory: tb/cocotb
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip wheel
+          pip install -r requirements.txt
+
+      - name: Address width ${{ matrix.width }}
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          width=${{ matrix.width }}
+          high=${{ matrix.high }}
+          rm -rf sim_build
+          TC_REQUIRE_HIGH_ALIAS=1 timeout 300 make MODULE=test_smoke \
+            ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          rm -rf sim_build
+          timeout 400 make MODULE=test_eviction VICTIM=1 \
+            ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          rm -rf sim_build
+          timeout 400 make MODULE=test_flush VICTIM=1 \
+            ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          rm -rf sim_build
+          TC_REQUIRE_HIGH_ALIAS=1 timeout 300 make MODULE=test_l2top \
+            ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          rm -rf sim_build sim_build_shim
+          TC_REQUIRE_HIGH_ALIAS=1 timeout 400 make MODULE=test_shim_cache \
+            ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          pytest -q test_matrix.py::test_non_napot_range_is_rejected
+
+      - name: 64-bit fixed-window and GRASP paths
+        if: matrix.width == 64
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          set -e
+          rm -rf sim_build
+          timeout 400 make MODULE=test_eviction VICTIM=1 ADDR_W=64 \
+            ADDR_L=0x100000000 ADDR_H=0x1FFFFFFFF
+          rm -rf sim_build
+          timeout 400 make MODULE=test_grasp POLICY=GRASP ADDR_W=64 \
+            ADDR_L=0 ADDR_H=0xFFFFFFFFFFFFFFFF
 
   formal:
     runs-on: ubuntu-22.04

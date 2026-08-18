@@ -7,13 +7,14 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ReadOnly, Timer, with_timeout
 from tb_common import (
-    WritebackMonitor, MemRangeMonitor, BASE, cacheable_master,
-    reset_cycle_count,
+    WritebackMonitor, MemRangeMonitor, cacheable_master,
+    high_address_test_base, reset_cycle_count,
 )
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
 
 CLK_NS      = 10
 BLOCK_BYTES = 4
+TEST_BASE = high_address_test_base()
 LINE_W      = int(os.environ.get("TC_LINE_W", "8"))
 LINE_BYTES  = LINE_W * BLOCK_BYTES
 LINES       = int(os.environ.get("TC_LINES", "64"))
@@ -57,13 +58,19 @@ def attach(dut, mem_size=1 << 21):
 
 class MAwCounter:
     def __init__(self, dut):
-        self.dut = dut; self.n = 0
+        self.dut = dut
+        self.n = 0
+        self.full_awaddrs = []
+
     async def run(self):
         while True:
             await RisingEdge(self.dut.clk)
             await ReadOnly()
             if int(self.dut.m_awvalid) and int(self.dut.m_awready):
                 self.n += 1
+                if hasattr(self.dut, "dbg_m_awaddr_full"):
+                    self.full_awaddrs.append(
+                        int(self.dut.dbg_m_awaddr_full))
 
 
 async def request_flush(dut, timeout_cycles=20_000, mode=0):
@@ -88,7 +95,7 @@ async def test_flush_clean_state(dut):
     master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
     for li in range(LINES):
-        await with_timeout(master.read(BASE | (li * LINE_BYTES), BLOCK_BYTES),
+        await with_timeout(master.read(TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
                             5_000, "ns")
     await request_flush(dut, mode=0b1101)   # MakeInvalid
     await Timer(200, "ns")
@@ -107,26 +114,37 @@ async def test_flush_writes_back_dirty(dut):
 
     # Warm every line (read) so the CBOM path always hits a present line.
     for li in range(LINES):
-        await with_timeout(master.read(BASE | (li * LINE_BYTES), BLOCK_BYTES),
+        await with_timeout(master.read(TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
                             5_000, "ns")
 
     # Dirty 8 lines with known values
     N = 8
     written = {}
     for k in range(N):
-        addr = BASE | (k * LINE_BYTES + 0x10)
+        addr = TEST_BASE | (k * LINE_BYTES + 0x10)
         val  = 0xC0FFEE00 | k
         await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
                             5_000, "ns")
         written[addr] = val
 
     aw_before = mon.n
-    await request_flush(dut, mode=0b1001)   # CleanInvalid
+    address_before = len(mon.full_awaddrs)
+    await request_flush(dut)                # CleanInvalidByIndex
     await Timer(400, "ns")
     aw_during = mon.n - aw_before
     # At least N writebacks; cap depends on the cache always-writes-back-on-CleanInvalid behaviour.
     assert aw_during >= N, \
         f"flush issued {aw_during} writebacks (expected >= {N})"
+    expected_prefix = TEST_BASE & ~MEM_MASK
+    flushed_addresses = mon.full_awaddrs[address_before:]
+    assert flushed_addresses, "flush emitted no full-width AW addresses"
+    assert all(
+        (addr & ~MEM_MASK) == expected_prefix
+        for addr in flushed_addresses
+    ), (
+        "flush changed address bits above the backing-RAM mask: "
+        f"expected prefix 0x{expected_prefix:x}, "
+        f"got {[hex(addr) for addr in flushed_addresses[:8]]}")
 
     for addr, val in written.items():
         mem_off = addr & MEM_MASK
@@ -146,11 +164,11 @@ async def test_flush_idempotent(dut):
 
     # Warm every line
     for li in range(LINES):
-        await with_timeout(master.read(BASE | (li * LINE_BYTES), BLOCK_BYTES),
+        await with_timeout(master.read(TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
                             5_000, "ns")
 
     # Dirty one line via write
-    addr = BASE | 0x2000
+    addr = TEST_BASE | 0x2000
     val = 0xDEADBEEF
     await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
                         5_000, "ns")
@@ -163,7 +181,7 @@ async def test_flush_idempotent(dut):
 
     # Second flush: cache is empty after MakeInvalid drop; warm again then flush.
     for li in range(LINES):
-        await with_timeout(master.read(BASE | (li * LINE_BYTES), BLOCK_BYTES),
+        await with_timeout(master.read(TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
                             5_000, "ns")
     n1 = mon.n
     await request_flush(dut, mode=0b1101)   # MakeInvalid
@@ -258,7 +276,7 @@ def _flush_addr(set_i: int, tag_i: int, word: int = 4) -> int:
     # set occupies bits [LOG2(LINE_BYTES) +: LOG2(LINES)]; tag is above that.
     log2_line = LINE_BYTES.bit_length() - 1
     log2_sets = LINES.bit_length() - 1
-    return BASE | (tag_i << (log2_line + log2_sets)) | (set_i << log2_line) | (word * BLOCK_BYTES)
+    return TEST_BASE | (tag_i << (log2_line + log2_sets)) | (set_i << log2_line) | (word * BLOCK_BYTES)
 
 
 @cocotb.test()
