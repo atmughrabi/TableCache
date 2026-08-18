@@ -26,6 +26,17 @@ BASE = int(os.environ.get("TC_ADDR_L") or "0x80000000", 0)
 RANGE_H = int(os.environ.get("TC_ADDR_H") or "0xFFFFFFFF", 0)
 
 
+def high_address_test_base() -> int:
+    if BASE != 0 or ADDR_W <= 32:
+        return BASE
+    candidate = 1 << (ADDR_W - 1)
+    if candidate > RANGE_H:
+        raise ValueError(
+            "wide-address test range is inconsistent: "
+            f"ADDR_W={ADDR_W} BASE=0x{BASE:x} RANGE_H=0x{RANGE_H:x}")
+    return candidate
+
+
 def golden(addr: int) -> int:
     return ((addr & 0xFFFF) << 16) | 0xCAFE
 

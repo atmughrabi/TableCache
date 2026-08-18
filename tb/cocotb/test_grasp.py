@@ -24,16 +24,14 @@ from __future__ import annotations
 import os
 import cocotb
 from cocotb.triggers import RisingEdge
-from tb_common import reset_dut, attach_mem, CLK_PERIOD_NS, BASE, ADDR_W
+from tb_common import (
+    reset_dut, attach_mem, CLK_PERIOD_NS, high_address_test_base,
+)
 
 BLOCK_BYTES = 4
 LINE_W      = 8
 LINE_BYTES  = LINE_W * BLOCK_BYTES   # 32B default
-TEST_BASE = (
-    1 << (ADDR_W - 1)
-    if BASE == 0 and ADDR_W > 32
-    else BASE
-)
+TEST_BASE = high_address_test_base()
 
 
 def _set_grasp(dut, hot_l=0, hot_h=0, mod_l=0, mod_h=0):

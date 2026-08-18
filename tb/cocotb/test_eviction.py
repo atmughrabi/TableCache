@@ -20,7 +20,8 @@ import random
 import cocotb
 from cocotb.triggers import RisingEdge, with_timeout
 from tb_common import (reset_dut, attach_master, attach_mem, golden,
-                       WritebackMonitor, MemRangeMonitor, BASE, ADDR_W)
+                       WritebackMonitor, MemRangeMonitor,
+                       high_address_test_base)
 
 BLOCK_BYTES = 4
 LINE_W      = int(os.environ.get("TC_LINE_W", "8"))
@@ -37,11 +38,7 @@ NSET = min(LINES, 16)
 NTAG = WAYS * 3                    # 3x over-subscribe every set
 NTXN = int(os.environ.get("TC_EVICT_NTXN", str(NSET * NTAG)))
 SEED = int(os.environ.get("TC_SEED", "1"))
-TEST_BASE = (
-    1 << (ADDR_W - 1)
-    if BASE == 0 and ADDR_W > 32
-    else BASE
-)
+TEST_BASE = high_address_test_base()
 
 
 def _addr(set_i: int, tag_i: int, block: int) -> int:

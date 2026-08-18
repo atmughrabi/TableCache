@@ -7,18 +7,14 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ReadOnly, Timer, with_timeout
 from tb_common import (
-    WritebackMonitor, MemRangeMonitor, BASE, ADDR_W, cacheable_master,
-    reset_cycle_count,
+    WritebackMonitor, MemRangeMonitor, cacheable_master,
+    high_address_test_base, reset_cycle_count,
 )
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
 
 CLK_NS      = 10
 BLOCK_BYTES = 4
-TEST_BASE = (
-    1 << (ADDR_W - 1)
-    if BASE == 0 and ADDR_W > 32
-    else BASE
-)
+TEST_BASE = high_address_test_base()
 LINE_W      = int(os.environ.get("TC_LINE_W", "8"))
 LINE_BYTES  = LINE_W * BLOCK_BYTES
 LINES       = int(os.environ.get("TC_LINES", "64"))

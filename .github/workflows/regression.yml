@@ -440,6 +440,7 @@ jobs:
           rm -rf sim_build sim_build_shim
           TC_REQUIRE_HIGH_ALIAS=1 timeout 400 make MODULE=test_shim_cache \
             ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          pytest -q test_matrix.py::test_non_napot_range_is_rejected
 
       - name: 64-bit fixed-window and GRASP paths
         if: matrix.width == 64
