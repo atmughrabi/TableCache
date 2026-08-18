@@ -14,14 +14,14 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 300 || 45 }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       # Cache the *built* Verilator install dir, not just the apt archive.
       # Building Verilator 5.020 from source on a 2-core GitHub runner takes
       # ~10-15 min and was the main reason the 25-min job timeout was tight.
       - name: Cache built Verilator
         id: cache-verilator
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@v4
         with:
           path: |
             /usr/local/bin/verilator
@@ -30,7 +30,7 @@ jobs:
           key: verilator-bin-${{ runner.os }}-5.020
 
       - name: Cache apt packages
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@v4
         with:
           path: /var/cache/apt/archives
           key: apt-${{ runner.os }}-verilator-5.020
@@ -60,7 +60,7 @@ jobs:
           test -f /usr/local/share/verilator/include/verilated_std.sv
 
       - name: Cache pip
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('tb/cocotb/requirements.txt') }}
@@ -364,7 +364,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4
 
       - name: Install yosys + pinned z3
         run: |
