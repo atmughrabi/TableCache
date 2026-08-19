@@ -24,10 +24,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            /usr/local/bin/verilator
-            /usr/local/bin/verilator_*
-            /usr/local/share/verilator
-          key: verilator-bin-${{ runner.os }}-5.020
+            ~/.local/bin/verilator
+            ~/.local/bin/verilator_*
+            ~/.local/share/verilator
+          key: verilator-user-bin-${{ runner.os }}-5.020
 
       - name: Cache apt packages
         uses: actions/cache@v4
@@ -38,7 +38,10 @@ jobs:
       - name: Install Verilator 5.020 + Python deps
         run: |
           set -eux
-          sudo apt-get update
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          sudo apt-get -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get install -y --no-install-recommends \
             git make autoconf g++ flex bison ccache \
             libunwind-dev libgoogle-perftools-dev numactl perl-doc \
@@ -49,15 +52,15 @@ jobs:
           # built-in include files (verilated_std.sv), which breaks lint.
           if ! command -v verilator >/dev/null || \
              ! verilator --version | grep -q '5\.020' || \
-             [ ! -f /usr/local/share/verilator/include/verilated_std.sv ]; then
+             [ ! -f "$HOME/.local/share/verilator/include/verilated_std.sv" ]; then
             git clone --depth 1 --branch v5.020 https://github.com/verilator/verilator.git /tmp/verilator
             cd /tmp/verilator
-            autoconf && ./configure --prefix=/usr/local
+            autoconf && ./configure --prefix="$HOME/.local"
             make -j"$(nproc)"
-            sudo make install
+            make install
           fi
           verilator --version
-          test -f /usr/local/share/verilator/include/verilated_std.sv
+          test -f "$HOME/.local/share/verilator/include/verilated_std.sv"
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -384,15 +387,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            /usr/local/bin/verilator
-            /usr/local/bin/verilator_*
-            /usr/local/share/verilator
-          key: verilator-bin-${{ runner.os }}-5.020
+            ~/.local/bin/verilator
+            ~/.local/bin/verilator_*
+            ~/.local/share/verilator
+          key: verilator-user-bin-${{ runner.os }}-5.020
 
       - name: Install Verilator 5.020 + Python deps
         run: |
           set -eux
-          sudo apt-get update
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          sudo apt-get -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get install -y --no-install-recommends \
             git make autoconf g++ flex bison ccache \
             libunwind-dev libgoogle-perftools-dev numactl perl-doc \
@@ -400,15 +406,16 @@ jobs:
             help2man python3 python3-pip python3-venv
           if ! command -v verilator >/dev/null || \
              ! verilator --version | grep -q '5\.020' || \
-             [ ! -f /usr/local/share/verilator/include/verilated_std.sv ]; then
+             [ ! -f "$HOME/.local/share/verilator/include/verilated_std.sv" ]; then
             git clone --depth 1 --branch v5.020 \
               https://github.com/verilator/verilator.git /tmp/verilator
             cd /tmp/verilator
-            autoconf && ./configure --prefix=/usr/local
+            autoconf && ./configure --prefix="$HOME/.local"
             make -j"$(nproc)"
-            sudo make install
+            make install
           fi
           verilator --version
+          test -f "$HOME/.local/share/verilator/include/verilated_std.sv"
 
       - name: Python venv + cocotb stack
         working-directory: tb/cocotb
@@ -464,7 +471,8 @@ jobs:
       - name: Install yosys + pinned z3
         run: |
           set -eux
-          sudo apt-get update
+          sudo apt-get -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get install -y --no-install-recommends yosys python3-venv
           python3 -m venv tb/formal/.venv
           tb/formal/.venv/bin/pip install -r tb/formal/requirements.txt
