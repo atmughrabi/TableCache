@@ -365,16 +365,6 @@ jobs:
   address-widths:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - width: 33
-            high: "0x1FFFFFFFF"
-          - width: 34
-            high: "0x3FFFFFFFF"
-          - width: 64
-            high: "0xFFFFFFFFFFFFFFFF"
     steps:
       - uses: actions/checkout@v4
 
@@ -423,36 +413,41 @@ jobs:
           pip install --upgrade pip wheel
           pip install -r requirements.txt
 
-      - name: Address width ${{ matrix.width }}
+      - name: Address width matrix
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
           set -e
-          width=${{ matrix.width }}
-          high=${{ matrix.high }}
-          rm -rf sim_build
-          TC_REQUIRE_HIGH_ALIAS=1 timeout 300 make MODULE=test_smoke \
-            ADDR_W=$width ADDR_L=0 ADDR_H=$high
-          rm -rf sim_build
-          timeout 400 make MODULE=test_eviction VICTIM=1 \
-            ADDR_W=$width ADDR_L=0 ADDR_H=$high
-          rm -rf sim_build
-          timeout 400 make MODULE=test_flush VICTIM=1 \
-            ADDR_W=$width ADDR_L=0 ADDR_H=$high
-          rm -rf sim_build
-          timeout 400 make MODULE=test_l2top_flush \
-            TESTCASE=test_flush_writes_back_dirty \
-            ADDR_W=$width ADDR_L=0 ADDR_H=$high
-          rm -rf sim_build
-          TC_REQUIRE_HIGH_ALIAS=1 timeout 300 make MODULE=test_l2top \
-            ADDR_W=$width ADDR_L=0 ADDR_H=$high
-          rm -rf sim_build sim_build_shim
-          TC_REQUIRE_HIGH_ALIAS=1 timeout 400 make MODULE=test_shim_cache \
-            ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          for cell in \
+            "33:0x1FFFFFFFF" \
+            "34:0x3FFFFFFFF" \
+            "64:0xFFFFFFFFFFFFFFFF"; do
+            width=${cell%%:*}
+            high=${cell#*:}
+            echo "==== address width $width ===="
+            rm -rf sim_build
+            TC_REQUIRE_HIGH_ALIAS=1 timeout 300 make MODULE=test_smoke \
+              ADDR_W=$width ADDR_L=0 ADDR_H=$high
+            rm -rf sim_build
+            timeout 400 make MODULE=test_eviction VICTIM=1 \
+              ADDR_W=$width ADDR_L=0 ADDR_H=$high
+            rm -rf sim_build
+            timeout 400 make MODULE=test_flush VICTIM=1 \
+              ADDR_W=$width ADDR_L=0 ADDR_H=$high
+            rm -rf sim_build
+            timeout 400 make MODULE=test_l2top_flush \
+              TESTCASE=test_flush_writes_back_dirty \
+              ADDR_W=$width ADDR_L=0 ADDR_H=$high
+            rm -rf sim_build
+            TC_REQUIRE_HIGH_ALIAS=1 timeout 300 make MODULE=test_l2top \
+              ADDR_W=$width ADDR_L=0 ADDR_H=$high
+            rm -rf sim_build sim_build_shim
+            TC_REQUIRE_HIGH_ALIAS=1 timeout 400 make MODULE=test_shim_cache \
+              ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          done
           pytest -q test_matrix.py::test_non_napot_range_is_rejected
 
       - name: 64-bit fixed-window and GRASP paths
-        if: matrix.width == 64
         working-directory: tb/cocotb
         run: |
           . .venv/bin/activate
