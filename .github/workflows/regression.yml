@@ -34,21 +34,18 @@ jobs:
           set -eux
           export PATH="$HOME/.local/bin:$PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          sudo apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
-            install -y --no-install-recommends \
-            git make autoconf g++ flex bison ccache \
-            libunwind-dev libgoogle-perftools-dev numactl perl-doc \
-            libfl2 libfl-dev zlib1g zlib1g-dev \
-            help2man python3 python3-pip python3-venv tcl
           # Build Verilator 5.020 if cache restore is incomplete.
           # A stale/partial cache can leave the binary present but miss
           # built-in include files (verilated_std.sv), which breaks lint.
           if ! command -v verilator >/dev/null || \
              ! verilator --version | grep -q '5\.020' || \
              [ ! -f "$HOME/.local/share/verilator/include/verilated_std.sv" ]; then
+            bash .github/scripts/apt-retry.sh update
+            bash .github/scripts/apt-retry.sh install -y --no-install-recommends \
+              git make autoconf g++ flex bison ccache \
+              libunwind-dev libgoogle-perftools-dev numactl perl-doc \
+              libfl2 libfl-dev zlib1g zlib1g-dev \
+              help2man python3 python3-pip python3-venv tcl
             git clone --depth 1 --branch v5.020 https://github.com/verilator/verilator.git /tmp/verilator
             cd /tmp/verilator
             autoconf && ./configure --prefix="$HOME/.local"
@@ -389,18 +386,15 @@ jobs:
           set -eux
           export PATH="$HOME/.local/bin:$PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          sudo apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
-            install -y --no-install-recommends \
-            git make autoconf g++ flex bison ccache \
-            libunwind-dev libgoogle-perftools-dev numactl perl-doc \
-            libfl2 libfl-dev zlib1g zlib1g-dev \
-            help2man python3 python3-pip python3-venv
           if ! command -v verilator >/dev/null || \
              ! verilator --version | grep -q '5\.020' || \
              [ ! -f "$HOME/.local/share/verilator/include/verilated_std.sv" ]; then
+            bash .github/scripts/apt-retry.sh update
+            bash .github/scripts/apt-retry.sh install -y --no-install-recommends \
+              git make autoconf g++ flex bison ccache \
+              libunwind-dev libgoogle-perftools-dev numactl perl-doc \
+              libfl2 libfl-dev zlib1g zlib1g-dev \
+              help2man python3 python3-pip python3-venv
             git clone --depth 1 --branch v5.020 \
               https://github.com/verilator/verilator.git /tmp/verilator
             cd /tmp/verilator
@@ -467,18 +461,16 @@ jobs:
 
   formal:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Install yosys + pinned z3
         run: |
           set -eux
-          sudo apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
-            install -y --no-install-recommends yosys python3-venv
+          bash .github/scripts/apt-retry.sh update
+          bash .github/scripts/apt-retry.sh install -y --no-install-recommends \
+            yosys python3-venv
           python3 -m venv tb/formal/.venv
           tb/formal/.venv/bin/pip install -r tb/formal/requirements.txt
           # Ubuntu 22.04's apt yosys is ~0.9 -- older than the 0.33 the
