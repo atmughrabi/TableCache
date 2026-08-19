@@ -25,7 +25,7 @@ import os
 import cocotb
 from cocotb.triggers import RisingEdge
 from tb_common import (
-    reset_dut, attach_mem, CLK_PERIOD_NS, high_address_test_base,
+    reset_dut, attach_mem, CLK_PERIOD_NS, BASE, high_address_test_base,
 )
 
 BLOCK_BYTES = 4
