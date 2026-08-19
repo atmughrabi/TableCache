@@ -15,6 +15,8 @@
 SRC_DIR := ../src
 COMMON  := common
 TESTS   := tests
+OBJCACHE ?=
+export OBJCACHE
 
 # cache_config.sv must be first (package).
 RTL := \

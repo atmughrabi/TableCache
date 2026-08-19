@@ -7,6 +7,8 @@ SIM        ?= verilator
 TOPLEVEL_LANG ?= verilog
 TOPLEVEL   ?= dut_cocotb
 MODULE     ?= test_smoke
+OBJCACHE   ?=
+export OBJCACHE
 
 # Knobs forwarded into the SV defines and into the test via environ.
 POLICY     ?= LRU
