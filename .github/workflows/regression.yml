@@ -72,6 +72,12 @@ jobs:
           pip install --upgrade pip wheel
           pip install -r requirements.txt
 
+      - name: Collect Python tests
+        working-directory: tb/cocotb
+        run: |
+          . .venv/bin/activate
+          pytest --collect-only -q test_*.py > /dev/null
+
       - name: Lint
         working-directory: tb/cocotb
         run: |
