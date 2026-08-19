@@ -172,7 +172,11 @@ module dut_l2top_flush
         input  logic                        m_bvalid,
         input  logic [1:0]                  m_bresp,
         input  logic [WRITE_ID_WIDTH:0]     m_bid,
-        output logic                        m_bready
+        output logic                        m_bready,
+
+        // Full reconstructed addresses before the small AxiRam mask.
+        output logic [ADDR_W-1:0]           dbg_m_araddr_full,
+        output logic [ADDR_W-1:0]           dbg_m_awaddr_full
     );
 
     localparam logic[READ_ID_WIDTH-1:0] FLUSH_ID = '1;
@@ -297,6 +301,8 @@ module dut_l2top_flush
 
     // mem-side address masking so the small AxiRam image is addressable.
     logic [ADDR_W-1:0] m_araddr_raw, m_awaddr_raw;
+    assign dbg_m_araddr_full = m_araddr_raw;
+    assign dbg_m_awaddr_full = m_awaddr_raw;
     assign m_araddr = m_araddr_raw & MEM_MASK;
     assign m_awaddr = m_awaddr_raw & MEM_MASK;
 
