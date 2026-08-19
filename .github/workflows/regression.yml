@@ -29,12 +29,6 @@ jobs:
             ~/.local/share/verilator
           key: verilator-user-bin-${{ runner.os }}-5.020
 
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-verilator-5.020
-
       - name: Install Verilator 5.020 + Python deps
         run: |
           set -eux
@@ -42,7 +36,9 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           sudo apt-get -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            install -y --no-install-recommends \
             git make autoconf g++ flex bison ccache \
             libunwind-dev libgoogle-perftools-dev numactl perl-doc \
             libfl2 libfl-dev zlib1g zlib1g-dev \
@@ -399,7 +395,9 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           sudo apt-get -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            install -y --no-install-recommends \
             git make autoconf g++ flex bison ccache \
             libunwind-dev libgoogle-perftools-dev numactl perl-doc \
             libfl2 libfl-dev zlib1g zlib1g-dev \
@@ -442,6 +440,10 @@ jobs:
           timeout 400 make MODULE=test_flush VICTIM=1 \
             ADDR_W=$width ADDR_L=0 ADDR_H=$high
           rm -rf sim_build
+          timeout 400 make MODULE=test_l2top_flush \
+            TESTCASE=test_flush_writes_back_dirty \
+            ADDR_W=$width ADDR_L=0 ADDR_H=$high
+          rm -rf sim_build
           TC_REQUIRE_HIGH_ALIAS=1 timeout 300 make MODULE=test_l2top \
             ADDR_W=$width ADDR_L=0 ADDR_H=$high
           rm -rf sim_build sim_build_shim
@@ -473,7 +475,9 @@ jobs:
           set -eux
           sudo apt-get -o Acquire::Retries=3 \
             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y --no-install-recommends yosys python3-venv
+          sudo apt-get -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            install -y --no-install-recommends yosys python3-venv
           python3 -m venv tb/formal/.venv
           tb/formal/.venv/bin/pip install -r tb/formal/requirements.txt
           # Ubuntu 22.04's apt yosys is ~0.9 -- older than the 0.33 the
