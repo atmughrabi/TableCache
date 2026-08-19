@@ -7,7 +7,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ReadOnly, Timer, with_timeout
 from tb_common import (
-    WritebackMonitor, MemRangeMonitor, cacheable_master,
+    WritebackMonitor, MemRangeMonitor, BASE, cacheable_master,
     high_address_test_base, reset_cycle_count,
 )
 from cocotbext.axi import AxiBus, AxiMaster, AxiRam
@@ -15,6 +15,7 @@ from cocotbext.axi import AxiBus, AxiMaster, AxiRam
 CLK_NS      = 10
 BLOCK_BYTES = 4
 TEST_BASE = high_address_test_base()
+TAG_TEST_BASE = BASE
 LINE_W      = int(os.environ.get("TC_LINE_W", "8"))
 LINE_BYTES  = LINE_W * BLOCK_BYTES
 LINES       = int(os.environ.get("TC_LINES", "64"))
@@ -59,18 +60,36 @@ def attach(dut, mem_size=1 << 21):
 class MAwCounter:
     def __init__(self, dut):
         self.dut = dut
+        self.ar = 0
         self.n = 0
         self.full_awaddrs = []
+        if not hasattr(dut, "dbg_m_awaddr_full"):
+            raise AttributeError(
+                "MAwCounter requires the pre-mask dbg_m_awaddr_full tap"
+            )
 
     async def run(self):
         while True:
             await RisingEdge(self.dut.clk)
             await ReadOnly()
+            if int(self.dut.m_arvalid) and int(self.dut.m_arready):
+                self.ar += 1
             if int(self.dut.m_awvalid) and int(self.dut.m_awready):
                 self.n += 1
-                if hasattr(self.dut, "dbg_m_awaddr_full"):
-                    self.full_awaddrs.append(
-                        int(self.dut.dbg_m_awaddr_full))
+                self.full_awaddrs.append(int(self.dut.dbg_m_awaddr_full))
+
+
+def assert_address_prefix(addresses, label):
+    expected_prefix = TEST_BASE & ~MEM_MASK
+    assert addresses, f"{label} emitted no full-width AW addresses"
+    assert all(
+        (addr & ~MEM_MASK) == expected_prefix
+        for addr in addresses
+    ), (
+        f"{label} changed address bits above the backing-RAM mask: "
+        f"expected prefix 0x{expected_prefix:x}, "
+        f"got {[hex(addr) for addr in addresses[:8]]}"
+    )
 
 
 async def request_flush(dut, timeout_cycles=20_000, mode=0):
@@ -95,12 +114,23 @@ async def test_flush_clean_state(dut):
     master, ram = attach(dut)
     mon = MAwCounter(dut); cocotb.start_soon(mon.run())
     for li in range(LINES):
-        await with_timeout(master.read(TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
+        await with_timeout(master.read(TAG_TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
                             5_000, "ns")
     await request_flush(dut, mode=0b1101)   # MakeInvalid
     await Timer(200, "ns")
     assert mon.n == 0, f"MakeInvalid flush produced {mon.n} mem AWs (expected 0)"
-    dut._log.info(f"[flush_clean] MakeInvalid flush_done pulsed, mem AWs={mon.n}")
+    ar_before = mon.ar
+    for li in range(LINES):
+        await with_timeout(master.read(TAG_TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
+                           5_000, "ns")
+    refills = mon.ar - ar_before
+    assert refills == LINES, (
+        f"MakeInvalid left {LINES - refills} clean lines resident"
+    )
+    dut._log.info(
+        f"[flush_clean] MakeInvalid flush_done pulsed, "
+        f"mem AWs={mon.n}, refills={refills}"
+    )
 
 
 @cocotb.test()
@@ -135,16 +165,8 @@ async def test_flush_writes_back_dirty(dut):
     # At least N writebacks; cap depends on the cache always-writes-back-on-CleanInvalid behaviour.
     assert aw_during >= N, \
         f"flush issued {aw_during} writebacks (expected >= {N})"
-    expected_prefix = TEST_BASE & ~MEM_MASK
     flushed_addresses = mon.full_awaddrs[address_before:]
-    assert flushed_addresses, "flush emitted no full-width AW addresses"
-    assert all(
-        (addr & ~MEM_MASK) == expected_prefix
-        for addr in flushed_addresses
-    ), (
-        "flush changed address bits above the backing-RAM mask: "
-        f"expected prefix 0x{expected_prefix:x}, "
-        f"got {[hex(addr) for addr in flushed_addresses[:8]]}")
+    assert_address_prefix(flushed_addresses, "flush")
 
     for addr, val in written.items():
         mem_off = addr & MEM_MASK
@@ -164,11 +186,11 @@ async def test_flush_idempotent(dut):
 
     # Warm every line
     for li in range(LINES):
-        await with_timeout(master.read(TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
+        await with_timeout(master.read(TAG_TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
                             5_000, "ns")
 
     # Dirty one line via write
-    addr = TEST_BASE | 0x2000
+    addr = TAG_TEST_BASE | 0x2000
     val = 0xDEADBEEF
     await with_timeout(master.write(addr, val.to_bytes(BLOCK_BYTES, "little")),
                         5_000, "ns")
@@ -180,15 +202,23 @@ async def test_flush_idempotent(dut):
     assert first_writeback == 0, f"first MakeInvalid flush produced {first_writeback} writebacks (expected 0)"
 
     # Second flush: cache is empty after MakeInvalid drop; warm again then flush.
+    ar_before = mon.ar
     for li in range(LINES):
-        await with_timeout(master.read(TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
+        await with_timeout(master.read(TAG_TEST_BASE | (li * LINE_BYTES), BLOCK_BYTES),
                             5_000, "ns")
+    refills = mon.ar - ar_before
+    assert refills == LINES, (
+        f"first MakeInvalid left {LINES - refills} lines resident"
+    )
     n1 = mon.n
     await request_flush(dut, mode=0b1101)   # MakeInvalid
     await Timer(200, "ns")
     second_writeback = mon.n - n1
     assert second_writeback == 0, f"second MakeInvalid flush produced {second_writeback} writebacks (expected 0)"
-    dut._log.info(f"[flush_idempotent] flush1={first_writeback} flush2={second_writeback} mem AWs")
+    dut._log.info(
+        f"[flush_idempotent] flush1={first_writeback} "
+        f"refills={refills} flush2={second_writeback} mem AWs"
+    )
 
 
 @cocotb.test()
@@ -304,11 +334,15 @@ async def test_flush_multitag_all_ways(dut):
             f"pre-flush backend @0x{addr:08x} already 0x{raw:08x} (canary not dirty in cache?)"
 
     aw_before = mon.n
+    address_before = len(mon.full_awaddrs)
     await request_flush(dut)                 # mode=0 -> DEFAULT_MODE = by-index
     await Timer(600, "ns")
     aw_during = mon.n - aw_before
     assert aw_during >= FLUSH_WAYS, \
         f"by-index flush issued {aw_during} writebacks (expected >= {FLUSH_WAYS} dirty ways)"
+    assert_address_prefix(
+        mon.full_awaddrs[address_before:], "multitag flush"
+    )
 
     miss = 0
     for addr, val in written.items():
@@ -356,9 +390,13 @@ async def test_flush_scattered_multitag(dut):
                                5_000, "ns")
             written[addr] = val
 
+    address_before = len(mon.full_awaddrs)
     await request_flush(dut)                 # by-index whole-set clean (default)
     await Timer(1000, "ns")
     mon.check()
+    assert_address_prefix(
+        mon.full_awaddrs[address_before:], "scattered flush"
+    )
 
     # (b) every dirty canary reached the backend (backdoor read, no cache access)
     miss = 0

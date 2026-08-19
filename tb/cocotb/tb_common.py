@@ -145,6 +145,10 @@ class WritebackMonitor:
         self.errors: list[str] = []
         self.written: dict[int, int] = {}   # byte-addr -> word (last write wins)
         self.full_awaddrs: list[int] = []
+        if not hasattr(dut, "dbg_m_awaddr_full"):
+            raise AttributeError(
+                "WritebackMonitor requires the pre-mask dbg_m_awaddr_full tap"
+            )
 
     async def run(self):
         aw_q: list[tuple[int, int, int, int]] = []  # (addr, len, size, burst)
@@ -153,9 +157,7 @@ class WritebackMonitor:
             await RisingEdge(self.dut.clk)
             await ReadOnly()
             if int(self.dut.m_awvalid) and int(self.dut.m_awready):
-                if hasattr(self.dut, "dbg_m_awaddr_full"):
-                    self.full_awaddrs.append(
-                        int(self.dut.dbg_m_awaddr_full))
+                self.full_awaddrs.append(int(self.dut.dbg_m_awaddr_full))
                 aw_q.append((int(self.dut.m_awaddr) & self.mem_mask,
                              int(self.dut.m_awlen), int(self.dut.m_awsize),
                              int(self.dut.m_awburst)))
@@ -215,19 +217,17 @@ class MemRangeMonitor:
         self.ar = 0
         self.aw = 0
         self.errors: list[str] = []
-        # The pre-mask debug taps are only exposed by DUTs that thread them out
-        # (dut_cocotb.sv, dut_flush.sv). Wrappers that don't (e.g.
-        # dut_l2top_flush.sv) still run the shared multitag flush tests -- in
-        # that case the range check simply no-ops instead of crashing.
-        self.enabled = hasattr(dut, "dbg_m_araddr_full") and \
-            hasattr(dut, "dbg_m_awaddr_full")
-        if not self.enabled:
-            dut._log.info("MemRangeMonitor: dbg_m_*addr_full taps absent on this "
-                          "DUT -- range check disabled")
+        missing = [
+            name for name in ("dbg_m_araddr_full", "dbg_m_awaddr_full")
+            if not hasattr(dut, name)
+        ]
+        if missing:
+            raise AttributeError(
+                "MemRangeMonitor requires pre-mask address taps: "
+                + ", ".join(missing)
+            )
 
     async def run(self):
-        if not self.enabled:
-            return
         while True:
             await RisingEdge(self.dut.clk)
             await ReadOnly()

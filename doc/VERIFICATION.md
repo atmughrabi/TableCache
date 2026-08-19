@@ -108,7 +108,7 @@ GitHub Actions runs the open-source subset daily and on manual dispatch.
 
 | Module | Invariant |
 |---|---|
-| `test_l2top`, `test_l2top_flush`, `test_l2top_ids` | AXI wrapper, maintenance, and ID namespace |
+| `test_l2top`, `test_l2top_flush`, `test_l2top_ids` | AXI wrapper, maintenance, ID namespace, and pre-mask address preservation |
 | `test_narrow_shim` | lane selection, line buffer, AW FIFO, merge, and random traffic |
 | `test_shim_cache` | end-to-end shim/cache fills, RMW, WRAP, and refill |
 | `test_shim_latency`, `test_shim_throughput` | shim latency and sustained buffered reads |
